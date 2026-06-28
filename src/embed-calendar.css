@@ -1,0 +1,388 @@
+.tps-calendar-base-embed .bases-header,
+.tps-calendar-base-embed .bases-view-header,
+.tps-calendar-base-embed .base-view-header,
+.tps-calendar-base-embed .bases-toolbar,
+.tps-calendar-base-embed .bases-controls,
+.tps-calendar-base-embed .view-header,
+.tps-calendar-embedded-hidden-header {
+  display: none !important;
+}
+
+.tps-calendar-embedded-visible-header {
+  display: none !important;
+}
+
+.internal-embed.tps-calendar-base-embed,
+.tps-calendar-base-embed .calendar-embed-view {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+}
+
+.markdown-reading-view .bases-calendar-container--embedded ~ .edit-block-button,
+.markdown-rendered .bases-calendar-container--embedded ~ .edit-block-button,
+.markdown-reading-view .internal-embed:has(.bases-calendar-container--embedded) .edit-block-button,
+.markdown-rendered .internal-embed:has(.bases-calendar-container--embedded) .edit-block-button,
+.markdown-reading-view .internal-embed:has(.bases-calendar-container--embedded) .markdown-embed-link,
+.markdown-rendered .internal-embed:has(.bases-calendar-container--embedded) .markdown-embed-link,
+.markdown-reading-view .bases-calendar-container--embedded .edit-block-button,
+.markdown-rendered .bases-calendar-container--embedded .edit-block-button,
+.markdown-reading-view .bases-calendar-scroll--embedded .edit-block-button,
+.markdown-rendered .bases-calendar-scroll--embedded .edit-block-button,
+.markdown-reading-view .bases-calendar-container--embedded .markdown-embed-link,
+.markdown-rendered .bases-calendar-container--embedded .markdown-embed-link {
+  display: none !important;
+}
+
+.markdown-preview-view .internal-embed .bases-calendar-scroll,
+.markdown-reading-view .internal-embed .bases-calendar-scroll,
+.markdown-rendered .internal-embed .bases-calendar-scroll,
+.markdown-embed .bases-calendar-scroll,
+.cm-embed-block .bases-calendar-scroll,
+.bases-calendar-scroll--embedded {
+  width: min(100%, 760px) !important;
+  max-width: 100% !important;
+  height: var(--tps-calendar-embedded-height, 520px) !important;
+  max-height: var(--tps-calendar-embedded-height, 520px) !important;
+  min-height: 0 !important;
+  margin: 0 auto !important;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, transparent) !important;
+  border-radius: 8px !important;
+  background: var(--background-primary-alt) !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+}
+
+.markdown-preview-view .internal-embed .bases-calendar-container,
+.markdown-reading-view .internal-embed .bases-calendar-container,
+.markdown-rendered .internal-embed .bases-calendar-container,
+.markdown-embed .bases-calendar-container,
+.cm-embed-block .bases-calendar-container,
+.markdown-preview-view .internal-embed .bases-calendar-wrapper,
+.markdown-reading-view .internal-embed .bases-calendar-wrapper,
+.markdown-rendered .internal-embed .bases-calendar-wrapper,
+.markdown-embed .bases-calendar-wrapper,
+.cm-embed-block .bases-calendar-wrapper,
+.bases-calendar-container--embedded,
+.bases-calendar-scroll--embedded .bases-calendar-wrapper {
+  height: var(--tps-calendar-embedded-height, 520px) !important;
+  max-height: var(--tps-calendar-embedded-height, 520px) !important;
+  min-height: 0 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded {
+  --tps-embed-axis-width: 60px;
+  --tps-embed-header-bg: color-mix(in srgb, var(--background-primary) 94%, black 6%);
+  --tps-embed-body-bg: var(--background-primary-alt);
+  --tps-embed-grid-line: color-mix(in srgb, var(--background-modifier-border) 66%, transparent);
+  --tps-embed-grid-line-soft: color-mix(in srgb, var(--background-modifier-border) 44%, transparent);
+  background: var(--tps-embed-body-bg) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-floating-nav {
+  display: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-scroll-surface {
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc {
+  color: var(--text-normal) !important;
+  font-size: var(--font-ui-smaller) !important;
+  background: var(--tps-embed-body-bg) !important;
+  --fc-page-bg-color: var(--tps-embed-body-bg);
+  --fc-neutral-bg-color: var(--tps-embed-header-bg);
+  --fc-border-color: var(--tps-embed-grid-line-soft);
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-view-harness,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-view-harness-active,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-liquid {
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc-theme-standard .fc-scrollgrid,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc-theme-standard td,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc-theme-standard th {
+  border-color: var(--tps-embed-grid-line-soft) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc table {
+  margin: 0 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid {
+  border: 0 !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-header,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-col-header-cell,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis {
+  background: var(--tps-embed-header-bg) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-header .fc-scroller,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-header .fc-scroller-harness {
+  overflow: hidden !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-col-header-cell {
+  height: 30px !important;
+  vertical-align: middle !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-col-header-cell-frame {
+  min-height: 30px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-col-header-cell-cushion {
+  color: var(--text-accent) !important;
+  font-size: 0.8rem !important;
+  font-weight: 650 !important;
+  text-decoration: none !important;
+  padding: 0 6px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis {
+  width: var(--tps-embed-axis-width) !important;
+  min-width: var(--tps-embed-axis-width) !important;
+  max-width: var(--tps-embed-axis-width) !important;
+  color: var(--text-normal) !important;
+  font-size: 0.72rem !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis-frame,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis-cushion {
+  width: 100% !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid .fc-daygrid-body,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid .fc-daygrid-body table,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid .fc-daygrid-body tbody,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid .fc-daygrid-body tr,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid .fc-daygrid-day,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid .fc-daygrid-day-frame {
+  min-height: 36px !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-body:has(.fc-daygrid-body),
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-body:has(.fc-daygrid-body) > td,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-body:has(.fc-daygrid-body) .fc-timegrid-axis,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-body:has(.fc-daygrid-body) .fc-daygrid-day {
+  background: color-mix(in srgb, var(--tps-embed-header-bg) 72%, var(--tps-embed-body-bg)) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid .fc-daygrid-day-top {
+  display: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-divider {
+  border-top: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent) !important;
+  background: transparent !important;
+  height: 0 !important;
+  padding: 0 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-col,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-col-header-cell {
+  border-left: 1px solid var(--tps-embed-grid-line) !important;
+  border-right: 0 !important;
+  box-shadow: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-col-header-cell:last-child,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-col:last-child {
+  border-right: 1px solid var(--tps-embed-grid-line) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-lane,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label {
+  border-top: 1px solid var(--tps-embed-grid-line-soft) !important;
+  background: transparent !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label-frame,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label-cushion {
+  background: transparent !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-col.fc-day-today {
+  background: color-mix(in srgb, var(--interactive-accent) 12%, transparent) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 34%, transparent) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-col-header-cell.fc-day-today {
+  background: color-mix(in srgb, var(--interactive-accent) 18%, var(--background-secondary)) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc-bg-event,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc-bg-event.bases-calendar-aux-date-marker,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-aux-date-marker,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-aux-harness {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-highlight,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-daygrid-bg-harness,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-bg-harness {
+  background: color-mix(in srgb, var(--interactive-accent) 18%, transparent) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event {
+  border-radius: 4px !important;
+  border-width: 1px !important;
+  padding: 1px 4px !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-event.bases-calendar-event {
+  min-height: 18px !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event .bases-calendar-event-content {
+  min-height: 0 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event .bases-calendar-event-title {
+  color: var(--tps-event-title-color, var(--text-normal)) !important;
+  font-weight: 600 !important;
+  font-size: var(--font-ui-smaller) !important;
+  line-height: 1.15 !important;
+  text-shadow: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event.is-non-active,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event.is-past {
+  opacity: var(--tps-completed-event-opacity, var(--tps-past-event-opacity, 0.5)) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event.is-non-active .bases-calendar-event-title,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event.is-past .bases-calendar-event-title {
+  color: var(--text-muted) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-event.bases-calendar-event .bases-calendar-event-title {
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+}
+
+.markdown-preview-view .internal-embed .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-event-properties,
+.markdown-reading-view .internal-embed .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-event-properties,
+.markdown-rendered .internal-embed .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-event-properties,
+.markdown-embed .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-event-properties,
+.cm-embed-block .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-event-properties {
+  display: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-scroll-hours-toggle {
+  position: absolute !important;
+  top: 34px !important;
+  right: 8px !important;
+  z-index: 9 !important;
+  width: 24px !important;
+  min-width: 24px !important;
+  height: 20px !important;
+  min-height: 20px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 5px !important;
+  border: 1px solid color-mix(in srgb, var(--background-modifier-border) 76%, transparent) !important;
+  background: color-mix(in srgb, var(--background-primary-alt) 94%, var(--background-primary)) !important;
+  color: var(--text-muted) !important;
+  box-shadow: none !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-scroll-hours-toggle.has-hidden-events {
+  color: var(--text-accent) !important;
+  border-color: color-mix(in srgb, var(--text-accent) 42%, transparent) !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc-timegrid-col.has-hidden-time-event-before .fc-timegrid-col-frame::before,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc-timegrid-col.has-hidden-time-event-after .fc-timegrid-col-frame::after {
+  height: 4px !important;
+  z-index: 10 !important;
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--interactive-accent) 84%, transparent) 20%,
+    color-mix(in srgb, var(--interactive-accent) 96%, white 4%) 50%,
+    color-mix(in srgb, var(--interactive-accent) 84%, transparent) 80%,
+    transparent
+  ) !important;
+  box-shadow: 0 0 7px color-mix(in srgb, var(--interactive-accent) 56%, transparent) !important;
+}
+
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-gcm-top-properties-panel,
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-gcm-top-property-row,
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-floating-nav,
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-scroll-hours-toggle,
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-day-marker-overlay,
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-day-marker-chip,
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-archived-external-harness,
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-aux-harness,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-gcm-top-properties-panel,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-gcm-top-property-row,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-floating-nav,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .bases-calendar-scroll-hours-toggle,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-day-marker-overlay,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-day-marker-chip,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-archived-external-harness,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .tps-calendar-aux-harness {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  body.is-mobile .markdown-preview-view .internal-embed .bases-calendar-scroll,
+  body.is-mobile .markdown-preview-view .internal-embed .bases-calendar-container,
+  body.is-mobile .markdown-preview-view .internal-embed .bases-calendar-wrapper,
+  body.is-mobile .markdown-reading-view .internal-embed .bases-calendar-scroll,
+  body.is-mobile .markdown-reading-view .internal-embed .bases-calendar-container,
+  body.is-mobile .markdown-reading-view .internal-embed .bases-calendar-wrapper,
+  body.is-mobile .markdown-rendered .internal-embed .bases-calendar-scroll,
+  body.is-mobile .markdown-rendered .internal-embed .bases-calendar-container,
+  body.is-mobile .markdown-rendered .internal-embed .bases-calendar-wrapper,
+  body.is-mobile .markdown-embed .bases-calendar-scroll,
+  body.is-mobile .markdown-embed .bases-calendar-container,
+  body.is-mobile .markdown-embed .bases-calendar-wrapper,
+  body.is-mobile .cm-embed-block .bases-calendar-scroll,
+  body.is-mobile .cm-embed-block .bases-calendar-container,
+  body.is-mobile .cm-embed-block .bases-calendar-wrapper {
+    height: var(--tps-calendar-embedded-height, 340px) !important;
+    max-height: var(--tps-calendar-embedded-height, 340px) !important;
+  }
+}
