@@ -19,6 +19,7 @@ export class AllDayEventsModal extends Modal {
     }
 
     onOpen() {
+    this.modalEl.addClass("tps-keyboard-aware-modal");
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass("all-day-events-modal");

@@ -13,7 +13,6 @@ import {
   parsePropertyId,
   parseYaml,
   QueryController,
-  setIcon,
   TFile,
   ViewOption,
   Value,
@@ -50,7 +49,15 @@ import {
 } from "./utils";
 import { ExternalCalendarService } from "./services/external-calendar-service";
 import { parseTagInput } from "./utils/tag-utils";
-import { amendScheduledTaskLineTitleAsContextLink } from "./utils/task-title-link";
+import {
+  getTaskAssociatedNoteCandidates,
+  selectUniqueParentLinkedTaskNote,
+  type TaskAssociatedNoteCandidate,
+} from "./utils/task-associated-note";
+import {
+  patchInlineTaskLineContent,
+  type InlineTaskLinePatchResult,
+} from "./utils/inline-task-line-update";
 import { CalendarPluginSettings, CalendarViewMode, ExternalCalendarEvent } from "./types";
 import { findStyleOverride } from "./services/style-rule-service";
 import { ExternalEventModal, createMeetingNoteFromExternalEvent } from "./modals/external-event-modal";
@@ -66,7 +73,17 @@ import {
   resolveFilterDateAtom,
   resolveFilterDateExpression,
   getAutoRangeViewDayCount,
+  getInclusiveCalendarDayCount,
 } from "./utils/filter-date-utils";
+import {
+  extractCalendarCreationModeFromFilters,
+  extractCalendarTaskLineDefaultsFromFilters,
+} from "./utils/filter-creation-defaults";
+import {
+  buildCalendarDropCreateRequest as buildCalendarDropCreateRequestFromFilters,
+  buildCalendarNewEventOptions as buildCalendarNewEventOptionsFromFilters,
+  type CalendarCreateOptionOverrides,
+} from "./utils/calendar-create-options";
 
 type CalendarEventTitlePromptResult = {
   title: string;
@@ -136,6 +153,11 @@ type InlineScheduledTask = {
   status: string;
   completed: boolean;
 };
+type InlineTaskNoteAssociation = {
+  linkedFile: TFile | null;
+  externalEvent: ExternalCalendarEvent | null;
+  source: TaskAssociatedNoteCandidate["source"] | "parent-title" | "external-identity" | "none";
+};
 
 class CalendarTaskDropConfirmModal extends Modal {
   private resolved = false;
@@ -149,6 +171,7 @@ class CalendarTaskDropConfirmModal extends Modal {
   }
 
   onOpen(): void {
+    this.modalEl.addClass("tps-keyboard-aware-modal");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h3", { text: "Schedule task on calendar?" });
@@ -182,7 +205,7 @@ export class CalendarView extends BasesView {
 
   private trace(message: string, details?: Record<string, unknown>): void {
     if ((window as any).__TPS_CALENDAR_TRACE !== true) return;
-    console.log(`[TPS CALENDAR TRACE] [CalendarView] ${message}`, {
+    logger.flow("CalendarViewTrace", message, {
       t: Math.round(performance.now()),
       ...(details || {}),
     });
@@ -211,7 +234,7 @@ export class CalendarView extends BasesView {
     while (log.length > 80) log.shift();
     win.__TPS_CALENDAR_RENDER_LOG = log;
     if (win.__TPS_CALENDAR_TRACE === true) {
-      console.log("[TPS CALENDAR TRACE] [CalendarView]", message, entry);
+      logger.flow("CalendarViewRender", message, entry);
     }
   }
   containerEl: HTMLElement;
@@ -429,6 +452,8 @@ export class CalendarView extends BasesView {
   private defaultEventDuration: number = 30;
   private showNavButtons: boolean = true;
   private embeddedHeight: number = 520;
+  private preserveEmbeddedDayCount: boolean = false;
+  private showEmbeddedHeader: boolean = true;
   private newEventService: NewEventService;
   private externalCalendarUrls: string[] = [];
   private visibleExternalCalendarUrls: string[] = [];
@@ -491,6 +516,7 @@ export class CalendarView extends BasesView {
   private updateInFlight = false;
   private queuedUpdateForce: boolean | null = null;
   private hasRenderedCalendar = false;
+  private toolbarCreateInFlight = false;
 
   // Services
 
@@ -555,62 +581,148 @@ export class CalendarView extends BasesView {
     frontmatterProcessor?: (frontmatter: Record<string, unknown>) => void,
   ): Promise<void> {
     const filterSources = await this.readBaseFileFilterSources();
-    const creationDefaults = this.getFilterCreationDefaults(filterSources);
-    const taskDefaults = this.extractTaskLineDefaultsFromFilters(filterSources);
     const nowRange = this.resolveCurrentTimeCreateRange();
-    const createMode = this.resolveEffectiveCreateMode(filterSources);
+    const createOptions = this.buildCalendarNewEventOptions(filterSources);
+    const createMode = createOptions.createMode;
     if (createMode === "task") {
-      const file = await this.newEventService.createEvent(nowRange.start, nowRange.end, undefined, {
-        createMode,
-        useBaseDefaults: true,
-        frontmatterDefaults: creationDefaults.frontmatter,
-        taskTags: taskDefaults.tags,
-        taskStatus: taskDefaults.status,
-        taskTargetPath: taskDefaults.targetPath,
-        typeFolderOverride: creationDefaults.folderPath,
-      });
+      const file = await this.newEventService.createEvent(nowRange.start, nowRange.end, undefined, createOptions);
       if (file) {
         await this.updateCalendar();
-        await this.openOrFocusFile(file);
+        await this.openCreatedFileIfConfigured(file, createMode);
       }
       return;
     }
 
     const startField = this.getNoteField(this.startDateProp) || this.plugin.settings.startProperty || "scheduled";
     const endField = this.getNoteField(this.endDateProp) || this.plugin.settings.endProperty || "timeEstimate";
-    const allDayField = this.getNoteField(this.allDayProperty) || "allDay";
 
     const mergedProcessor = (frontmatter: Record<string, unknown>) => {
-      Object.assign(frontmatter, creationDefaults.frontmatter);
+      Object.assign(frontmatter, createOptions.frontmatterDefaults || {});
       if (startField) frontmatter[startField] = formatDateTimeForFrontmatter(nowRange.start);
-      if (endField) frontmatter[endField] = formatDateTimeForFrontmatter(nowRange.end);
-      if (allDayField) frontmatter[allDayField] = false;
+      if (endField) {
+        frontmatter[endField] = this.useEndDuration
+          ? Math.max(1, Math.round((nowRange.end.getTime() - nowRange.start.getTime()) / 60000))
+          : formatDateTimeForFrontmatter(nowRange.end);
+      }
       frontmatterProcessor?.(frontmatter);
     };
 
-    await super.createFileForView(baseFileName, mergedProcessor);
+    const filteredFolder = normalizePath(String(createOptions.typeFolderOverride || ""))
+      .replace(/^\/+|\/+$/g, "");
+    if (filteredFolder) await this.ensureCalendarCreationFolder(filteredFolder);
+    const resolvedBaseFileName = baseFileName || (filteredFolder ? `${filteredFolder}/Untitled` : undefined);
+    logger.flow("CalendarCreate", "note-base-route", {
+      folder: filteredFolder,
+      baseFileName: resolvedBaseFileName || "",
+      defaultKeys: Object.keys(createOptions.frontmatterDefaults || {}),
+    });
+    await super.createFileForView(resolvedBaseFileName, mergedProcessor);
+  }
+
+  private async ensureCalendarCreationFolder(folderPath: string): Promise<void> {
+    let current = "";
+    for (const segment of normalizePath(folderPath).split("/").filter(Boolean)) {
+      current = current ? `${current}/${segment}` : segment;
+      const existing = this.app.vault.getAbstractFileByPath(current);
+      if (existing instanceof TFile) {
+        throw new Error(`Cannot create calendar note folder because a file exists at ${current}.`);
+      }
+      if (!existing) await this.app.vault.createFolder(current);
+    }
+  }
+
+  private handleCalendarBaseToolbarCreateClick(evt: MouseEvent): void {
+    const target = evt.target instanceof HTMLElement ? evt.target : null;
+    if (!target || this.toolbarCreateInFlight) return;
+
+    const createOwner = this.getCalendarBaseToolbarCreateOwner(target);
+    if (!createOwner) return;
+
+    const actionEl = target.closest<HTMLElement>(
+      "button, [role='button'], .clickable-icon, .clickable-icon-with-text, .bases-toolbar-item",
+    );
+    if (!actionEl) return;
+
+    const headerEl = actionEl.closest<HTMLElement>(
+      ".bases-view-header, .base-view-header, .bases-toolbar, .bases-header, .view-header",
+    );
+    if (!headerEl || !createOwner.contains(headerEl)) return;
+
+    const label = [
+      actionEl.getAttribute("aria-label"),
+      actionEl.getAttribute("title"),
+      actionEl.textContent,
+      target.getAttribute("aria-label"),
+      target.getAttribute("title"),
+      target.textContent,
+    ]
+      .filter((value): value is string => !!value)
+      .map((value) => value.replace(/\s+/g, " ").trim().toLowerCase())
+      .find(Boolean) || "";
+
+    if (label !== "new" && label !== "+ new" && label !== "create new") return;
+
+    logger.flow("CalendarCreate", "toolbar-owner-claimed", {
+      homeComponent: createOwner.closest<HTMLElement>(".tps-home-panel")?.dataset.tpsHomeComponentKey || null,
+      ownerClass: createOwner.className.slice(0, 160),
+    });
+    evt.preventDefault();
+    evt.stopPropagation();
+    evt.stopImmediatePropagation();
+
+    this.toolbarCreateInFlight = true;
+    this.createFileForView()
+      .catch((error) => {
+        logger.error("[CalendarView] Toolbar create failed:", error);
+        new Notice(`Failed to create calendar item: ${error instanceof Error ? error.message : String(error)}`);
+      })
+      .finally(() => {
+        this.toolbarCreateInFlight = false;
+      });
+  }
+
+  private getCalendarBaseToolbarCreateOwner(target: HTMLElement): HTMLElement | null {
+    const owner = target.closest<HTMLElement>([
+      ".tps-home-panel",
+      ".tps-auto-base-embed__panel",
+      ".block-language-bases",
+      ".cm-preview-code-block",
+      ".internal-embed",
+      ".markdown-embed",
+      ".cm-embed-block",
+      ".sync-embed",
+      ".sync-container",
+      ".canvas-node-content",
+      ".canvas-node",
+    ].join(", "));
+    if (owner) return owner.contains(this.containerEl) ? owner : null;
+
+    const leaf = target.closest<HTMLElement>(".workspace-leaf-content");
+    if (!leaf || !leaf.contains(this.containerEl)) return null;
+    const calendarRoots = Array.from(leaf.querySelectorAll<HTMLElement>(".bases-calendar-container"));
+    if (calendarRoots.length !== 1 || calendarRoots[0] !== this.containerEl) return null;
+    return leaf;
   }
 
   private extractCreationModeFromFilters(filters: unknown[]): "note" | "task" | null {
-    const modes = new Set<"note" | "task">();
-    for (const source of filters) {
-      for (const condition of this.collectPositiveFilterConditions(source)) {
-        const property = String(condition.property || "")
-          .replace(/^note\./i, "")
-          .replace(/^task\./i, "")
-          .toLowerCase();
-        if (property !== "kind" && property !== "type" && property !== "itemtype" && property !== "itemkind") continue;
-        const value = normalizeFilterValue(condition.value)?.trim().toLowerCase();
-        if (!value) continue;
-        if (value.startsWith("task")) modes.add("task");
-        if (value.startsWith("note")) modes.add("note");
-      }
-    }
-    return modes.size === 1 ? Array.from(modes)[0] ?? null : null;
+    return extractCalendarCreationModeFromFilters(filters);
   }
 
   private resolveEffectiveCreateMode(filters: unknown[]): "note" | "task" {
     return this.extractCreationModeFromFilters(filters) ?? this.plugin.settings.initialCreateMode ?? "note";
+  }
+
+  private buildCalendarNewEventOptions(
+    filterSources: unknown[],
+    overrides?: CalendarCreateOptionOverrides,
+  ): ReturnType<typeof buildCalendarNewEventOptionsFromFilters> {
+    return buildCalendarNewEventOptionsFromFilters({
+      filters: filterSources,
+      initialCreateMode: this.plugin.settings.initialCreateMode,
+      creationDefaults: this.getFilterCreationDefaults(filterSources),
+      taskDefaults: this.extractTaskLineDefaultsFromFilters(filterSources),
+      overrides,
+    });
   }
 
   private resolveCurrentTimeCreateRange(): { start: Date; end: Date } {
@@ -658,49 +770,9 @@ export class CalendarView extends BasesView {
     }
   }
 
-  private openTaskLineContextMenu(evt: MouseEvent, entry: BasesEntry, calEntry?: { entry: BasesEntry; inlineTask?: InlineScheduledTask } | null): boolean {
+  private getGcmTaskLineContextMenuService(): any {
     const gcmPlugin = this.getGcmPluginInstance() as any;
-    const contextTargetService = gcmPlugin?.contextTargetService ?? this.getGcmServices()?.contextTargetService;
-    const taskLineContextMenuService = gcmPlugin?.taskLineContextMenuService ?? this.getGcmApi()?.taskLineContextMenuService;
-    if (typeof taskLineContextMenuService?.handleContextMenu !== "function") {
-      return false;
-    }
-
-    const inlineTask = calEntry?.entry
-      ? ((calEntry.entry as any).inlineTask as InlineScheduledTask | undefined)
-      : ((entry as any).inlineTask as InlineScheduledTask | undefined);
-    const line = inlineTask?.lineNumber;
-
-    if (typeof contextTargetService?.recordContextTarget === "function") {
-      const selector = 
-        ".tps-calendar-task-entry[data-task-path][data-task-line], " +
-        ".tps-calendar-entry[data-task-path][data-task-line], " +
-        "[data-task-path][data-task-line][data-tps-gcm-context='calendar-task'], " +
-        "[data-tps-gcm-context='calendar-task']";
-      const rawTarget = evt.target instanceof HTMLElement
-        ? evt.target
-        : evt.currentTarget instanceof HTMLElement
-          ? evt.currentTarget
-          : null;
-
-      let target = rawTarget ? rawTarget.closest(selector) as HTMLElement | null : null;
-      if (!target && typeof line === "number" && line >= 0) {
-        const expectedLine = String(Math.max(1, Math.floor(line) + 1));
-        const escapedPath = (typeof CSS !== "undefined" && typeof CSS.escape === "function")
-          ? CSS.escape(entry.file.path)
-          : entry.file.path.replace(/"/g, "\\\"");
-        target = this.containerEl.querySelector<HTMLElement>(
-          `.tps-calendar-task-entry[data-task-path="${escapedPath}"][data-task-line="${expectedLine}"], ` +
-          `[data-task-path="${escapedPath}"][data-task-line="${expectedLine}"][data-tps-gcm-context="calendar-task"], ` +
-          `[data-task-path="${escapedPath}"][data-task-line="${expectedLine}"]`,
-        );
-      }
-      if (target) {
-        contextTargetService.recordContextTarget(target);
-      }
-    }
-
-    return taskLineContextMenuService.handleContextMenu(evt);
+    return gcmPlugin?.taskLineContextMenuService ?? this.getGcmApi()?.taskLineContextMenuService ?? null;
   }
 
   onload(): void {
@@ -716,6 +788,9 @@ export class CalendarView extends BasesView {
     );
     this.registerDomEvent(document, TPS_TASK_LINE_POINTER_DROP_EVENT as any, (evt: Event) => {
       void this.handleTaskPointerDropEvent(evt as CustomEvent);
+    }, { capture: true });
+    this.registerDomEvent(document, "click", (evt: MouseEvent) => {
+      void this.handleCalendarBaseToolbarCreateClick(evt);
     }, { capture: true });
     this.registerRefreshListeners();
     this.refreshFromPluginSettings(); // Ensure settings (like inProgressStatusValue) are loaded
@@ -873,8 +948,9 @@ export class CalendarView extends BasesView {
     );
   }
 
-  private shouldProcessUpdates(): boolean {
+  private shouldProcessUpdates(force = false): boolean {
     if (!this.containerEl.isConnected) return false;
+    if (force || (this as any).forceDirectEmbedRender === true) return true;
     return this.containerEl.isShown() || this.isActiveLeaf();
   }
 
@@ -928,13 +1004,20 @@ export class CalendarView extends BasesView {
 
     if (!targetHeader) return;
 
-    const isReadingEmbed = !!this.containerEl.closest('.markdown-reading-view, .markdown-rendered');
+    targetHeader.classList.remove("tps-calendar-embedded-hidden-header", "tps-calendar-embedded-visible-header");
+    this.hiddenEmbeddedHeaders.delete(targetHeader);
+    this.styledEmbeddedHeaders.delete(targetHeader);
 
-    if (isEmbedded) {
+    if (isEmbedded && !this.showEmbeddedHeader) {
       targetHeader.classList.add("tps-calendar-embedded-hidden-header");
       this.hiddenEmbeddedHeaders.add(targetHeader);
       this.containerEl.style.setProperty('--tps-bases-header-height', '0px');
       return;
+    }
+
+    if (isEmbedded) {
+      targetHeader.classList.add("tps-calendar-embedded-visible-header");
+      this.styledEmbeddedHeaders.add(targetHeader);
     }
 
     this.syncNativeResultsCountInHeader(targetHeader);
@@ -1142,6 +1225,7 @@ export class CalendarView extends BasesView {
     this.navStep = this.parseNumberConfig(this.plugin.settings.navStep, 7);
     this.showNavButtons = this.plugin.settings.showNavButtons !== false;
     this.embeddedHeight = this.normalizeEmbeddedHeight(this.config.get("embeddedHeight"));
+    this.showEmbeddedHeader = this.parseBooleanLike(this.config.get("showEmbeddedHeader"), true);
     this.applyEmbeddedHeightVariable();
 
     // All Day Limit
@@ -1309,7 +1393,7 @@ export class CalendarView extends BasesView {
     this.trace("updateCalendar:start", {
       force,
     });
-    if (!this.shouldProcessUpdates()) {
+    if (!this.shouldProcessUpdates(force)) {
       this.trace("updateCalendar:skip:not-ready", {
         durationMs: Math.round(performance.now() - updateStartedAt),
       });
@@ -1423,20 +1507,22 @@ export class CalendarView extends BasesView {
       ? normalizePath(this.plugin.settings.archiveFolder.trim())
       : "";
     const vaultExternalSuppressions = this.collectVaultExternalEventSuppressions(allExternalEvents);
-    for (const key of vaultExternalSuppressions.handledExternalEventKeys) {
-      handledExternalEventKeys.add(key);
-      localNoteExternalEventKeys.add(key);
-    }
-    for (const key of vaultExternalSuppressions.suppressedExternalEventIds) {
-      suppressedExternalEventIds.add(key);
-    }
-    for (const [key, timestamps] of vaultExternalSuppressions.localNoteExternalUidStartByUid) {
-      const existing = localNoteExternalUidStartByUid.get(key) || [];
-      for (const timestamp of timestamps) {
-        if (!existing.includes(timestamp)) existing.push(timestamp);
+    const mergeVaultExternalSuppressions = () => {
+      for (const key of vaultExternalSuppressions.handledExternalEventKeys) {
+        handledExternalEventKeys.add(key);
+        localNoteExternalEventKeys.add(key);
       }
-      localNoteExternalUidStartByUid.set(key, existing);
-    }
+      for (const key of vaultExternalSuppressions.suppressedExternalEventIds) {
+        suppressedExternalEventIds.add(key);
+      }
+      for (const [key, timestamps] of vaultExternalSuppressions.localNoteExternalUidStartByUid) {
+        const existing = localNoteExternalUidStartByUid.get(key) || [];
+        for (const timestamp of timestamps) {
+          if (!existing.includes(timestamp)) existing.push(timestamp);
+        }
+        localNoteExternalUidStartByUid.set(key, existing);
+      }
+    };
     logger.log("[CalendarView] Vault external suppression scan", {
       handledExternalEventKeys: vaultExternalSuppressions.handledExternalEventKeys.size,
       localNoteExternalUidStartKeys: vaultExternalSuppressions.localNoteExternalUidStartByUid.size,
@@ -1444,8 +1530,6 @@ export class CalendarView extends BasesView {
 
     const inlineTaskEntries = await this.collectInlineScheduledTaskEntries();
     for (const inlineEntry of inlineTaskEntries) {
-      currentEntries.push(inlineEntry);
-      renderedLocalNotePaths.add(inlineEntry.entry.file.path);
       const inlineExternalMatch = this.findExternalEventForInlineTask(
         (inlineEntry.entry as any).inlineTask as InlineScheduledTask | undefined,
         allExternalEvents,
@@ -1461,6 +1545,16 @@ export class CalendarView extends BasesView {
           inlineExternalMatch.sourceUrl,
         );
       }
+
+      if (!this.entryPassesCalendarFilters(inlineEntry.entry, [
+        inlineEntry.title,
+        inlineEntry.entry.file?.basename,
+        inlineEntry.entry.file?.path,
+      ])) {
+        continue;
+      }
+      currentEntries.push(inlineEntry);
+      renderedLocalNotePaths.add(inlineEntry.entry.file.path);
     }
 
     // logger.log(`[CalendarView] Processing ${queryData.data.length} local entries against ${allExternalEvents.length} external events`);
@@ -1471,8 +1565,7 @@ export class CalendarView extends BasesView {
       const entryFrontmatter = entryCache?.frontmatter as Record<string, any> | undefined;
       const entryFrontmatterTitle = this.getFrontmatterStringCaseInsensitive(entryFrontmatter, "title") || undefined;
       const entryDisplayTitle = this.resolveEntryDisplayTitle(entry, entryFile, entryFrontmatterTitle);
-      const hasEntryFilters = this.config.get("filters") || (this.config as any).viewFilters || (this.config as any).filtersAll;
-      const entryPassesFilters = !hasEntryFilters || this.passesNameFilters([
+      const entryPassesFilters = this.entryPassesCalendarFilters(entry, [
         entryDisplayTitle,
         entryFrontmatterTitle,
         entryFile?.basename,
@@ -1557,6 +1650,9 @@ export class CalendarView extends BasesView {
           cache?.frontmatter as Record<string, any> | undefined,
           eventIdFieldName,
         ) || undefined;
+        const externalIdForMatch = cache?.frontmatter
+          ? getExternalId(this.app, cache.frontmatter as Record<string, unknown>) || undefined
+          : undefined;
         const sourceUrlForMatch = this.getFrontmatterStringCaseInsensitive(
           cache?.frontmatter as Record<string, any> | undefined,
           sourceUrlFieldName,
@@ -1570,7 +1666,11 @@ export class CalendarView extends BasesView {
 
         let externalMatch: ExternalCalendarEvent | undefined;
 
-        if (eventIdForMatch) {
+        if (externalIdForMatch) {
+          externalMatch = allExternalEvents.find(e => this.buildExternalIdForEvent(e) === externalIdForMatch);
+        }
+
+        if (!externalMatch && eventIdForMatch) {
           // logger.log(`[CalendarView] Local note "${entryFile?.path}" has eventId: ${eventIdForMatch}`);
 
           // Try exact match
@@ -1685,9 +1785,7 @@ export class CalendarView extends BasesView {
         }
 
 
-        // Check filters only if they are configured
-        const hasFilters = this.config.get("filters") || (this.config as any).viewFilters || (this.config as any).filtersAll;
-        if (hasFilters && !this.passesNameFilters([
+        if (!this.entryPassesCalendarFilters(entry, [
           baseTitle,
           frontmatterTitle,
           entryFile?.basename,
@@ -1794,19 +1892,20 @@ export class CalendarView extends BasesView {
         const iconSource = this.plugin.settings.noteEventIconSource || "frontmatter";
         const colorTarget = this.plugin.settings.noteEventFrontmatterColorTarget || "both";
         const applyFrontmatterColor = colorSource === "frontmatter" && colorTarget !== "off";
+        const applyColorToCard = colorTarget === "card" || colorTarget === "both";
         const applyFrontmatterColorToCard =
-          applyFrontmatterColor && (colorTarget === "card" || colorTarget === "both");
+          applyFrontmatterColor && applyColorToCard;
         const applyFrontmatterColorToIcon =
           applyFrontmatterColor && (colorTarget === "icon" || colorTarget === "both");
         let backgroundColor = "";
         let borderColor = "";
         const frontmatterColor = this.resolveFrontmatterEventColor(frontmatter);
         const ruleColor = this.normalizeCssColorValue(styleOverride?.color || "");
-        if (colorSource !== "off" && applyFrontmatterColorToCard && frontmatterColor) {
+        if (applyFrontmatterColorToCard && frontmatterColor) {
           backgroundColor = frontmatterColor;
           borderColor = frontmatterColor;
         }
-        if (ruleColor && applyFrontmatterColorToCard) {
+        if (ruleColor && applyColorToCard) {
           backgroundColor = ruleColor;
           borderColor = ruleColor;
         }
@@ -1887,6 +1986,7 @@ export class CalendarView extends BasesView {
 
     // 3. Add remaining external events (those NOT matched to local notes)
     // logger.log(`[CalendarView] Adding unmatched external events. Handled: ${handledExternalEventKeys.size}, Total: ${allExternalEvents.length}`);
+    mergeVaultExternalSuppressions();
 
     let skippedHandledExternal = 0;
     let skippedSuppressedExternal = 0;
@@ -2386,8 +2486,7 @@ export class CalendarView extends BasesView {
     const startOfMaxDay = new Date(maxDate);
     startOfMaxDay.setHours(0, 0, 0, 0);
 
-    const diffMs = startOfMaxDay.getTime() - startOfMinDay.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1; // +1 for inclusive
+    const diffDays = getInclusiveCalendarDayCount(startOfMinDay, startOfMaxDay);
     this.filterRangeDays = diffDays;
 
     const filterRangeKey = `${startOfMinDay.getTime()}-${startOfMaxDay.getTime()}-${diffDays}`;
@@ -2985,6 +3084,8 @@ export class CalendarView extends BasesView {
       const createRange = allDay ? { start, end } : this.resolveDefaultCreateRange(start, end);
       const selection = await this.promptForCalendarCreateSelection();
       if (!selection) return;
+      const filterSources = await this.readBaseFileFilterSources();
+      const createMode = this.resolveEffectiveCreateMode(filterSources);
 
       if (selection.action === "track-time") {
         const timeSelection = await this.promptForTimeTrackingTarget(createRange.start, createRange.end);
@@ -2995,12 +3096,14 @@ export class CalendarView extends BasesView {
         const target = timeSelection.target;
         logger.log("[CalendarView] Scheduling note for time tracking from drag-create", {
           targetPath: target.file.path,
+          taskAssociationPath: createMode === "task" ? target.file.path : "",
           targetType: target.type,
           targetTitle: target.title,
           start: createRange.start.toISOString(),
           end: createRange.end.toISOString(),
+          createMode,
         });
-        if ((this.plugin.settings.initialCreateMode || "note") === "task") {
+        if (createMode === "task") {
           await this.createTrackingTaskForExistingNote(target.file, createRange.start, createRange.end, allDay);
           new Notice(`Created task for ${target.file.basename}.`);
         } else {
@@ -3015,26 +3118,16 @@ export class CalendarView extends BasesView {
       if (!titlePrompt) return;
       const title = titlePrompt.title;
 
-      const filterSources = await this.readBaseFileFilterSources();
-      const createMode = this.resolveEffectiveCreateMode(filterSources);
-      const creationDefaults = this.getFilterCreationDefaults(filterSources);
-      const taskDefaults = this.extractTaskLineDefaultsFromFilters(filterSources);
-      const file = await this.newEventService.createEvent(createRange.start, createRange.end, undefined, {
-        createMode,
+      const createOptions = this.buildCalendarNewEventOptions(filterSources, {
         allDay: !!allDay,
-        useBaseDefaults: true,
-        frontmatterDefaults: creationDefaults.frontmatter,
-        taskTags: taskDefaults.tags,
-        taskStatus: taskDefaults.status,
-        taskTargetPath: taskDefaults.targetPath,
-        typeFolderOverride: creationDefaults.folderPath,
         titleOverride: title,
         templateOverride: titlePrompt.templatePath || undefined,
         templateTypeOverride: titlePrompt.templatePath ? "file" : undefined,
       });
+      const file = await this.newEventService.createEvent(createRange.start, createRange.end, undefined, createOptions);
       if (file) {
         await this.updateCalendar();
-        await this.openOrFocusFile(file);
+        await this.openCreatedFileIfConfigured(file, createMode);
       }
     } catch (error) {
       logger.error('[CalendarView] Error in handleCreateRange:', error);
@@ -3068,6 +3161,7 @@ export class CalendarView extends BasesView {
   private async promptForCalendarCreateSelection(): Promise<{ action: "track-time" | "create-event" } | null> {
     return new Promise((resolve) => {
       const modal = new Modal(this.app);
+      modal.modalEl.addClass("tps-keyboard-aware-modal");
       let resolved = false;
       const finish = (value: { action: "track-time" | "create-event" } | null) => {
         if (resolved) return;
@@ -3158,77 +3252,21 @@ export class CalendarView extends BasesView {
   private async createTrackingTaskForExistingNote(file: TFile, start: Date, end: Date, allDay?: boolean): Promise<void> {
     const filterSources = await this.readBaseFileFilterSources();
     const filterDefaults = this.extractTaskLineDefaultsFromFilters(filterSources);
-    const overrides: Record<string, any> = {};
+    const overrides: Record<string, any> = { associatedNotePath: file.path };
     if (filterDefaults.status) overrides.status = filterDefaults.status;
 
     if ((this.plugin.settings.taskCreateDestination || "daily-note") === "daily-note") {
       const targetPath = filterDefaults.targetPath || this.plugin.settings.taskCreateTargetPath || null;
-      const sourcePath = targetPath || this.getDailyNotePathForDate(start);
-      const title = this.buildTaskLinkForFile(file, sourcePath);
-      await this.newEventService.createTaskInDailyNote(title, start, end, filterDefaults.tags, overrides, targetPath, allDay);
+      await this.newEventService.createTaskInDailyNote(file.basename, start, end, filterDefaults.tags, overrides, targetPath, allDay);
       return;
     }
 
-    const title = this.buildTaskLinkForFile(file, "");
-    await this.newEventService.createEvent(start, end, undefined, {
-      createMode: "task",
+    await this.newEventService.createEvent(start, end, undefined, this.buildCalendarNewEventOptions(filterSources, {
       allDay,
       titleOverride: file.basename,
-      taskTitleOverride: title,
-      frontmatterDefaults: this.getFilterCreationDefaults(filterSources).frontmatter,
-    });
-  }
-
-  private buildTaskLinkForFile(file: TFile, sourcePath: string): string {
-    const alias = this.escapeLinkAlias(file.basename);
-    const generated = this.app.fileManager.generateMarkdownLink(file, sourcePath, undefined, file.basename);
-    const useMarkdownLinks = (this.app.vault as any).getConfig?.("useMarkdownLinks") === true;
-    if (useMarkdownLinks) {
-      if (/^!?\[[^\]]*]\([^)]+\)$/.test(generated.trim())) return generated;
-      return `[${alias}](${this.encodeMarkdownLinkTarget(this.resolveMarkdownLinkTarget(file, sourcePath))})`;
-    }
-
-    if (/^!?\[\[[^[\]]+]]$/.test(generated.trim())) return generated;
-    const target = this.resolveWikiLinkTarget(file, sourcePath);
-    return target === alias ? `[[${target}]]` : `[[${target}|${alias}]]`;
-  }
-
-  private getDailyNotePathForDate(date: Date): string {
-    const format = this.getDailyNoteDateFormat() || "YYYY-MM-DD";
-    const dailyNotesPlugin = (this.app as any)?.internalPlugins?.getPluginById?.("daily-notes")
-      || (this.app as any)?.internalPlugins?.plugins?.["daily-notes"];
-    const folder = this.normalizeDailyTargetFolder(dailyNotesPlugin?.instance?.options?.folder);
-    const moment = (window as any).moment;
-    const basename = typeof moment === "function"
-      ? moment(date).format(format)
-      : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    return normalizePath(folder ? `${folder}/${basename}.md` : `${basename}.md`);
-  }
-
-  private resolveWikiLinkTarget(file: TFile, sourcePath: string): string {
-    const linktext = this.app.metadataCache.fileToLinktext(file, sourcePath, true) || file.path.replace(/\.md$/i, "");
-    return linktext.replace(/\|/g, "\\|");
-  }
-
-  private resolveMarkdownLinkTarget(file: TFile, sourcePath: string): string {
-    const generated = this.app.fileManager.generateMarkdownLink(file, sourcePath, undefined, file.basename);
-    const match = generated.match(/^!?\[[^\]]*]\(([^)]+)\)$/);
-    return match?.[1]?.trim() || file.path;
-  }
-
-  private escapeLinkAlias(alias: string): string {
-    return alias.replace(/[\[\]]/g, "").replace(/\|/g, "\\|").trim() || "Note";
-  }
-
-  private encodeMarkdownLinkTarget(target: string): string {
-    const trimmed = String(target || "").trim();
-    if (!trimmed) return trimmed;
-    if (trimmed.startsWith("<") && trimmed.endsWith(">")) return trimmed;
-    try {
-      return encodeURI(decodeURI(trimmed));
-    } catch {
-      return encodeURI(trimmed);
-    }
+      taskTitleOverride: file.basename,
+      taskAssociatedNotePath: file.path,
+    }));
   }
 
   private async createStandaloneTimeTrackingNote(title: string): Promise<TFile | null> {
@@ -3295,6 +3333,7 @@ export class CalendarView extends BasesView {
   private async promptForCalendarEventTitle(): Promise<CalendarEventTitlePromptResult | null> {
     return new Promise((resolve) => {
       const modal = new Modal(this.app);
+      modal.modalEl.addClass("tps-keyboard-aware-modal");
       let resolved = false;
       let selectedTemplate: TFile | null = null;
       const finish = (value: CalendarEventTitlePromptResult | null) => {
@@ -3466,14 +3505,25 @@ export class CalendarView extends BasesView {
     return Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path));
   }
 
-  private async handleCreateMeetingNote(event: ExternalCalendarEvent): Promise<void> {
+  private async handleCreateMeetingNote(
+    event: ExternalCalendarEvent,
+    options: { forceNoteMode?: boolean } = {},
+  ): Promise<void> {
     try {
       const startField = this.getNoteField(this.startDateProp);
       const endField = this.getNoteField(this.endDateProp);
       const filterSources = await this.readBaseFileFilterSources();
-      const createMode = this.resolveEffectiveCreateMode(filterSources);
+      const resolvedCreateMode = this.resolveEffectiveCreateMode(filterSources);
+      const createMode = options.forceNoteMode === true ? "note" : resolvedCreateMode;
       const creationDefaults = this.getFilterCreationDefaults(filterSources);
       const taskDefaults = this.extractTaskLineDefaultsFromFilters(filterSources);
+
+      logger.flow("AssociatedTaskNote", "external-create:route", {
+        forcedNoteMode: options.forceNoteMode === true,
+        resolvedCreateMode,
+        createMode,
+        hasSource: !!event.sourceUrl,
+      });
 
       const calendarConfig = event.sourceUrl
         ? this.plugin.getExternalCalendarConfig(event.sourceUrl)
@@ -3518,29 +3568,23 @@ export class CalendarView extends BasesView {
           );
           if (file) {
             new Notice(`Created task for: ${event.title}`);
-            await this.openOrFocusFile(file);
+            await this.openCreatedFileIfConfigured(file, createMode);
             await this.updateCalendar(true);
           }
           return;
         }
 
-        const file = await this.newEventService.createEvent(event.startDate, event.endDate, taskOverrides, {
-          createMode,
+        const file = await this.newEventService.createEvent(event.startDate, event.endDate, taskOverrides, this.buildCalendarNewEventOptions(filterSources, {
           allDay: event.isAllDay,
           titleOverride: event.title || "External calendar event",
           taskTitleOverride: taskTitle,
-          useBaseDefaults: true,
-          frontmatterDefaults: creationDefaults.frontmatter,
-          taskTags: taskDefaults.tags,
-          taskStatus: taskDefaults.status,
-          taskTargetPath: taskDefaults.targetPath,
           typeFolderOverride: finalFolderPath,
           templateOverride: templatePath || undefined,
           templateTypeOverride: templatePath ? "file" : undefined,
-        });
+        }));
         if (file) {
           new Notice(`Created task note: ${file.basename}`);
-          await this.openOrFocusFile(file);
+          await this.openCreatedFileIfConfigured(file, createMode);
           await this.updateCalendar(true);
         }
         return;
@@ -3578,10 +3622,7 @@ export class CalendarView extends BasesView {
   }
 
   private buildExternalEventTaskTitle(event: ExternalCalendarEvent): string {
-    const title = this.escapeMarkdownLinkText(event.title || "External calendar event");
-    const url = String(event.url || "").trim();
-    if (!/^https?:\/\//i.test(url)) return title;
-    return `[${title}](${this.encodeMarkdownLinkTarget(url)})`;
+    return this.escapeMarkdownLinkText(event.title || "External calendar event");
   }
 
   private buildExternalEventTaskOverrides(event: ExternalCalendarEvent): Record<string, any> {
@@ -4212,31 +4253,13 @@ export class CalendarView extends BasesView {
     // If the dropped file is a template, create a new event from it instead of modifying the template
     if (this.isTemplateFile(file)) {
       try {
-        const end = allDay
-          ? new Date(start.getTime() + 24 * 60 * 60 * 1000)
-          : new Date(start.getTime() + this.defaultEventDuration * 60000);
         const filterSources = await this.readBaseFileFilterSources();
-        const createMode = this.resolveEffectiveCreateMode(filterSources);
-        const creationDefaults = this.getFilterCreationDefaults(filterSources);
-        const taskDefaults = this.extractTaskLineDefaultsFromFilters(filterSources);
-        const created = await this.newEventService.createEvent(start, end, undefined, {
-          createMode,
-          allDay,
-          useBaseDefaults: true,
-          frontmatterDefaults: creationDefaults.frontmatter,
-          taskTags: taskDefaults.tags,
-          taskStatus: taskDefaults.status,
-          taskTargetPath: taskDefaults.targetPath,
-          typeFolderOverride: creationDefaults.folderPath,
-          templateOverride: file.path,
-          templateTypeOverride: "file",
-        });
+        const request = this.buildCalendarDropCreateRequest("template-file", file, start, allDay, filterSources);
+        const created = await this.newEventService.createEvent(request.start, request.end, undefined, request.options);
+        const createMode = request.options.createMode;
         if (created) {
           await this.updateCalendar();
-          const leaf = this.getTargetLeafForOpen(true);
-          if (leaf) {
-            await leaf.openFile(created);
-          }
+          await this.openCreatedFileIfConfigured(created, createMode);
         }
       } catch (error) {
         logger.error('[CalendarView] Error creating event from template drop:', error);
@@ -4261,31 +4284,14 @@ export class CalendarView extends BasesView {
 
       if (choice === "new-event") {
         try {
-          const end = allDay
-            ? new Date(start.getTime() + 24 * 60 * 60 * 1000)
-            : new Date(start.getTime() + this.defaultEventDuration * 60000);
           const filterSources = await this.readBaseFileFilterSources();
-          const createMode = this.resolveEffectiveCreateMode(filterSources);
-          const creationDefaults = this.getFilterCreationDefaults(filterSources);
-          const taskDefaults = this.extractTaskLineDefaultsFromFilters(filterSources);
-          const created = await this.newEventService.createEvent(start, end, undefined, {
-            createMode,
-            allDay,
-            useBaseDefaults: true,
-            frontmatterDefaults: creationDefaults.frontmatter,
-            taskTags: taskDefaults.tags,
-            taskStatus: taskDefaults.status,
-            taskTargetPath: taskDefaults.targetPath,
-            typeFolderOverride: creationDefaults.folderPath,
-            titleOverride: this.resolveDroppedFileEventTitle(file),
-          });
+          const request = this.buildCalendarDropCreateRequest("unscheduled-note", file, start, allDay, filterSources);
+          const created = await this.newEventService.createEvent(request.start, request.end, undefined, request.options);
+          const createMode = request.options.createMode;
           if (created) {
-            await this.linkExistingNoteToEvent(created, file);
+            if (createMode === "note") await this.linkExistingNoteToEvent(created, file);
             await this.updateCalendar();
-            const leaf = this.getTargetLeafForOpen(true);
-            if (leaf) {
-              await leaf.openFile(created);
-            }
+            await this.openCreatedFileIfConfigured(created, createMode);
           }
         } catch (error) {
           logger.error('[CalendarView] Error creating event from unscheduled note drop:', error);
@@ -4306,18 +4312,32 @@ export class CalendarView extends BasesView {
         const seconds = String(date.getSeconds()).padStart(2, "0");
         return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
       };
-
-      // Set the scheduled date
       frontmatter[startField] = formatDateTimeForFrontmatter(start);
-
-
-      // Set all-day flag if configured
-      if (allDayField) {
-        frontmatter[allDayField] = allDay;
-      }
+      this.setAllDayFrontmatterValue(frontmatter, allDayField, allDay);
     });
+    emitFilesUpdated(this.app, [file.path], "tps-calendar-drop");
+    await this.updateCalendar();
+  }
 
-    this.updateCalendar();
+  private buildCalendarDropCreateRequest(
+    kind: "template-file" | "unscheduled-note",
+    file: TFile,
+    start: Date,
+    allDay: boolean,
+    filterSources: unknown[],
+  ): ReturnType<typeof buildCalendarDropCreateRequestFromFilters> {
+    return buildCalendarDropCreateRequestFromFilters({
+      kind,
+      start,
+      allDay,
+      defaultEventDurationMinutes: this.defaultEventDuration,
+      droppedFilePath: file.path,
+      droppedFileTitle: kind === "unscheduled-note" ? this.resolveDroppedFileEventTitle(file) : null,
+      filters: filterSources,
+      initialCreateMode: this.plugin.settings.initialCreateMode,
+      creationDefaults: this.getFilterCreationDefaults(filterSources),
+      taskDefaults: this.extractTaskLineDefaultsFromFilters(filterSources),
+    });
   }
 
   private async handleExternalTaskDrop(
@@ -4495,85 +4515,17 @@ export class CalendarView extends BasesView {
   }
 
   private extractTaskLineDefaultsFromFilters(filters: unknown[]): { tags: string[]; status: string | null; targetPath: string | null } {
-    const tags = new Set<string>();
-    let status: string | null = null;
-    let targetPath: string | null = null;
-    for (const [sourceIndex, source] of filters.entries()) {
-      const conditions = this.collectFirstMatchPositiveFilterConditions(source);
-      if (conditions.length === 0) {
-        logger.log("[CalendarView] extractTaskLineDefaultsFromFilters:source", {
-          sourceIndex,
-          matched: false,
-        });
-        continue;
-      }
-
-      logger.log("[CalendarView] extractTaskLineDefaultsFromFilters:source", {
-        sourceIndex,
-        matched: true,
-        conditionCount: conditions.length,
-      });
-
-      const sourceTags = new Set<string>();
-      const sourceStatuses = new Set<string>();
-      const sourceTargetPaths = new Set<string>();
-
-      for (const condition of conditions) {
-        const propertyRaw = String(condition.property || '');
-        const normalizedProperty = propertyRaw.trim().toLowerCase();
-        const isTaskProperty = /^task\./i.test(normalizedProperty);
-        const isTaskLikeProperty = isTaskProperty && !normalizedProperty.startsWith('note.');
-        const prop = normalizedProperty
-          .replace(/^task\./i, '')
-          .replace(/^note\./i, '')
-          .replace(/^file\./i, '')
-          .toLowerCase();
-        const value = normalizeFilterValue(condition.value);
-        if (!value) continue;
-        const isImplicitTaskProperty = ['tag', 'tags', 'status', 'checkboxstatus', 'path', 'filepath'].includes(prop);
-        const isAllowedTaskField = isTaskLikeProperty || (isImplicitTaskProperty && !normalizedProperty.startsWith('note.'));
-        if ((prop === 'tag' || prop === 'tags') && isAllowedTaskField) {
-          sourceTags.add(this.normalizeInlineTaskTag(value));
-        } else if ((prop === 'status' || prop === 'checkboxstatus') && isAllowedTaskField) {
-          sourceStatuses.add(value.trim().toLowerCase());
-        } else if ((prop === 'path' || prop === 'filepath') && isAllowedTaskField) {
-          const targetPath = this.normalizeTaskTargetPath(value);
-          if (targetPath) sourceTargetPaths.add(targetPath);
-        }
-      }
-
-      if (!status && sourceStatuses.size === 1) {
-        status = Array.from(sourceStatuses)[0] ?? null;
-      }
-      if (!targetPath && sourceTargetPaths.size === 1) {
-        targetPath = Array.from(sourceTargetPaths)[0] ?? null;
-      }
-      if (tags.size === 0 && sourceTags.size > 0) {
-        for (const value of sourceTags) {
-          tags.add(value);
-        }
-      }
-    }
-    logger.log('[CalendarView] extractTaskLineDefaultsFromFilters', {
-      tags: Array.from(tags),
-      status,
-      targetPath,
+    const defaults = extractCalendarTaskLineDefaultsFromFilters(filters, {
+      onSource: (info) => {
+        logger.log("[CalendarView] extractTaskLineDefaultsFromFilters:source", info);
+      },
     });
-    return {
-      tags: Array.from(tags).filter(Boolean),
-      status,
-      targetPath,
-    };
-  }
-
-  private normalizeTaskTargetPath(value: unknown): string | null {
-    const raw = String(value || "").trim()
-      .replace(/^\[\[|\]\]$/g, "")
-      .replace(/^"+|"+$/g, "")
-      .replace(/^'+|'+$/g, "");
-    if (!raw) return null;
-    const normalized = normalizePath(raw).replace(/^\/+/, "");
-    return normalized.toLowerCase().endsWith(".md") ? normalized : `${normalized}.md`;
+    logger.log('[CalendarView] extractTaskLineDefaultsFromFilters', {
+      tags: defaults.tags,
+      status: defaults.status,
+      targetPath: defaults.targetPath,
+    });
+    return defaults;
   }
 
   private async applyCalendarTaskDropPlan(
@@ -4705,6 +4657,7 @@ export class CalendarView extends BasesView {
   private async promptForUnscheduledDropChoice(file: TFile): Promise<"add-scheduled" | "new-event" | null> {
     return new Promise((resolve) => {
       const modal = new Modal(this.app);
+      modal.modalEl.addClass("tps-keyboard-aware-modal");
       let resolved = false;
       const finish = (value: "add-scheduled" | "new-event" | null) => {
         if (resolved) return;
@@ -4883,6 +4836,7 @@ export class CalendarView extends BasesView {
 
     return new Promise((resolve) => {
       const modal = new Modal(this.app);
+      modal.modalEl.addClass("tps-keyboard-aware-modal");
       modal.titleEl.setText(`Create ${label}?`);
 
       const body = modal.contentEl.createDiv({ cls: "tps-calendar-create-day-target-modal" });
@@ -5030,11 +4984,25 @@ export class CalendarView extends BasesView {
     await this.openFileInNewTab(file, options);
   }
 
+  private async openCreatedFileIfConfigured(file: TFile, createMode: "note" | "task"): Promise<void> {
+    if (createMode === "task" && this.plugin.settings.openTaskDestinationAfterCreate === false) {
+      return;
+    }
+    await this.openOrFocusFile(file);
+  }
+
   private showInlineTaskOpenMenu(evt: MouseEvent, calEntry: CalendarEntry): void {
     const inlineTask = (calEntry.entry as any)?.inlineTask as InlineScheduledTask | undefined;
     if (!inlineTask) return;
 
-    const { linkedFile, externalEvent } = this.findAssociatedNoteForInlineTask(inlineTask, calEntry.startDate);
+    const { linkedFile, externalEvent, source } = this.findAssociatedNoteForInlineTask(inlineTask, calEntry.startDate);
+    logger.flow("AssociatedTaskNote", "menu:resolved", {
+      path: inlineTask.file.path,
+      lineNumber: Math.max(0, Math.floor(inlineTask.lineNumber)) + 1,
+      source,
+      hasLinkedFile: !!linkedFile,
+      hasExternalEvent: !!externalEvent,
+    });
     const menu = new Menu();
 
     if (linkedFile) {
@@ -5046,34 +5014,107 @@ export class CalendarView extends BasesView {
             void this.openOrFocusFile(linkedFile);
           });
       });
-    } else if (externalEvent) {
+    } else {
       menu.addItem((item) => {
         item
           .setTitle("Create associated note")
           .setIcon("file-plus")
           .onClick(() => {
-            void this.handleCreateMeetingNote(externalEvent);
+            if (externalEvent) {
+              void this.handleCreateMeetingNote(externalEvent, { forceNoteMode: true });
+              return;
+            }
+            void this.createAssociatedNoteForInlineTask(inlineTask);
           });
-      });
-    } else {
-      menu.addItem((item) => {
-        item
-          .setTitle("No associated note found")
-          .setIcon("circle-help")
-          .setDisabled(true);
       });
     }
 
-    menu.addItem((item) => {
-      item
-        .setTitle("Open source task line")
-        .setIcon("list")
-        .onClick(() => {
-          void this.openCalendarInlineTaskSource(calEntry);
-        });
-    });
+    const addedGcmTaskItems = this.addGcmInlineTaskMenuItems(menu, inlineTask, calEntry);
+    if (!addedGcmTaskItems) {
+      menu.addItem((item) => {
+        item
+          .setTitle("Open source task line")
+          .setIcon("list")
+          .onClick(() => {
+            void this.openCalendarInlineTaskSource(calEntry);
+          });
+      });
+    }
 
     menu.showAtMouseEvent(evt);
+  }
+
+  private async createAssociatedNoteForInlineTask(task: InlineScheduledTask): Promise<void> {
+    const lineIndex = Math.max(0, Math.floor(task.lineNumber));
+    const service = this.getGcmPluginInstance()?.dailyInboxLineService
+      ?? this.getGcmApi()?.dailyInboxLineService
+      ?? this.getGcmServices()?.dailyInboxLineService;
+    if (typeof service?.createNoteForLine !== "function") {
+      logger.flow("AssociatedTaskNote", "create:unavailable", {
+        path: task.file.path,
+        lineNumber: lineIndex + 1,
+      });
+      new Notice("Task note service is unavailable. Make sure TPS Global Context Menu is enabled.");
+      return;
+    }
+
+    logger.flow("AssociatedTaskNote", "create:start", {
+      path: task.file.path,
+      lineNumber: lineIndex + 1,
+    });
+    try {
+      const file = await service.createNoteForLine({
+        file: task.file,
+        lineIndex,
+        lineNumber: lineIndex + 1,
+        rawLine: task.line,
+        title: task.title,
+        checkboxToken: task.checkboxState || "[ ]",
+        isCalendarTask: true,
+      });
+      logger.flow("AssociatedTaskNote", "create:done", {
+        path: task.file.path,
+        lineNumber: lineIndex + 1,
+        associatedPath: file instanceof TFile ? file.path : "",
+        createdOrReused: file instanceof TFile,
+      });
+      if (file instanceof TFile) await this.updateCalendar(true);
+    } catch (error) {
+      logger.flowError("AssociatedTaskNote", "create:failed", error, {
+        path: task.file.path,
+        lineNumber: lineIndex + 1,
+      });
+      new Notice(`Failed to create task note: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private addGcmInlineTaskMenuItems(menu: Menu, inlineTask: InlineScheduledTask, calEntry: CalendarEntry): boolean {
+    const taskLineContextMenuService = this.getGcmTaskLineContextMenuService();
+    if (typeof taskLineContextMenuService?.addTaskLineMenuItems !== "function") return false;
+
+    const lineIndex = Math.max(0, Math.floor(inlineTask.lineNumber));
+    menu.addSeparator();
+    taskLineContextMenuService.addTaskLineMenuItems(
+      menu,
+      {
+        file: inlineTask.file,
+        lineNumber: lineIndex + 1,
+        lineIndex,
+        rawLine: inlineTask.line,
+        title: inlineTask.title,
+        checkboxToken: inlineTask.checkboxState || "[ ]",
+        isCalendarTask: true,
+        calendarAllDay: this.isInlineTaskCalendarAllDay(inlineTask, calEntry),
+      },
+      { includeNoteActions: false },
+    );
+    return true;
+  }
+
+  private isInlineTaskCalendarAllDay(inlineTask: InlineScheduledTask, calEntry: CalendarEntry): boolean {
+    if (calEntry.forceAllDay) return true;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(inlineTask.scheduledValue || "").trim())) return true;
+    return /^true$/i.test(String(inlineTask.inlineProperties.get("allday") || inlineTask.inlineProperties.get("allDay") || ""));
   }
 
   private async openCalendarInlineTaskSource(calEntry: CalendarEntry): Promise<void> {
@@ -5086,20 +5127,25 @@ export class CalendarView extends BasesView {
     });
   }
 
-  private findAssociatedNoteForInlineTask(task: InlineScheduledTask, occurrenceDate?: Date): {
-    linkedFile: TFile | null;
-    externalEvent: ExternalCalendarEvent | null;
-  } {
-    const linkedFile = this.findLinkedNoteForInlineTaskLine(task);
+  private findAssociatedNoteForInlineTask(task: InlineScheduledTask, occurrenceDate?: Date): InlineTaskNoteAssociation {
+    const childAssociation = this.findTaskChildNoteForInlineTask(task);
     const externalEvent = this.findExternalEventForInlineTask(task, this.loadedExternalEvents);
-    if (linkedFile) return { linkedFile, externalEvent };
-    if (externalEvent) {
+    if (childAssociation.file) {
       return {
-        linkedFile: this.findLinkedNoteForExternalEventInstance(externalEvent, task, occurrenceDate),
+        linkedFile: childAssociation.file,
         externalEvent,
+        source: childAssociation.source,
       };
     }
-    return { linkedFile: null, externalEvent: null };
+    if (externalEvent) {
+      const linkedFile = this.findLinkedNoteForExternalEventInstance(externalEvent, task, occurrenceDate);
+      return {
+        linkedFile,
+        externalEvent,
+        source: linkedFile ? "external-identity" : "none",
+      };
+    }
+    return { linkedFile: null, externalEvent: null, source: "none" };
   }
 
   private findLinkedNoteForExternalEventInstance(event: ExternalCalendarEvent, task: InlineScheduledTask, occurrenceDate?: Date): TFile | null {
@@ -5130,17 +5176,74 @@ export class CalendarView extends BasesView {
     return null;
   }
 
-  private findLinkedNoteForInlineTaskLine(task: InlineScheduledTask): TFile | null {
-    const source = task.line || "";
-    const wikilinkPattern = /\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]*)?\]\]/g;
-    let match: RegExpExecArray | null;
-    while ((match = wikilinkPattern.exec(source)) !== null) {
-      const linkPath = match[1]?.trim();
-      if (!linkPath) continue;
-      const file = this.app.metadataCache.getFirstLinkpathDest(linkPath, task.file.path);
-      if (file) return file;
+  private findExplicitAssociatedNoteForInlineTask(task: InlineScheduledTask): {
+    file: TFile | null;
+    source: TaskAssociatedNoteCandidate["source"] | "none";
+  } {
+    for (const candidate of getTaskAssociatedNoteCandidates(task.inlineProperties, task.line)) {
+      const normalized = normalizePath(candidate.path).replace(/^\/+/, "");
+      const directPaths = [normalized];
+      if (!normalized.toLowerCase().endsWith(".md")) directPaths.push(`${normalized}.md`);
+      for (const path of directPaths) {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) return { file, source: candidate.source };
+      }
+      const linkedFile = this.app.metadataCache.getFirstLinkpathDest(normalized, task.file.path);
+      if (linkedFile instanceof TFile) return { file: linkedFile, source: candidate.source };
     }
-    return null;
+    return { file: null, source: "none" };
+  }
+
+  private findTaskChildNoteForInlineTask(task: InlineScheduledTask): {
+    file: TFile | null;
+    source: TaskAssociatedNoteCandidate["source"] | "parent-title" | "none";
+  } {
+    const explicit = this.findExplicitAssociatedNoteForInlineTask(task);
+    if (explicit.file) return explicit;
+    const parentLinked = this.findUniqueParentLinkedNoteForInlineTask(task);
+    return parentLinked
+      ? { file: parentLinked, source: "parent-title" }
+      : { file: null, source: "none" };
+  }
+
+  private findUniqueParentLinkedNoteForInlineTask(task: InlineScheduledTask): TFile | null {
+    const parentKeys = this.getTaskAssociationParentKeys();
+    return selectUniqueParentLinkedTaskNote(
+      this.app.vault.getMarkdownFiles().filter((candidate) => candidate.path !== task.file.path),
+      task.title,
+      (candidate) => {
+        const frontmatter = this.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, any> | undefined;
+        return [this.getFrontmatterValueCaseInsensitive(frontmatter, "title"), candidate.basename];
+      },
+      (candidate) => {
+        const frontmatter = this.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, any> | undefined;
+        return parentKeys.some((key) => {
+          const rawValue = this.getFrontmatterValueCaseInsensitive(frontmatter, key);
+          const values = Array.isArray(rawValue)
+            ? rawValue
+            : rawValue === undefined || rawValue === null
+              ? []
+              : [rawValue];
+          return values.some((value) => this.calendarLinkReferencesFile(value, candidate.path, task.file));
+        });
+      },
+    );
+  }
+
+  private getTaskAssociationParentKeys(): string[] {
+    const gcmPlugin = this.getGcmPluginInstance();
+    const serviceKeys = this.getGcmServices()?.parents?.getParentKeys?.();
+    return Array.from(new Set([
+      this.plugin.settings.parentLinkKey,
+      gcmPlugin?.settings?.parentLinkFrontmatterKey,
+      gcmPlugin?.settings?.parentLinkKey,
+      ...(Array.isArray(serviceKeys) ? serviceKeys : []),
+      "parent",
+      "parents",
+      "childOf",
+    ]
+      .map((key) => String(key || "").trim())
+      .filter(Boolean)));
   }
 
   private async openFileInNewTab(file: TFile, options: { forceLivePreview?: boolean; lineNumber?: number; revealCompleted?: boolean } = {}): Promise<void> {
@@ -5256,6 +5359,15 @@ export class CalendarView extends BasesView {
       const viewFile = (leaf.view as any)?.file;
       if (viewFile instanceof TFile && viewFile.path === file.path) {
         match = leaf;
+        return;
+      }
+      try {
+        const stateFile = (leaf.getViewState?.() as any)?.state?.file;
+        if (stateFile === file.path) {
+          match = leaf;
+        }
+      } catch {
+        // Some transient leaves can throw while restoring state.
       }
     });
     return match;
@@ -5482,6 +5594,7 @@ export class CalendarView extends BasesView {
             defaultEventDuration={this.defaultEventDuration}
             embeddedHeight={this.embeddedHeight}
             isEmbedded={this.isEmbeddedCalendarContext()}
+            preserveEmbeddedDayCount={this.preserveEmbeddedDayCount}
             onDateClick={(date, el, ev) => this.handleDateClick(date, el, ev)}
             // showHiddenEvents={this.showHiddenEvents}
             // onToggleHiddenEvents={() => this.toggleHiddenEvents()}
@@ -5549,12 +5662,14 @@ export class CalendarView extends BasesView {
 
   private isEditable(): boolean {
     if (!this.startDateProp) return false;
+    const isTaskDateProperty = (propId: unknown): boolean =>
+      typeof propId === "string" && /^task\./i.test(propId.trim());
     const startDateProperty = parsePropertyId(this.startDateProp);
-    if (startDateProperty.type !== "note") return false;
+    if (startDateProperty.type !== "note" && !isTaskDateProperty(this.startDateProp)) return false;
 
     if (!this.endDateProp) return true;
     const endDateProperty = parsePropertyId(this.endDateProp);
-    if (endDateProperty.type !== "note") return false;
+    if (endDateProperty.type !== "note" && !isTaskDateProperty(this.endDateProp)) return false;
 
     return true;
   }
@@ -5571,9 +5686,14 @@ export class CalendarView extends BasesView {
         );
 
     const inlineTask = (calEntry?.entry as any)?.inlineTask as InlineScheduledTask | undefined;
-    if (inlineTask && typeof inlineTask.lineNumber === "number") {
-      const handled = this.openTaskLineContextMenu(evt, entry, calEntry);
-      if (handled) return;
+    if (calEntry && inlineTask && typeof inlineTask.lineNumber === "number") {
+      logger.flow("CalendarTaskMenu", "context-menu:task-route", {
+        path: inlineTask.file.path,
+        lineNumber: Math.max(0, Math.floor(inlineTask.lineNumber)) + 1,
+        route: "task-specific",
+      });
+      this.showInlineTaskOpenMenu(evt, calEntry);
+      return;
     }
 
     if (calEntry?.isArchivedExternalPlaceholder && calEntry.externalEvent) {
@@ -5828,6 +5948,7 @@ export class CalendarView extends BasesView {
   private async promptConvertToMeetingNote(event: ExternalCalendarEvent): Promise<boolean> {
     const confirmed = await new Promise<boolean>((resolve) => {
       const modal = new Modal(this.app);
+      modal.modalEl.addClass("tps-keyboard-aware-modal");
       modal.contentEl.createEl('h3', { text: 'Convert to Meeting Note?' });
       modal.contentEl.createEl('p', {
         text: 'This is a read-only calendar event. To edit it, you need to convert it to a meeting note first.'
@@ -5975,7 +6096,7 @@ export class CalendarView extends BasesView {
 
         // Update allDay property if configured
         if (allDayField && allDay !== undefined) {
-          frontmatter[allDayField] = allDay;
+          this.setAllDayFrontmatterValue(frontmatter, allDayField, allDay);
         }
       });
     } catch (e) {
@@ -6017,9 +6138,7 @@ export class CalendarView extends BasesView {
           }
         }
 
-        if (allDayField) {
-          frontmatter[allDayField] = event.isAllDay;
-        }
+        this.setAllDayFrontmatterValue(frontmatter, allDayField, event.isAllDay);
       });
     } catch (e) {
       logger.error("[Calendar] Failed to sync note to event", e);
@@ -6121,6 +6240,24 @@ export class CalendarView extends BasesView {
       logger.warn("[CalendarView] Failed to evaluate entry filters:", error);
       return { applied: false, result: true };
     }
+  }
+
+  private entryPassesCalendarFilters(
+    entry: BasesEntry,
+    fallbackNames: Array<string | null | undefined> = [],
+  ): boolean {
+    const filterSources = this.getCalendarFilterSources();
+    let evaluatedEntryFilter = false;
+
+    for (const source of filterSources) {
+      const { applied, result } = this.evaluateEntryFilterSource(source, entry);
+      if (!applied) continue;
+      evaluatedEntryFilter = true;
+      if (!result) return false;
+    }
+
+    if (evaluatedEntryFilter) return true;
+    return this.passesNameFilters(fallbackNames);
   }
 
   private extractEntryFilterCondition(node: any): { property: string; operator: string; value: unknown } | null {
@@ -6754,6 +6891,20 @@ export class CalendarView extends BasesView {
     return Object.keys(frontmatter).find((candidate) => candidate.trim().toLowerCase() === normalizedKey) ?? null;
   }
 
+  private setAllDayFrontmatterValue(
+    frontmatter: Record<string, unknown>,
+    key: string | null | undefined,
+    value: boolean,
+  ): void {
+    if (!key) return;
+    const existingKey = this.findFrontmatterKeyCaseInsensitive(frontmatter, key);
+    if (value) {
+      frontmatter[existingKey || key] = true;
+    } else if (existingKey) {
+      delete frontmatter[existingKey];
+    }
+  }
+
   private getFrontmatterStringCaseInsensitive(
     frontmatter: Record<string, any> | undefined | null,
     key: string | null | undefined,
@@ -7180,6 +7331,7 @@ export class CalendarView extends BasesView {
       if (!frontmatter) continue;
 
       const sourceUrl = this.getFrontmatterStringCaseInsensitive(frontmatter, sourceUrlFieldName) || undefined;
+      const storedExternalId = getExternalId(this.app, frontmatter);
       const eventId = this.getFrontmatterStringCaseInsensitive(frontmatter, eventIdFieldName) || undefined;
       const uid = this.normalizeIdentityValue(
         this.getFrontmatterStringCaseInsensitive(frontmatter, uidFieldName)
@@ -7203,7 +7355,11 @@ export class CalendarView extends BasesView {
         : false;
 
       let externalMatch: ExternalCalendarEvent | undefined;
-      if (eventId) {
+      if (storedExternalId) {
+        externalMatch = externalEvents.find((event) => this.buildExternalIdForEvent(event) === storedExternalId);
+      }
+
+      if (!externalMatch && eventId) {
         const sourceScopedKey = this.buildExternalEventIdentityKey(eventId, sourceUrl);
         externalMatch = externalEvents.find((event) => this.buildExternalEventIdentityKey(event.id, event.sourceUrl) === sourceScopedKey);
         if (!externalMatch && !sourceUrl) {
@@ -7228,8 +7384,6 @@ export class CalendarView extends BasesView {
       }
 
       if (!externalMatch) continue;
-
-      if (!isArchived && !isCanceled) continue;
 
       const externalKey = this.buildExternalEventIdentityKey(externalMatch.id, externalMatch.sourceUrl);
       handledExternalEventKeys.add(externalKey);
@@ -7258,11 +7412,7 @@ export class CalendarView extends BasesView {
       const frontmatter = cache?.frontmatter as Record<string, any> | undefined;
       const colorSource = this.plugin.settings.noteEventColorSource || "frontmatter";
       const colorTarget = this.plugin.settings.noteEventFrontmatterColorTarget || "both";
-      const applyFrontmatterColorToCard =
-        colorSource === "frontmatter" && (colorTarget === "card" || colorTarget === "both");
-      const inlineTaskColor = applyFrontmatterColorToCard
-        ? this.resolveFrontmatterEventColor(frontmatter)
-        : "";
+      const applyColorToCard = colorTarget === "card" || colorTarget === "both";
       const footnoteMetadata = this.parseInlineMetadataFootnotes(lines);
       for (let i = 0; i < lines.length; i++) {
         const task = this.parseInlineScheduledTask(file, i, lines[i], scheduledKey, durationKey, footnoteMetadata);
@@ -7272,6 +7422,32 @@ export class CalendarView extends BasesView {
         const endDate = task.durationMinutes && task.durationMinutes > 0
           ? new Date(startDate.getTime() + task.durationMinutes * 60000)
           : new Date(startDate.getTime() + this.getMinimumEventDurationMinutes() * 60000);
+        const associatedFile = this.findExplicitAssociatedNoteForInlineTask(task).file;
+        const associatedFrontmatter = associatedFile
+          ? this.app.metadataCache.getFileCache(associatedFile)?.frontmatter as Record<string, any> | undefined
+          : undefined;
+        const styleFrontmatter = {
+          ...(frontmatter || {}),
+          ...(associatedFrontmatter || {}),
+        };
+        const priorityField = (this.getNoteField(this.priorityField) || "priority").toLowerCase();
+        const priorityValue = task.inlineProperties.get(priorityField)
+          || task.inlineProperties.get("priority")
+          || this.getFrontmatterStringCaseInsensitive(associatedFrontmatter, priorityField)
+          || this.getFrontmatterStringCaseInsensitive(frontmatter, priorityField)
+          || undefined;
+        const styleOverride = this.resolveNoteEventStyleOverride(
+          styleFrontmatter,
+          task.status || undefined,
+          priorityValue,
+        );
+        const ruleColor = this.normalizeCssColorValue(styleOverride?.color || "");
+        const frontmatterColor = colorSource === "frontmatter"
+          ? this.resolveFrontmatterEventColor(associatedFrontmatter)
+            || this.resolveFrontmatterEventColor(frontmatter)
+            || ""
+          : "";
+        const inlineTaskColor = applyColorToCard ? ruleColor || frontmatterColor : "";
         const entry = this.createInlineTaskBasesEntry(task);
         entries.push({
           entry,
@@ -7368,6 +7544,7 @@ export class CalendarView extends BasesView {
     externalEvents: ExternalCalendarEvent[],
   ): ExternalCalendarEvent | null {
     if (!task) return null;
+    const externalId = this.normalizeIdentityValue(task.inlineProperties.get("externalid"));
     const eventId = this.normalizeIdentityValue(
       task.inlineProperties.get((this.plugin.settings.eventIdKey || "externalEventId").toLowerCase())
       || task.inlineProperties.get("externaleventid"),
@@ -7379,6 +7556,11 @@ export class CalendarView extends BasesView {
       || this.extractUidFromCompositeEventId(eventId || undefined),
     );
     const startDate = this.parseFrontmatterDateValue(task.scheduledValue);
+
+    if (externalId) {
+      const exactExternalId = externalEvents.find((event) => this.buildExternalIdForEvent(event) === externalId);
+      if (exactExternalId) return exactExternalId;
+    }
 
     if (eventId) {
       const scopedKey = this.buildExternalEventIdentityKey(eventId, sourceUrl);
@@ -7502,6 +7684,7 @@ export class CalendarView extends BasesView {
 
   private createInlineTaskBasesEntry(task: InlineScheduledTask): BasesEntry {
     const values = new Map<string, any>([
+      ["kind", "task"],
       ["title", task.title],
       [task.scheduledKey.toLowerCase(), task.scheduledValue],
       ["scheduled", task.scheduledValue],
@@ -7532,23 +7715,66 @@ export class CalendarView extends BasesView {
     newEnd?: Date,
     allDay?: boolean,
   ): Promise<void> {
-    const content = await this.app.vault.read(task.file);
-    const lines = content.split(/\r?\n/);
-    const currentLine = lines[task.lineNumber];
-    if (currentLine == null) return;
     const scheduledValue = allDay
       ? `${newStart.getFullYear()}-${String(newStart.getMonth() + 1).padStart(2, "0")}-${String(newStart.getDate()).padStart(2, "0")}`
       : formatDateTimeForFrontmatter(newStart);
-    let nextLine = this.replaceOrAppendInlineProperty(currentLine, task.scheduledKey, scheduledValue);
-    nextLine = amendScheduledTaskLineTitleAsContextLink(nextLine, newStart);
-    if (allDay && task.durationKey) {
-      nextLine = this.removeInlineProperty(nextLine, task.durationKey);
-    } else if (newEnd && task.durationKey) {
-      const minutes = Math.max(1, Math.round((newEnd.getTime() - newStart.getTime()) / 60000));
-      nextLine = this.replaceOrAppendInlineProperty(nextLine, task.durationKey, String(minutes));
+    const durationValue = !allDay && newEnd && task.durationKey
+      ? String(Math.max(1, Math.round((newEnd.getTime() - newStart.getTime()) / 60000)))
+      : null;
+    const patchState: { result: InlineTaskLinePatchResult | null } = { result: null };
+
+    await this.app.vault.process(task.file, (content) => {
+      const currentLines = content.split(/\r\n|\n|\r/u);
+      const footnoteMetadata = this.parseInlineMetadataFootnotes(currentLines);
+      patchState.result = patchInlineTaskLineContent(
+        content,
+        {
+          preferredLineIndex: task.lineNumber,
+          rawLine: task.line,
+          title: task.title,
+          tpsId: task.inlineProperties.get("tpsid"),
+          subitemId: task.inlineProperties.get("subitemid"),
+        },
+        (line) => {
+          const taskMatch = line.match(/^\s*[-*]\s+\[([^\]]*)\]\s+(.+)$/u);
+          if (!taskMatch) return null;
+          const properties = this.parseInlineDataviewProperties(line, footnoteMetadata);
+          return {
+            title: this.cleanInlineTaskTitle(taskMatch[2]),
+            tpsId: properties.get("tpsid"),
+            subitemId: properties.get("subitemid"),
+          };
+        },
+        (currentLine) => {
+          let nextLine = this.replaceOrAppendInlineProperty(currentLine, task.scheduledKey, scheduledValue);
+          if (allDay && task.durationKey) {
+            nextLine = this.removeInlineProperty(nextLine, task.durationKey);
+          } else if (durationValue && task.durationKey) {
+            nextLine = this.replaceOrAppendInlineProperty(nextLine, task.durationKey, durationValue);
+          }
+          return nextLine;
+        },
+      );
+      return patchState.result?.content ?? content;
+    });
+
+    const patchResult = patchState.result;
+    if (!patchResult) {
+      logger.flowWarn("InlineTaskSchedule", "update:no-safe-match", {
+        path: task.file.path,
+        originalLineNumber: task.lineNumber + 1,
+        hasTpsId: !!task.inlineProperties.get("tpsid"),
+        hasSubitemId: !!task.inlineProperties.get("subitemid"),
+      });
+      throw new Error(`Could not safely find the task line in ${task.file.path}.`);
     }
-    lines[task.lineNumber] = nextLine;
-    await this.app.vault.modify(task.file, lines.join("\n"));
+    logger.flow("InlineTaskSchedule", "update:done", {
+      path: task.file.path,
+      originalLineNumber: task.lineNumber + 1,
+      resolvedLineNumber: patchResult.lineIndex + 1,
+      matchedBy: patchResult.matchedBy,
+      allDay: !!allDay,
+    });
   }
 
   private replaceOrAppendInlineProperty(line: string, key: string, value: string): string {
@@ -7619,24 +7845,35 @@ export class CalendarView extends BasesView {
 
   private applyEmbeddedHeightVariable(): void {
     const isEmbedded = this.isEmbeddedCalendarContext();
+    const canvasEmbedHost = this.containerEl.closest<HTMLElement>(".canvas-node-content, .canvas-node");
+    const isCanvasEmbedded = isEmbedded && !!canvasEmbedHost;
 
     // Dynamically toggle classes on scrollEl
     this.scrollEl?.classList.toggle("bases-calendar-scroll--embedded", isEmbedded);
     this.scrollEl?.classList.toggle("bases-calendar-scroll--dedicated", !isEmbedded);
+    this.scrollEl?.classList.toggle("bases-calendar-scroll--canvas-embedded", isCanvasEmbedded);
 
     // Dynamically toggle classes on containerEl
     this.containerEl?.classList.toggle("bases-calendar-container--embedded", isEmbedded);
     this.containerEl?.classList.toggle("bases-calendar-container--dedicated", !isEmbedded);
+    this.containerEl?.classList.toggle("bases-calendar-container--canvas-embedded", isCanvasEmbedded);
 
     const value = `${this.embeddedHeight}px`;
     this.scrollEl?.style.setProperty("--tps-calendar-embedded-height", value);
     this.containerEl?.style.setProperty("--tps-calendar-embedded-height", value);
 
     if (isEmbedded) {
-      this.scrollEl?.style.setProperty("height", value);
-      this.scrollEl?.style.setProperty("max-height", value);
-      this.containerEl?.style.setProperty("height", value);
-      this.containerEl?.style.setProperty("max-height", value);
+      if (isCanvasEmbedded) {
+        this.scrollEl?.style.setProperty("height", "100%");
+        this.scrollEl?.style.setProperty("max-height", "100%");
+        this.containerEl?.style.setProperty("height", "100%");
+        this.containerEl?.style.setProperty("max-height", "100%");
+      } else {
+        this.scrollEl?.style.setProperty("height", value);
+        this.scrollEl?.style.setProperty("max-height", value);
+        this.containerEl?.style.setProperty("height", value);
+        this.containerEl?.style.setProperty("max-height", value);
+      }
 
       this.containerEl.closest<HTMLElement>(".internal-embed, .markdown-embed, .cm-embed-block, .block-language-bases, .canvas-node-content, .canvas-node")
         ?.classList.add("tps-calendar-base-embed");
@@ -7654,8 +7891,8 @@ export class CalendarView extends BasesView {
     if (wrapperEl) {
       wrapperEl.style.setProperty("--tps-calendar-embedded-height", value);
       if (isEmbedded) {
-        wrapperEl.style.height = value;
-        wrapperEl.style.maxHeight = value;
+        wrapperEl.style.height = isCanvasEmbedded ? "100%" : value;
+        wrapperEl.style.maxHeight = isCanvasEmbedded ? "100%" : value;
       } else {
         wrapperEl.style.removeProperty("height");
         wrapperEl.style.removeProperty("max-height");
@@ -7791,6 +8028,98 @@ export class CalendarView extends BasesView {
     this.jumpTargetDate = new Date(next);
     this.persistCurrentDate(next);
     this.renderReactCalendar();
+  }
+
+  public navigateEmbeddedCalendar(direction: -1 | 0 | 1): void {
+    if (direction === 0) {
+      this.jumpToDateTime(new Date());
+      return;
+    }
+    const next = this.currentDate ? new Date(this.currentDate) : new Date();
+    if (this.viewMode === "month") {
+      next.setMonth(next.getMonth() + direction);
+    } else {
+      const step = Number.isFinite(this.navStep) && this.navStep > 0 ? Math.round(this.navStep) : 1;
+      next.setDate(next.getDate() + direction * step);
+    }
+    this.jumpToDateTime(next);
+  }
+
+  public scrollToNow(): void {
+    const delays = [0, 80, 180, 360, 700];
+    for (const delayMs of delays) {
+      window.setTimeout(() => {
+        this.scrollRenderedCalendarToTime(new Date());
+      }, delayMs);
+    }
+  }
+
+  private scrollRenderedCalendarToTime(date: Date): boolean {
+    if (!this.containerEl?.isConnected) return false;
+    if (Number.isNaN(date.getTime())) return false;
+
+    const nowLine = this.containerEl.querySelector<HTMLElement>(".fc-timegrid-now-indicator-line");
+    if (!nowLine && !this.isCurrentCalendarDay(date)) return false;
+
+    const scroller =
+      nowLine?.closest<HTMLElement>(".fc-scroller")
+      || this.containerEl.querySelector<HTMLElement>(".fc-timegrid-body .fc-scroller")
+      || this.containerEl.querySelector<HTMLElement>(".fc-timegrid .fc-scroller");
+    if (!scroller) return false;
+
+    if (nowLine) {
+      this.scrollElementIntoCalendarScroller(scroller, nowLine);
+      return true;
+    }
+
+    const targetSlot = this.findClosestTimeGridSlot(date);
+    if (!targetSlot) return false;
+    this.scrollElementIntoCalendarScroller(scroller, targetSlot);
+    return true;
+  }
+
+  private scrollElementIntoCalendarScroller(scroller: HTMLElement, target: HTMLElement): void {
+    const scrollerRect = scroller.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const targetTop =
+      scroller.scrollTop +
+      (targetRect.top - scrollerRect.top) -
+      Math.round(scroller.clientHeight * 0.35);
+    scroller.scrollTop = Math.max(0, targetTop);
+  }
+
+  private findClosestTimeGridSlot(date: Date): HTMLElement | null {
+    const slots = Array.from(this.containerEl.querySelectorAll<HTMLElement>(".fc-timegrid-slot[data-time]"));
+    if (!slots.length) return null;
+    const targetMinutes = date.getHours() * 60 + date.getMinutes();
+    let bestSlot: HTMLElement | null = null;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    for (const slot of slots) {
+      const minutes = this.parseTimeGridSlotMinutes(slot.dataset.time || "");
+      if (minutes == null) continue;
+      const delta = Math.abs(minutes - targetMinutes);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestSlot = slot;
+      }
+    }
+    return bestSlot;
+  }
+
+  private parseTimeGridSlotMinutes(value: string): number | null {
+    const match = String(value || "").match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+    if (!match) return null;
+    const hours = Number.parseInt(match[1], 10);
+    const minutes = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+    return Math.max(0, hours * 60 + minutes);
+  }
+
+  private isCurrentCalendarDay(date: Date): boolean {
+    const current = this.currentDate ?? this.computeInitialDate();
+    return current.getFullYear() === date.getFullYear()
+      && current.getMonth() === date.getMonth()
+      && current.getDate() === date.getDate();
   }
 
   public isDefaultCalendarBasePath(path: string): boolean {
@@ -8815,19 +9144,20 @@ export class CalendarView extends BasesView {
       const iconSource = this.plugin.settings.noteEventIconSource || "frontmatter";
       const colorTarget = this.plugin.settings.noteEventFrontmatterColorTarget || "both";
       const applyFrontmatterColor = colorSource === "frontmatter" && colorTarget !== "off";
+      const applyColorToCard = colorTarget === "card" || colorTarget === "both";
       const applyFrontmatterColorToCard =
-        applyFrontmatterColor && (colorTarget === "card" || colorTarget === "both");
+        applyFrontmatterColor && applyColorToCard;
       const applyFrontmatterColorToIcon =
         applyFrontmatterColor && (colorTarget === "icon" || colorTarget === "both");
       let backgroundColor = "";
       let borderColor = "";
       const frontmatterColor = this.resolveFrontmatterEventColor(frontmatter);
       const ruleColor = this.normalizeCssColorValue(styleOverride?.color || "");
-      if (colorSource !== "off" && applyFrontmatterColorToCard && frontmatterColor) {
+      if (applyFrontmatterColorToCard && frontmatterColor) {
         backgroundColor = frontmatterColor;
         borderColor = frontmatterColor;
       }
-      if (ruleColor && applyFrontmatterColorToCard) {
+      if (ruleColor && applyColorToCard) {
         backgroundColor = ruleColor;
         borderColor = ruleColor;
       }
@@ -9177,7 +9507,7 @@ export class CalendarView extends BasesView {
             key: "condenseLevel",
             default: DEFAULT_CONDENSE_LEVEL,
             min: 0,
-            max: 220,
+            max: MAX_CONDENSE_LEVEL,
             step: 10,
           },
           {
@@ -9430,9 +9760,7 @@ export class CalendarView extends BasesView {
           }
         }
 
-        if (allDayField) {
-          fm[allDayField] = event.isAllDay;
-        }
+        this.setAllDayFrontmatterValue(fm, allDayField, event.isAllDay);
       });
       new Notice(`Linked "${file.basename}" to event.`);
       this.updateCalendar();

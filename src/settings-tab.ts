@@ -51,21 +51,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     containerEl.createEl("h2", { text: "TPS Calendar Settings" });
 
-    const createMainCategory = (title: "Features" | "Rules" | "Interaction" | "UI Display", defaultOpen = true): HTMLElement => {
-      const details = containerEl.createEl('details', { cls: 'tps-settings-main-category' });
-      if (defaultOpen) details.setAttr('open', 'true');
-      const summary = details.createEl('summary', { cls: 'tps-settings-main-summary' });
-      summary.createEl('h3', { text: title });
-      return details.createDiv({ cls: 'tps-settings-main-content' });
-    };
-
-    const featuresCategory = createMainCategory("Features");
-    const rulesCategory = createMainCategory("Rules");
-    const interactionCategory = createMainCategory("Interaction");
-    const uiDisplayCategory = createMainCategory("UI Display");
-
-    this.renderBaseQueryGuide(rulesCategory);
-
     // Check for Controller override
     const controller = getPluginById(this.app, "tps-controller") as any;
     if (controller?.settings) {
@@ -77,15 +62,19 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       });
     }
 
+    const coreSettings = containerEl.createDiv({ cls: "tps-settings-core" });
+    new Setting(coreSettings).setName("Core settings").setHeading();
+    this.renderBaseQueryGuide(containerEl);
+
     // 1. Calendars Section (Top Priority)
     const calendarsSection = createCollapsibleSection(
-      featuresCategory,
-      "Calendars & Sources",
+      containerEl,
+      "External Calendar Sources and Import Filters",
       "Source feeds and quick import. This is the highest-priority setup area for the calendar plugin.",
       false
     );
 
-    new Setting(calendarsSection)
+    new Setting(coreSettings)
       .setName("Enable external calendar integration")
       .setDesc("Master toggle for external calendar sources and external event rendering.")
       .addToggle((toggle) =>
@@ -220,13 +209,13 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     // 2. General Settings
     const generalSection = createCollapsibleSection(
-      interactionCategory,
-      "General",
+      containerEl,
+      "Date Clicks, New Item Creation, and Default Calendar Base",
       "Primary interaction settings that most users are likely to change.",
       false
     );
 
-    new Setting(generalSection)
+    new Setting(coreSettings)
       .setName("Calendar day click action")
       .setDesc("Open Daily Note (.md) or Canvas (.canvas) when clicking a date header.")
       .addDropdown((dropdown) =>
@@ -240,7 +229,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(generalSection)
+    new Setting(coreSettings)
       .setName("Initial calendar create")
       .setDesc("Choose whether drag-select and dropped unscheduled items create a note event or a task item.")
       .addDropdown((dropdown) =>
@@ -337,8 +326,8 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       );
 
     const viewBehaviorSection = createCollapsibleSection(
-      interactionCategory,
-      "Calendar View Defaults",
+      containerEl,
+      "Default Calendar View, Visible Hours, and Hidden-Hour Toggle",
       "Default navigation and visible time-range behavior.",
       false
     );
@@ -509,8 +498,8 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     // 3. Event Handling (UI-related settings only)
     const handlingSection = createCollapsibleSection(
-      rulesCategory,
-      "Event Handling",
+      containerEl,
+      "Calendar Note Linking and Event Status Values",
       "Linking and status behavior for calendar-created notes.",
       false
     );
@@ -574,8 +563,8 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     // 4. Appearance
     const appearanceSection = createCollapsibleSection(
-      uiDisplayCategory,
-      "Appearance",
+      containerEl,
+      "Calendar Event Appearance, Colors, Icons, and Time Grid Layout",
       "Lower-priority visual tuning and optional style rules.",
       false
     );
@@ -783,15 +772,15 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     // 5. Advanced / Developer
     const advancedSection = createCollapsibleSection(
-      rulesCategory,
-      "Advanced & Frontmatter",
+      containerEl,
+      "Calendar Frontmatter Field Names",
       "Shared key names and lower-frequency advanced behavior.",
       false
     );
 
     const frontmatterKeysSection = createCollapsibleSection(
       advancedSection,
-      "Frontmatter Keys",
+      "Display and Status Field Keys",
       "Calendar display key names. Shared identity is managed by TPS Global Context Menu as tpsId and externalId.",
       false
     );
@@ -819,8 +808,8 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     // 6. Debug
     const debugSection = createCollapsibleSection(
-      interactionCategory,
-      "Debug",
+      containerEl,
+      "Debug Logging",
       "Low-frequency troubleshooting controls.",
       false
     );
@@ -852,12 +841,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     const detailsEls = Array.from(containerEl.querySelectorAll("details"));
     if (!this.hasRenderedSettings) {
       detailsEls.forEach((detailsEl) => {
-        const details = detailsEl as HTMLDetailsElement;
-        if (details.classList.contains("tps-settings-main-category")) {
-          details.setAttr("open", "true");
-        } else {
-          details.removeAttribute("open");
-        }
+        (detailsEl as HTMLDetailsElement).removeAttribute("open");
       });
       this.hasRenderedSettings = true;
       containerEl.scrollTop = 0;

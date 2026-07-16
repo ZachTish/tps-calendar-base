@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
 
 function parseDateInTimezone(dateStr, tzid) {
   const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
@@ -62,4 +63,28 @@ test('converts New York local datetime to UTC', () => {
     parseDateInTimezone('2023-10-27T08:15:00', 'America/New_York')?.toISOString(),
     '2023-10-27T12:15:00.000Z',
   );
+});
+
+function getInclusiveCalendarDayCount(startDate, endDate) {
+  const startMs = Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const endMs = Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  const diffDays = Math.floor((endMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
+  return Number.isFinite(diffDays) && diffDays > 0 ? diffDays : 1;
+}
+
+test('counts inclusive calendar days across DST instead of elapsed hours', () => {
+  const start = new Date(2026, 2, 7);
+  const end = new Date(2026, 2, 9);
+  assert.equal(getInclusiveCalendarDayCount(start, end), 3);
+});
+
+test('calendar day-count paths use shared calendar-day helper', () => {
+  const utilSource = fs.readFileSync(new URL('../src/utils/filter-date-utils.ts', import.meta.url), 'utf8');
+  const hostSource = fs.readFileSync(new URL('../src/calendar-view.tsx', import.meta.url), 'utf8');
+  const reactSource = fs.readFileSync(new URL('../src/CalendarReactView.tsx', import.meta.url), 'utf8');
+
+  assert.match(utilSource, /export function getInclusiveCalendarDayCount/);
+  assert.match(utilSource, /Date\.UTC\(startDate\.getFullYear\(\), startDate\.getMonth\(\), startDate\.getDate\(\)\)/);
+  assert.match(hostSource, /getInclusiveCalendarDayCount\(startOfMinDay, startOfMaxDay\)/);
+  assert.match(reactSource, /getInclusiveCalendarDayCount\(start, end\)/);
 });

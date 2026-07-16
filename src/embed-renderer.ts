@@ -9,17 +9,29 @@ import {
 import { CalendarView } from "./calendar-view";
 import { CalendarPluginBridge } from "./plugin-interface";
 
+export interface CalendarEmbedRenderOptions {
+    preserveDayCount?: boolean;
+}
+
 // Mock QueryController since we can't easily instantiate the real one without internal API access.
 // We extend Component because QueryController does.
 class MockQueryController extends Component {
+    app: any = null;
+    workspace: any = null;
+    vault: any = null;
+    metadataCache: any = null;
     data: any = null;
     queryResult: any = null;
     result: any = null;
     file: TFile | null = null;
     viewConfig: any = null;
 
-    constructor(file: TFile | null, viewConfig: Record<string, unknown>) {
+    constructor(app: any, file: TFile | null, viewConfig: Record<string, unknown>) {
         super();
+        this.app = app;
+        this.workspace = app?.workspace ?? null;
+        this.vault = app?.vault ?? null;
+        this.metadataCache = app?.metadataCache ?? null;
         this.file = file;
         this.viewConfig = viewConfig;
     }
@@ -33,6 +45,18 @@ class InlineBaseConfig {
         const value = this.values[key];
         return typeof value === "string" && value.trim() ? value.trim() : null;
     }
+    getOrder(): any[] {
+        return Array.isArray(this.values.order) ? this.values.order : [];
+    }
+    getSort(): any[] {
+        return Array.isArray(this.values.sort) ? this.values.sort : [];
+    }
+    getDisplayName(propertyId: string): string {
+        return String(propertyId || "").replace(/^(note|file|formula)\./, "");
+    }
+    getEvaluatedFormula(): any {
+        return null;
+    }
 }
 
 export class CalendarEmbedRenderChild extends MarkdownRenderChild {
@@ -42,7 +66,9 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
         public containerEl: HTMLElement,
         public file: TFile | null,
         public plugin: Plugin & CalendarPluginBridge,
-        private viewConfig: Record<string, unknown>
+        private viewConfig: Record<string, unknown>,
+        private baseConfig: Record<string, unknown> = {},
+        private options: CalendarEmbedRenderOptions = {},
     ) {
         super(containerEl);
     }
@@ -53,16 +79,29 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
     }
 
     async render() {
+        if (this.view) {
+            this.view.onunload();
+            this.view = null;
+        }
         this.containerEl.empty();
         const contentEl = this.containerEl.createDiv({ cls: "calendar-embed-view" });
 
-        const controller = new MockQueryController(this.file, this.viewConfig) as any;
-        controller.data = { data: this.createVaultEntries() };
+        const controller = new MockQueryController(this.plugin.app, this.file, this.viewConfig) as any;
+        const queryResult = { data: this.createVaultEntries() };
+        controller.data = queryResult;
+        controller.queryResult = queryResult;
+        controller.result = queryResult;
 
         this.view = new CalendarView(controller, contentEl, this.plugin);
         (this.view as any).config = new InlineBaseConfig(this.withCalendarDefaults(this.viewConfig));
+        (this.view as any).forceDirectEmbedRender = true;
+        (this.view as any).preserveEmbeddedDayCount = this.options.preserveDayCount === true;
+        (this.view as any).data = queryResult;
+        (this.view as any).queryResult = queryResult;
+        (this.view as any).result = queryResult;
         if (this.view.onload) await this.view.onload();
         (this.view as any).onDataUpdated?.();
+        await (this.view as any).updateCalendar?.(true);
     }
 
     private withCalendarDefaults(config: Record<string, unknown>): Record<string, unknown> {
@@ -74,6 +113,8 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
             allDayProperty: "note.allDay",
             showFullDay: "true",
             embeddedHeight: "520",
+            filtersAll: this.baseConfig.filters,
+            viewFilters: this.viewConfig.filters,
             ...config,
         };
     }
@@ -119,7 +160,7 @@ export const EmbedRenderer = (plugin: Plugin & CalendarPluginBridge) => async (
         ? parsed.views.find((candidate: any) => String(candidate?.type || "").toLowerCase() === "calendar")
         : null;
     if (view) {
-        const component = new CalendarEmbedRenderChild(el, plugin.app.vault.getFileByPath(ctx.sourcePath), plugin, view);
+        const component = new CalendarEmbedRenderChild(el, plugin.app.vault.getFileByPath(ctx.sourcePath), plugin, view, parsed || {});
         ctx.addChild(component);
         return;
     }
@@ -149,9 +190,15 @@ export const EmbedRenderer = (plugin: Plugin & CalendarPluginBridge) => async (
                 if (cache?.frontmatter?.type !== "calendar") return;
             }
 
+            const raw = await plugin.app.vault.cachedRead(file);
+            const parsedBase = parseYaml(raw || "") as any;
+            const viewConfig = Array.isArray(parsedBase?.views)
+                ? parsedBase.views.find((candidate: any) => String(candidate?.type || "").toLowerCase() === "calendar")
+                : {};
+
             // If we are here, we want to replace the default embed (which is likely broken or raw text) with our view.
             // The `embed` element is the container.
-            const component = new CalendarEmbedRenderChild(embed as HTMLElement, file, plugin, {});
+            const component = new CalendarEmbedRenderChild(embed as HTMLElement, file, plugin, viewConfig || {}, parsedBase || {});
             ctx.addChild(component);
         }
     });

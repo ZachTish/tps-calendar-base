@@ -1,6 +1,7 @@
-import { Notice, Plugin, TFile, MarkdownView, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Notice, Plugin, TFile, MarkdownView, WorkspaceLeaf, normalizePath, parseYaml } from "obsidian";
 import * as logger from "./logger";
 import { CalendarView, CalendarViewType } from "./calendar-view";
+import { CalendarEmbedRenderChild, type CalendarEmbedRenderOptions } from "./embed-renderer";
 import { DEFAULT_CONDENSE_LEVEL } from "./utils";
 import { CalendarPluginBridge } from "./plugin-interface";
 import { ExternalCalendarService } from "./services/external-calendar-service";
@@ -20,6 +21,10 @@ export default class ObsidianCalendarPlugin
   extends Plugin
   implements CalendarPluginBridge {
   settings: CalendarPluginSettings = DEFAULT_SETTINGS;
+  private settingsSavePromise: Promise<void> | null = null;
+  private settingsSavePending = false;
+  private deletedLinkCleanupChain: Promise<void> = Promise.resolve();
+  private deletedLinkCleanupPending = 0;
   private controllerExternalCalendars: ExternalCalendarConfig[] = [];
   private controllerExternalCalendarFilter: string | null = null;
   private activeCalendarViews = new Set<CalendarView>();
@@ -27,10 +32,6 @@ export default class ObsidianCalendarPlugin
 
   async onload() {
     const startedAt = performance.now();
-    if ((window as any).__TPS_CALENDAR_TRACE === true) {
-      console.log("[TPS CALENDAR TRACE] [CalendarPlugin] onload:start", { t: Math.round(startedAt) });
-    }
-    console.log("Loading TPS Calendar");
     this.externalCalendarService = new ExternalCalendarService();
     // Load shared UI styles
     try {
@@ -40,7 +41,7 @@ export default class ObsidianCalendarPlugin
       const styleEl = document.head.createEl('style', { attr: { id: 'tps-calendar-ui-styles' } });
       styleEl.textContent = cssContent;
     } catch (e) {
-      console.warn("TPS Calendar: Failed to load styles-ui.css", e);
+      logger.flowError("Plugin", "load-styles-failed", e, { path: `${this.manifest.dir}/styles-ui.css` });
     }
     this.registerBasesView(CalendarViewType, {
       name: "Calendar",
@@ -63,8 +64,9 @@ export default class ObsidianCalendarPlugin
     });
     const settingsStartedAt = performance.now();
     await this.loadSettings();
+    logger.flow("Plugin", "load:start", { t: Math.round(startedAt) });
     if ((window as any).__TPS_CALENDAR_TRACE === true) {
-      console.log("[TPS CALENDAR TRACE] [CalendarPlugin] loadSettings:end", {
+      logger.flow("PluginTrace", "loadSettings:end", {
         t: Math.round(performance.now()),
         durationMs: Math.round(performance.now() - settingsStartedAt),
       });
@@ -76,43 +78,6 @@ export default class ObsidianCalendarPlugin
       id: "open-default-calendar-base-sidebar",
       name: "Open default calendar base",
       callback: () => this.openDefaultBaseInSidebar(),
-    });
-    this.addCommand({
-      id: "toggle-default-calendar-base-open-location",
-      name: "Toggle default calendar base open location",
-      callback: async () => {
-        this.settings.defaultBaseOpenLocation =
-          this.settings.defaultBaseOpenLocation === "right-sidebar" ? "main" : "right-sidebar";
-        await this.saveSettings();
-        new Notice(`Default calendar base opens in ${this.settings.defaultBaseOpenLocation === "right-sidebar" ? "right sidebar" : "main workspace"}.`);
-      },
-    });
-    this.addCommand({
-      id: "calendar-set-day-link-target-daily-note",
-      name: "Set day link target: Daily note (.md)",
-      callback: async () => {
-        await this.setDayLinkTarget("daily-note");
-      },
-    });
-
-    this.addCommand({
-      id: "calendar-set-day-link-target-daily-canvas",
-      name: "Set day link target: Daily canvas (.canvas)",
-      callback: async () => {
-        await this.setDayLinkTarget("daily-canvas");
-      },
-    });
-
-    this.addCommand({
-      id: "calendar-toggle-day-link-target",
-      name: "Toggle day link target (daily note/canvas)",
-      callback: async () => {
-        const next =
-          this.settings.dailyDateLinkTarget === "daily-canvas"
-            ? "daily-note"
-            : "daily-canvas";
-        await this.setDayLinkTarget(next);
-      },
     });
     // Auto-create and cleanup commands removed — handled by TPS-Controller.
 
@@ -149,25 +114,77 @@ export default class ObsidianCalendarPlugin
 
     // Listen for file deletions to remove parent-child links
     this.registerEvent(
-      this.app.vault.on("delete", async (file) => {
-        if (file instanceof TFile && file.extension === "md" && this.settings.parentLinkEnabled && this.settings.childLinkKey) {
-          const allFiles = this.app.vault.getMarkdownFiles();
-
-          for (const pFile of allFiles) {
-            const cache = this.app.metadataCache.getFileCache(pFile);
-            const children = cache?.frontmatter?.[this.settings.childLinkKey];
-            if (children === undefined || children === null) continue;
-            await removeChildLinkFromParent(this.app, file.basename, pFile, this.settings.childLinkKey);
-          }
-        }
+      this.app.vault.on("delete", (file) => {
+        if (!(file instanceof TFile) || file.extension !== "md" || !this.settings.parentLinkEnabled || !this.settings.childLinkKey) return;
+        void this.queueParentLinkCleanup(file).catch((error) => {
+          logger.flowError("DeletedLinkCleanup", "failed", error, { deletedPath: file.path });
+        });
       })
     );
     if ((window as any).__TPS_CALENDAR_TRACE === true) {
-      console.log("[TPS CALENDAR TRACE] [CalendarPlugin] onload:end", {
+      logger.flow("PluginTrace", "onload:end", {
         t: Math.round(performance.now()),
         durationMs: Math.round(performance.now() - startedAt),
       });
     }
+  }
+
+  private queueParentLinkCleanup(file: TFile): Promise<void> {
+    const queuedBehind = this.deletedLinkCleanupPending;
+    this.deletedLinkCleanupPending += 1;
+    if (queuedBehind > 0) {
+      logger.flow("DeletedLinkCleanup", "queued", { deletedPath: file.path, queuedBehind });
+    }
+
+    const run = this.deletedLinkCleanupChain
+      .catch(() => undefined)
+      .then(() => this.cleanupParentLinksForDeletedFile(file));
+    const tracked = run.finally(() => {
+      this.deletedLinkCleanupPending = Math.max(0, this.deletedLinkCleanupPending - 1);
+    });
+    this.deletedLinkCleanupChain = tracked.then(() => undefined, () => undefined);
+    return tracked;
+  }
+
+  private async cleanupParentLinksForDeletedFile(file: TFile): Promise<void> {
+    const allFiles = this.app.vault.getMarkdownFiles();
+    const remainingPaths = allFiles.map((candidate) => candidate.path);
+    const childLinkKey = this.settings.childLinkKey;
+    const candidateParents = allFiles.filter((candidate) => {
+      const frontmatter = this.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, unknown> | undefined;
+      const actualKey = Object.keys(frontmatter || {}).find((key) => key.toLowerCase() === childLinkKey.toLowerCase());
+      return actualKey ? frontmatter?.[actualKey] !== undefined && frontmatter?.[actualKey] !== null : false;
+    });
+    let updatedParents = 0;
+    let removedReferences = 0;
+    let preservedAmbiguousReferences = 0;
+    logger.flow("DeletedLinkCleanup", "start", {
+      deletedPath: file.path,
+      scannedFiles: allFiles.length,
+      candidateParents: candidateParents.length,
+    });
+
+    for (const parentFile of candidateParents) {
+      const result = await removeChildLinkFromParent(
+        this.app,
+        file.path,
+        parentFile,
+        childLinkKey,
+        remainingPaths,
+      );
+      if (result.removedReferences > 0) updatedParents += 1;
+      removedReferences += result.removedReferences;
+      preservedAmbiguousReferences += result.preservedAmbiguousReferences;
+    }
+
+    logger.flow("DeletedLinkCleanup", "done", {
+      deletedPath: file.path,
+      scannedFiles: allFiles.length,
+      candidateParents: candidateParents.length,
+      updatedParents,
+      removedReferences,
+      preservedAmbiguousReferences,
+    });
   }
 
   private isEditorFocused(): boolean {
@@ -199,6 +216,12 @@ export default class ObsidianCalendarPlugin
     this.settings = migrateSettings(stored);
     await this.loadControllerCalendarSettingsSnapshot();
     logger.setLoggingEnabled(this.settings.enableLogging);
+    logger.flow("Settings", "load:done", {
+      enableLogging: this.settings.enableLogging,
+      sidebarBasePath: this.settings.sidebarBasePath || "",
+      createMode: this.settings.initialCreateMode || "",
+      taskCreateTargetPath: this.settings.taskCreateTargetPath || "",
+    });
   }
 
   private async loadControllerCalendarSettingsSnapshot(): Promise<void> {
@@ -248,21 +271,37 @@ export default class ObsidianCalendarPlugin
 
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    if (this.settingsSavePromise) {
+      this.settingsSavePending = true;
+      logger.flow("Settings", "save:queued");
+      await this.settingsSavePromise;
+      return;
+    }
+
+    do {
+      this.settingsSavePending = false;
+      const snapshot = JSON.parse(JSON.stringify(this.settings));
+      this.settingsSavePromise = this.saveData(snapshot);
+      try {
+        logger.flow("Settings", "save:start", {
+          enableLogging: snapshot.enableLogging,
+          sidebarBasePath: snapshot.sidebarBasePath || "",
+          createMode: snapshot.initialCreateMode || "",
+          taskCreateTargetPath: snapshot.taskCreateTargetPath || "",
+        });
+        await this.settingsSavePromise;
+        logger.flow("Settings", "save:done");
+      } catch (error) {
+        logger.flowError("Settings", "save:failed", error);
+        throw error;
+      } finally {
+        this.settingsSavePromise = null;
+      }
+    } while (this.settingsSavePending);
+
     logger.setLoggingEnabled(this.settings.enableLogging);
     this.refreshCalendarViews();
     emitCalendarSettingsChanged(this.app, this.manifest.id);
-  }
-
-  private async setDayLinkTarget(target: "daily-note" | "daily-canvas"): Promise<void> {
-    if (this.settings.dailyDateLinkTarget === target) return;
-    this.settings.dailyDateLinkTarget = target;
-    await this.saveSettings();
-    new Notice(
-      target === "daily-canvas"
-        ? "Calendar day links now open daily canvas files."
-        : "Calendar day links now open daily markdown notes."
-    );
   }
 
   // ========================================================================
@@ -278,7 +317,35 @@ export default class ObsidianCalendarPlugin
       getExternalEventHideKey: (event: ExternalCalendarEvent): string => this.getExternalEventHideKey(event),
       isExternalEventHiddenAnywhere: (event: ExternalCalendarEvent): boolean => this.isExternalEventHiddenAnywhere(event),
       openDefaultCalendarAt: (date: Date | string | number): Promise<boolean> => this.openDefaultBaseAtDateTime(date),
+      renderBaseCalendarEmbed: (containerEl: HTMLElement, basePath: string, options?: CalendarEmbedRenderOptions): Promise<CalendarEmbedRenderChild | null> =>
+        this.renderBaseCalendarEmbed(containerEl, basePath, options),
     };
+  }
+
+  async renderBaseCalendarEmbed(containerEl: HTMLElement, basePath: string, options: CalendarEmbedRenderOptions = {}): Promise<CalendarEmbedRenderChild | null> {
+    const normalizedPath = normalizePath(String(basePath || "").trim()).replace(/^\/+/, "");
+    if (!normalizedPath) return null;
+
+    const file = this.app.vault.getAbstractFileByPath(normalizedPath);
+    if (!(file instanceof TFile) || file.extension !== "base") return null;
+
+    const raw = await this.app.vault.read(file);
+    const parsed = parseYaml(raw || "") as any;
+    const viewConfig = Array.isArray(parsed?.views)
+      ? parsed.views.find((candidate: any) => String(candidate?.type || "").toLowerCase() === CalendarViewType)
+      : null;
+
+    containerEl.empty();
+    containerEl.addClass("tps-calendar-base-embed");
+    const child = new CalendarEmbedRenderChild(containerEl, file, this, viewConfig || {}, parsed || {}, options);
+    await child.render();
+    (child as any).unload = () => child.onunload();
+    (child as any).navigatePrevious = () => child.view?.navigateEmbeddedCalendar(-1);
+    (child as any).navigateToday = () => child.view?.navigateEmbeddedCalendar(0);
+    (child as any).navigateNext = () => child.view?.navigateEmbeddedCalendar(1);
+    (child as any).navigateToDate = (date: Date | string | number) => child.view?.jumpToDateTime(new Date(date));
+    (child as any).scrollToNow = () => child.view?.scrollToNow();
+    return child;
   }
 
   getExternalEventHideKey(event: ExternalCalendarEvent): string {

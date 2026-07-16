@@ -18,6 +18,25 @@ build/
 
 # obsidian
 data.json
+data.json.*
+
+# Runtime state
+.sync-request.json
+calendar-kanban-sync.json
+overdue-snapshot.json
+recurrence-session.json
+recurrence-create-state.json
+
+# Local credentials and generated test output
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.test/
+coverage/
 
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store

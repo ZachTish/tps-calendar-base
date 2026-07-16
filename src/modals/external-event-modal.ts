@@ -51,6 +51,7 @@ export class ExternalEventModal extends Modal {
   }
 
   onOpen() {
+    this.modalEl.addClass("tps-keyboard-aware-modal");
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("external-event-modal");
@@ -249,7 +250,9 @@ export async function createMeetingNoteFromExternalEvent(
   ensureInternalIdInFrontmatter(app, frontmatter);
   frontmatter.externalId = buildCalendarExternalId(app, event);
   frontmatter[titleKey] = event.title;
-  frontmatter["allDay"] = !!event.isAllDay;
+  if (event.isAllDay) {
+    frontmatter["allDay"] = true;
+  }
 
   if (event.endDate.getTime() < Date.now()) {
     frontmatter[statusKey] = "complete";
@@ -433,8 +436,6 @@ export async function createMeetingNoteFromExternalEvent(
     if (normalizedCalendarTag) {
       fm.tags = mergeTagInputs(fm.tags, normalizedCalendarTag);
     }
-    const resolvedFolderPath = file.parent?.path || "/";
-    setFrontmatterValueCaseInsensitive(fm, "folderPath", resolvedFolderPath);
 
     deleteFrontmatterValueCaseInsensitive(fm, titleKey);
     deleteFrontmatterValueCaseInsensitive(fm, frontmatterKeys?.eventIdKey || "externalEventId");

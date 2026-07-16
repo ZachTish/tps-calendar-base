@@ -25,6 +25,7 @@ export class CalendarStyleBuilderModal extends Modal {
     }
 
     onOpen() {
+    this.modalEl.addClass("tps-keyboard-aware-modal");
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass("calendar-style-builder-modal");

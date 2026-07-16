@@ -60,6 +60,24 @@ export function error(message?: any, ...rest: any[]): void {
   console.error(`${PLUGIN_PREFIX} ${msg}`, ...rest);
 }
 
+export function errorSummary(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`;
+  if (typeof err === "string") return err;
+  try { return JSON.stringify(err); } catch { return String(err); }
+}
+
+export function flow(scope: string, event: string, data?: Record<string, unknown>): void {
+  info(`[${scope}] ${event}`, data || {});
+}
+
+export function flowWarn(scope: string, event: string, data?: Record<string, unknown>): void {
+  warn(`[${scope}] ${event}`, data || {});
+}
+
+export function flowError(scope: string, event: string, err: unknown, data?: Record<string, unknown>): void {
+  error(`[${scope}] ${event}`, { ...(data || {}), error: errorSummary(err) }, err);
+}
+
 export interface ScopedLogger {
   log(message?: any, ...rest: any[]): void;
   debug(message?: any, ...rest: any[]): void;

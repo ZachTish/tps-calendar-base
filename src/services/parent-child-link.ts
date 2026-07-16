@@ -2,6 +2,10 @@ import { App, TFile, normalizePath } from "obsidian";
 import * as logger from "../logger";
 import { mergeTagInputs, parseTagInput } from "../utils/tag-utils";
 import { getPluginSettings } from "../core";
+import {
+    classifyDeletedMarkdownLink,
+    createDeletedMarkdownLinkContext,
+} from "../utils/deleted-link-cleanup";
 
 type ParentLinkFormat = "wikilink" | "markdown-title";
 
@@ -172,15 +176,6 @@ function linkReferencesFile(app: App, value: any, sourcePath: string, target: TF
     return resolved ? resolved.path === target.path : false;
 }
 
-function extractLinkTargetBasename(value: any): string | null {
-    const target = extractLinkTarget(value);
-    if (!target) return null;
-    const normalized = normalizePath(target);
-    const segment = normalized.split("/").pop() || normalized;
-    const basename = segment.replace(/\.md$/i, "").trim();
-    return basename || null;
-}
-
 async function tagParentAfterChildLink(app: App, parentFile: TFile): Promise<void> {
     const tagsToAdd = getParentTagOnChildLink(app);
     if (!tagsToAdd.length) return;
@@ -230,7 +225,6 @@ export async function applyParentLinkToChild(
 
     await app.fileManager.processFrontMatter(childFile, (fm) => {
         setFrontmatterValueCaseInsensitive(fm, parentKey, parentLink);
-        setFrontmatterValueCaseInsensitive(fm, "folderPath", childFile.parent?.path || "/");
         logger.log(`[ParentChildLink] Added parent link to ${childFile.path}: ${parentKey} = ${parentLink}`);
     });
 
@@ -338,40 +332,56 @@ export async function removeBidirectionalLink(
 /**
  * Removes a child link from a parent note (used when child note is deleted)
  * @param app Obsidian app instance
- * @param childBasename The basename of the child note (without extension)
+ * @param deletedPath The deleted child note's vault path
  * @param parentFile The parent note file
  * @param childLinkKey Frontmatter key in parent listing children
  */
 export async function removeChildLinkFromParent(
     app: App,
-    childBasename: string,
+    deletedPath: string,
     parentFile: TFile,
-    childLinkKey: string
-): Promise<void> {
+    childLinkKey: string,
+    remainingMarkdownPaths: Iterable<string> = [],
+): Promise<{ removedReferences: number; preservedAmbiguousReferences: number }> {
+    let removedReferences = 0;
+    let preservedAmbiguousReferences = 0;
     try {
+        const matchContext = createDeletedMarkdownLinkContext(deletedPath, remainingMarkdownPaths);
+        if (!matchContext) return { removedReferences, preservedAmbiguousReferences };
+        const shouldRemove = (value: unknown): boolean => {
+            const resolvedFile = resolveLinkToFile(app, value, parentFile.path);
+            if (resolvedFile && app.vault.getAbstractFileByPath(resolvedFile.path) instanceof TFile) return false;
+            const decision = classifyDeletedMarkdownLink(value, parentFile.path, matchContext);
+            if (decision === "ambiguous") {
+                preservedAmbiguousReferences += 1;
+                return false;
+            }
+            if (decision === "match") {
+                removedReferences += 1;
+                return true;
+            }
+            return false;
+        };
         await app.fileManager.processFrontMatter(parentFile, (fm) => {
             const existingRaw = getFrontmatterValueCaseInsensitive(fm, childLinkKey);
             if (Array.isArray(existingRaw)) {
-                const filtered = existingRaw.filter((link: any) => {
-                    const linkBasename = extractLinkTargetBasename(link);
-                    return !linkBasename || linkBasename.toLowerCase() !== childBasename.toLowerCase();
-                });
+                const filtered = existingRaw.filter((link: unknown) => !shouldRemove(link));
                 if (filtered.length !== existingRaw.length) {
                     if (filtered.length > 0) {
                         setFrontmatterValueCaseInsensitive(fm, childLinkKey, filtered);
                     } else {
                         deleteFrontmatterValueCaseInsensitive(fm, childLinkKey);
                     }
-                    logger.log(`[ParentChildLink] Removed detached child link '${childBasename}' from ${parentFile.path}`);
+                    logger.log(`[ParentChildLink] Removed detached child link '${deletedPath}' from ${parentFile.path}`);
                 }
                 return;
             }
 
-            const linkBasename = extractLinkTargetBasename(existingRaw);
-            if (!linkBasename || linkBasename.toLowerCase() !== childBasename.toLowerCase()) return;
+            if (!shouldRemove(existingRaw)) return;
             deleteFrontmatterValueCaseInsensitive(fm, childLinkKey);
-            logger.log(`[ParentChildLink] Removed detached child link '${childBasename}' from ${parentFile.path}`);
+            logger.log(`[ParentChildLink] Removed detached child link '${deletedPath}' from ${parentFile.path}`);
         });
+        return { removedReferences, preservedAmbiguousReferences };
     } catch (error) {
         logger.error(`[ParentChildLink] Failed to remove child link from parent:`, error);
         throw error;

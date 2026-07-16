@@ -1,15 +1,14 @@
-.tps-calendar-base-embed .bases-header,
-.tps-calendar-base-embed .bases-view-header,
-.tps-calendar-base-embed .base-view-header,
-.tps-calendar-base-embed .bases-toolbar,
-.tps-calendar-base-embed .bases-controls,
-.tps-calendar-base-embed .view-header,
 .tps-calendar-embedded-hidden-header {
   display: none !important;
 }
 
 .tps-calendar-embedded-visible-header {
-  display: none !important;
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  height: auto !important;
+  min-height: 28px !important;
+  align-items: center !important;
 }
 
 .internal-embed.tps-calendar-base-embed,
@@ -73,7 +72,7 @@
 }
 
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded {
-  --tps-embed-axis-width: 60px;
+  --tps-embed-axis-width: 64px;
   --tps-embed-header-bg: color-mix(in srgb, var(--background-primary) 94%, black 6%);
   --tps-embed-body-bg: var(--background-primary-alt);
   --tps-embed-grid-line: color-mix(in srgb, var(--background-modifier-border) 66%, transparent);
@@ -91,6 +90,95 @@
   margin: 0 !important;
   padding: 0 !important;
   overflow: hidden !important;
+}
+
+.canvas-node-content.tps-calendar-base-embed,
+.canvas-node.tps-calendar-base-embed,
+.canvas-node-content:has(.bases-calendar-container--canvas-embedded),
+.canvas-node:has(.bases-calendar-container--canvas-embedded) {
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
+.canvas-node-content .bases-calendar-scroll--canvas-embedded,
+.canvas-node .bases-calendar-scroll--canvas-embedded,
+.canvas-node-content .bases-calendar-container--canvas-embedded,
+.canvas-node .bases-calendar-container--canvas-embedded,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded {
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded {
+  border-radius: 0 !important;
+  -webkit-font-smoothing: antialiased !important;
+  text-rendering: optimizeLegibility !important;
+}
+
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-view-harness,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-view-harness,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-view,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-view,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-scrollgrid,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-scrollgrid,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-scrollgrid table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-scrollgrid table,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-col-header,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-col-header,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-col-header table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-col-header table,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-body,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-body,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-slots,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-slots,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-slots table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-slots table,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-cols,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-cols,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-cols table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-cols table {
+  width: 100% !important;
+  min-width: 100% !important;
+  max-width: none !important;
+}
+
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-scrollgrid table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-scrollgrid table,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-slots table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-slots table,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-cols table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-timegrid-cols table {
+  table-layout: auto !important;
+}
+
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-col-header table,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-col-header table {
+  table-layout: fixed !important;
+}
+
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .bases-calendar-event-title,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .bases-calendar-event-title,
+.canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc-event-title,
+.canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc-event-title {
+  text-shadow: none !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-canvas-embedded .bases-calendar-floating-nav {
+  display: flex !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-event.bases-calendar-event.is-non-active,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-canvas-embedded .fc .fc-event.bases-calendar-event.is-past {
+  opacity: 1 !important;
 }
 
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc {
@@ -126,6 +214,18 @@
   border: 0 !important;
   border-collapse: separate !important;
   border-spacing: 0 !important;
+}
+
+/* FullCalendar sometimes emits the time ruler as an unnamed shrink column.
+   Pin the physical first column across every synchronized table so responsive
+   fixed-layout recalculation cannot collapse or offset the ruler. */
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid > colgroup > col:first-child,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid table > colgroup > col:first-child,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid tr > :first-child {
+  width: var(--tps-embed-axis-width) !important;
+  min-width: var(--tps-embed-axis-width) !important;
+  max-width: var(--tps-embed-axis-width) !important;
+  box-sizing: border-box !important;
 }
 
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-section-header,
@@ -169,6 +269,14 @@
   font-size: 0.72rem !important;
   text-align: center !important;
   vertical-align: middle !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label {
+  width: var(--tps-embed-axis-width) !important;
+  min-width: var(--tps-embed-axis-width) !important;
+  max-width: var(--tps-embed-axis-width) !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
 }
 
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis-frame,
@@ -226,11 +334,56 @@
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label {
   border-top: 1px solid var(--tps-embed-grid-line-soft) !important;
   background: transparent !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 1 !important;
+  vertical-align: top !important;
 }
 
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label-frame,
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label-cushion {
   background: transparent !important;
+  box-sizing: border-box !important;
+  max-width: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+  line-height: 1 !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label-cushion {
+  display: block !important;
+  padding-inline: 8px !important;
+  text-align: end !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc col.fc-timegrid-axis-col,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc col.fc-scrollgrid-shrink,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-shrink,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc th.fc-timegrid-axis,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc td.fc-timegrid-axis,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label {
+  width: var(--tps-embed-axis-width) !important;
+  min-width: var(--tps-embed-axis-width) !important;
+  max-width: var(--tps-embed-axis-width) !important;
+  overflow: hidden !important;
+}
+
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis-frame,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-shrink-frame,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-axis-cushion,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-scrollgrid-shrink-cushion,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label-frame,
+.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-slot-label-cushion {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
 }
 
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-col.fc-day-today {
@@ -366,6 +519,11 @@ body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases
   display: none !important;
 }
 
+body.tps-tps-mobile-ui-keyboard-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-canvas-embedded .bases-calendar-floating-nav,
+body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-canvas-embedded .bases-calendar-floating-nav {
+  display: flex !important;
+}
+
 @media (max-width: 768px) {
   body.is-mobile .markdown-preview-view .internal-embed .bases-calendar-scroll,
   body.is-mobile .markdown-preview-view .internal-embed .bases-calendar-container,
@@ -384,5 +542,18 @@ body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-container--embedded .bases
   body.is-mobile .cm-embed-block .bases-calendar-wrapper {
     height: var(--tps-calendar-embedded-height, 340px) !important;
     max-height: var(--tps-calendar-embedded-height, 340px) !important;
+  }
+
+  body.is-mobile .canvas-node-content .bases-calendar-scroll--canvas-embedded,
+  body.is-mobile .canvas-node-content .bases-calendar-container--canvas-embedded,
+  body.is-mobile .canvas-node-content .bases-calendar-wrapper.bases-calendar-canvas-embedded,
+  body.is-mobile .canvas-node .bases-calendar-scroll--canvas-embedded,
+  body.is-mobile .canvas-node .bases-calendar-container--canvas-embedded,
+  body.is-mobile .canvas-node .bases-calendar-wrapper.bases-calendar-canvas-embedded {
+    width: 100% !important;
+    max-width: none !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
   }
 }

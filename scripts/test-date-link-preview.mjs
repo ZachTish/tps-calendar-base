@@ -75,3 +75,10 @@ test("calendar day context counts unmatched external events once", () => {
   assert.match(calendarViewSource, /context\.externalEvents > 0/);
   assert.match(reactViewSource, /\+ \(context\.externalEvents \|\| 0\)/);
 });
+
+test("embedded calendars render the configured slot range instead of cutting to scroll time", () => {
+  assert.match(reactViewSource, /const embeddedSlotMinTimeValue = slotMinTimeValue;/);
+  assert.match(reactViewSource, /const fullCalendarScrollTimeValue = isEmbedMode[\s\S]*\? slotMinTimeValue[\s\S]*: `\$\{defaultScrollTimeSetting\}:00`;/);
+  assert.doesNotMatch(reactViewSource, /isEmbedMode && !hiddenTimeVisible\s*\?\s*`\$\{defaultScrollTimeSetting\}:00`/);
+  assert.match(reactViewSource, /scrollTime=\{fullCalendarScrollTimeValue\}/);
+});

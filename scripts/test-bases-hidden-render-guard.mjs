@@ -7,8 +7,9 @@ const mainSource = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf
 const embedCss = readFileSync(new URL('../src/embed-calendar.css', import.meta.url), 'utf8');
 
 test('calendar does not mount React into hidden Bases view instances', () => {
-  assert.match(source, /private shouldProcessUpdates\(\): boolean/);
+  assert.match(source, /private shouldProcessUpdates\(force = false\): boolean/);
   assert.match(source, /if \(!this\.containerEl\.isConnected\) return false/);
+  assert.match(source, /if \(force \|\| \(this as any\)\.forceDirectEmbedRender === true\) return true/);
   assert.match(source, /return this\.containerEl\.isShown\(\) \|\| this\.isActiveLeaf\(\)/);
   assert.match(source, /this\.containerEl\.removeClass\("is-loading"\);\s*if \(!this\.shouldProcessUpdates\(\)\) return;\s*this\.renderReactCalendar\(\)/);
   assert.match(source, /private renderReactCalendar\(\): void \{[\s\S]*if \(!this\.shouldProcessUpdates\(\)\) \{/);

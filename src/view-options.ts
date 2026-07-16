@@ -1,6 +1,6 @@
 import { ViewOption } from "obsidian";
 import { CalendarPluginBridge } from "./plugin-interface";
-import { DEFAULT_CONDENSE_LEVEL } from "./utils";
+import { DEFAULT_CONDENSE_LEVEL, MAX_CONDENSE_LEVEL } from "./utils";
 
 export const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
 export const LEGACY_CONTEXT_DATE_CONFIG_KEY = "contextDateEnabled";
@@ -112,7 +112,7 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
           key: "condenseLevel",
           default: DEFAULT_CONDENSE_LEVEL,
           min: 0,
-          max: 220,
+          max: MAX_CONDENSE_LEVEL,
           step: 10,
         },
         {
@@ -121,6 +121,16 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
           key: "embeddedHeight",
           default: "520",
           placeholder: "520",
+        },
+        {
+          displayName: "Embedded Base header",
+          type: "dropdown",
+          key: "showEmbeddedHeader",
+          default: "true",
+          options: {
+            true: "Show",
+            false: "Hide",
+          },
         },
         {
           displayName: "Show full day slot",

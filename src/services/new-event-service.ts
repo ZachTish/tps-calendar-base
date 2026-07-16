@@ -19,7 +19,8 @@ import { mergeTagInputs, normalizeTagValue } from "../utils/tag-utils";
 import { applyParentLinkToChild } from "./parent-child-link";
 import { getPluginById } from "../core";
 import { insertLineAfterFrontmatter } from "../utils/frontmatter-insert";
-import { formatTaskTitleAsContextLink } from "../utils/task-title-link";
+import { normalizeCalendarTaskTargetPath } from "../utils/task-target-path";
+import { normalizeTaskAssociatedNotePath } from "../utils/task-associated-note";
 
 export interface NewEventServiceConfig {
   app: App;
@@ -57,6 +58,14 @@ export interface NewEventCreationOptions {
   templateTypeOverride?: string | null;
   titleOverride?: string | null;
   taskTitleOverride?: string | null;
+  taskAssociatedNotePath?: string | null;
+}
+
+interface NewEventPromptContext {
+  createMode: "note" | "task";
+  taskDestination: "daily-note" | "event-note";
+  taskTargetPath: string | null;
+  hasTaskTargetPathOverride: boolean;
 }
 
 export class NewEventService {
@@ -86,22 +95,51 @@ export class NewEventService {
     options?: NewEventCreationOptions
   ): Promise<TFile | null> {
     if (this.createInProgress) {
+      logger.flow("NewEvent", "create:skip-in-progress", {
+        start: start?.toISOString(),
+        end: end?.toISOString(),
+      });
       return null;
     }
     this.createInProgress = true;
+    const startedAt = Date.now();
     try {
+      const createMode = options?.createMode || this.config.createMode || "note";
+      const taskDestination = this.config.taskDestination || "daily-note";
+      const optionTaskTargetPath = normalizeCalendarTaskTargetPath(options?.taskTargetPath);
+      const resolvedTaskTargetPath = optionTaskTargetPath || normalizeCalendarTaskTargetPath(this.config.taskTargetPath) || null;
+      const logContext = {
+        createMode,
+        taskDestination,
+        start: start?.toISOString(),
+        end: end?.toISOString(),
+        allDay: !!options?.allDay,
+        useBaseDefaults: !!options?.useBaseDefaults,
+        hasFrontmatterOverrides: !!frontmatterOverrides && Object.keys(frontmatterOverrides).length > 0,
+        hasTaskTargetPathOverride: !!optionTaskTargetPath,
+        resolvedTaskTargetPath: resolvedTaskTargetPath || "",
+      };
+      logger.flow("NewEvent", "create:start", logContext);
+      const promptContext: NewEventPromptContext = {
+        createMode,
+        taskDestination,
+        taskTargetPath: resolvedTaskTargetPath,
+        hasTaskTargetPathOverride: !!optionTaskTargetPath,
+      };
       const rawTitle = options?.titleOverride != null
         ? options.titleOverride
-        : await this.promptForTitle(options?.typeFolderOverride);
+        : await this.promptForTitle(options?.typeFolderOverride, promptContext);
 
       if (rawTitle === undefined) {
         this.pendingLinkExisting = false;
         this.pendingTypeFolderPath = null;
+        logger.flow("NewEvent", "create:canceled", { ...logContext, reason: "title-prompt" });
         return null;
       }
       if (rawTitle === "__LINK_EXISTING_CANCEL__") {
         this.pendingLinkExisting = false;
         this.pendingTypeFolderPath = null;
+        logger.flow("NewEvent", "create:canceled", { ...logContext, reason: "link-existing" });
         return null;
       }
       const titleInput = rawTitle && rawTitle.trim() ? rawTitle.trim() : "";
@@ -113,6 +151,7 @@ export class NewEventService {
       const resolvedTags = await this.resolveTags(tags);
       if (resolvedTags === null) {
         // User cancelled tag selection
+        logger.flow("NewEvent", "create:canceled", { ...logContext, reason: "tag-selection" });
         return null;
       }
 
@@ -132,6 +171,7 @@ export class NewEventService {
       if (!cleanTitle || !cleanTitle.trim()) {
         const parentTitle = parentFile?.basename?.trim() || "";
         if (!parentTitle) {
+          logger.flow("NewEvent", "create:canceled", { ...logContext, reason: "empty-title" });
           return null;
         }
         cleanTitle = parentTitle;
@@ -141,52 +181,77 @@ export class NewEventService {
       let finalOverrides = frontmatterOverrides ? { ...frontmatterOverrides } : {};
       if (end < new Date()) {
         const choice = await this.promptForPastEvent();
-        if (choice === "cancel") return null;
+        logger.flow("NewEvent", "status-prompt:past", { ...logContext, choice });
+        if (choice === "cancel") {
+          logger.flow("NewEvent", "create:canceled", { ...logContext, reason: "past-status-prompt" });
+          return null;
+        }
         if (choice === "complete") {
           finalOverrides.status = "complete";
-          logger.log("Past event marked as complete. Overrides:", finalOverrides);
+          logger.flow("NewEvent", "status:resolved", { ...logContext, route: "past-complete", status: "complete" });
         }
       } else {
         const now = new Date();
         if (start <= now && end > now) {
           const statusValue = this.config.inProgressStatusValue || "working";
           const choice = await this.promptForInProgressEvent(statusValue);
-          if (choice === "cancel") return null;
+          logger.flow("NewEvent", "status-prompt:in-progress", { ...logContext, choice, statusValue });
+          if (choice === "cancel") {
+            logger.flow("NewEvent", "create:canceled", { ...logContext, reason: "in-progress-status-prompt" });
+            return null;
+          }
           if (choice === "in-progress") {
             finalOverrides.status = statusValue;
-            logger.log("In-progress event marked as:", statusValue, "Overrides:", finalOverrides);
+            logger.flow("NewEvent", "status:resolved", { ...logContext, route: "in-progress", status: statusValue });
           }
         }
       }
 
-      const createMode = options?.createMode || this.config.createMode || "note";
-      const taskDestination = this.config.taskDestination || "daily-note";
-      const hasTaskTargetPathOverride = !!options && Object.prototype.hasOwnProperty.call(options, "taskTargetPath");
-      const resolvedTaskTargetPath = hasTaskTargetPathOverride
-        ? options?.taskTargetPath ?? null
-        : this.config.taskTargetPath || null;
-      logger.log("[NewEventService] createEvent decision", {
+      const taskTitle = options?.taskTitleOverride?.trim() || cleanTitle;
+      const taskTags = mergeTagInputs(resolvedTags, options?.taskTags ?? []);
+      const taskAssociatedNotePath = createMode === "task"
+        ? normalizeTaskAssociatedNotePath(options?.taskAssociatedNotePath)
+          || (isLinkingExisting ? normalizeTaskAssociatedNotePath(parentFile?.path) : "")
+        : "";
+      const taskOverrides = {
+        ...finalOverrides,
+        ...(options?.taskStatus ? { status: options.taskStatus } : {}),
+        ...(taskAssociatedNotePath ? { associatedNotePath: taskAssociatedNotePath } : {}),
+      };
+
+      logger.flow("NewEvent", "route:resolved", {
+        ...logContext,
         createMode,
         taskDestination,
+        hasTaskTargetPathOverride: !!optionTaskTargetPath,
         hasResolvedTaskTargetPath: !!resolvedTaskTargetPath,
         taskTargetPath: resolvedTaskTargetPath,
+        title: cleanTitle,
+        tags: resolvedTags.length,
+        parentPath: parentFile?.path || "",
+        linkExisting: isLinkingExisting,
+        hasTaskAssociation: !!taskAssociatedNotePath,
+        taskAssociationPath: taskAssociatedNotePath,
       });
       if (createMode === "task" && (taskDestination === "daily-note" || resolvedTaskTargetPath)) {
-        logger.log("[NewEventService] createEvent using inline task path", {
-          destination: taskDestination,
-          taskTargetPath: resolvedTaskTargetPath,
+        const file = await this.createTaskInDailyNote(taskTitle, start, end, taskTags, taskOverrides, resolvedTaskTargetPath, options?.allDay);
+        logger.flow("NewEvent", "create:done", {
+          ...logContext,
+          route: "task-line",
+          path: file?.path || "",
+          durationMs: Date.now() - startedAt,
         });
-        const taskTags = mergeTagInputs(resolvedTags, options?.taskTags ?? []);
-        const taskOverrides = {
-          ...finalOverrides,
-          ...(options?.taskStatus ? { status: options.taskStatus } : {}),
-        };
-        return await this.createTaskInDailyNote(cleanTitle, start, end, taskTags, taskOverrides, resolvedTaskTargetPath, options?.allDay);
+        return file;
       }
 
       const folderPath = this.resolveFolderPath(
         this.pendingTypeFolderPath ?? options?.typeFolderOverride,
       );
+      logger.flow("NewEvent", "note-target:resolved", {
+        ...logContext,
+        folderPath,
+        typeFolderOverride: this.pendingTypeFolderPath ?? options?.typeFolderOverride ?? "",
+      });
 
       // Ensure folder exists
       await this.ensureFolderExists(folderPath);
@@ -197,6 +262,12 @@ export class NewEventService {
           options?.templateOverride ?? this.config.templatePath,
           options?.templateTypeOverride ?? this.config.templateType,
         );
+      logger.flow("NewEvent", "template:resolved", {
+        ...logContext,
+        path,
+        templatePath: templateFile?.path || "",
+        templateType: options?.templateTypeOverride ?? this.config.templateType ?? "",
+      });
       const includeAdditionalFrontmatter = !options?.useBaseDefaults;
       const frontmatter = this.buildFrontmatter(
         cleanTitle,
@@ -223,12 +294,16 @@ export class NewEventService {
           priority: frontmatter.priority,
           tags: resolvedTags,
         };
-        const taskTitle = options?.taskTitleOverride?.trim() || cleanTitle;
         const initialContent = createMode === "task"
-            ? this.buildDedicatedTaskNoteContent(taskTitle, start, end, resolvedTags, finalOverrides, undefined, options?.allDay)
+          ? this.buildDedicatedTaskNoteContent(taskTitle, start, end, taskTags, taskOverrides, frontmatter, options?.allDay)
           : await this.buildInitialContent(templateFile, path, templateVars);
         const file = await this.createFileRetrying(path, initialContent || '---\n---\n');
-        logger.log(`[NewEventService] Created note: "${file.basename}" at ${file.path}`);
+        logger.flow("NewEvent", "note:create-file-done", {
+          ...logContext,
+          route: "template",
+          path: file.path,
+          templatePath: templateFile.path,
+        });
 
         // Explicitly run Templater to process any remaining <% tp.* %> tags.
         // Done BEFORE applying TPS frontmatter so Templater runs first; TPS then
@@ -236,11 +311,7 @@ export class NewEventService {
         await this.runTemplaterOnFile(file);
 
         if (!options?.useBaseDefaults) {
-          const frontmatterWithFolder = {
-            ...frontmatter,
-            folderPath: file.parent?.path || "/",
-          };
-          await this.applyEventFrontmatter(file, frontmatterWithFolder);
+          await this.applyEventFrontmatter(file, frontmatter);
         }
 
         // Create parent link if selected
@@ -250,38 +321,38 @@ export class NewEventService {
 
         if (options?.useBaseDefaults) {
           const defaults = options.frontmatterDefaults ?? {};
-          const overridesWithFolder = {
-            ...frontmatter,
-            folderPath: file.parent?.path || "/",
-          };
-          await this.applyFrontmatterDefaultsAndOverrides(file, defaults, overridesWithFolder);
+          await this.applyFrontmatterDefaultsAndOverrides(file, defaults, frontmatter);
         }
 
         // Trigger post-creation hooks (linter, etc.) after required frontmatter is valid.
         await this.triggerPostCreationHooks(file);
         await this.canonicalizeCreatedEventFrontmatter(file);
 
+        logger.flow("NewEvent", "create:done", {
+          ...logContext,
+          route: "note-template",
+          path: file.path,
+          durationMs: Date.now() - startedAt,
+        });
         return file;
       } else {
-        const initialFolderPath = folderPath || "/";
         const initialFrontmatter = options?.useBaseDefaults
           ? this.mergeFrontmatterDefaultsAndOverrides(
             options.frontmatterDefaults ?? {},
-            {
-              ...frontmatter,
-              folderPath: initialFolderPath,
-            },
+            frontmatter,
           )
-          : {
-            ...frontmatter,
-            folderPath: initialFolderPath,
-          };
+          : frontmatter;
         const file = await this.createFileRetrying(
           path,
           createMode === "task"
-            ? this.buildDedicatedTaskNoteContent(options?.taskTitleOverride?.trim() || cleanTitle, start, end, resolvedTags, finalOverrides, initialFrontmatter, options?.allDay)
+            ? this.buildDedicatedTaskNoteContent(taskTitle, start, end, taskTags, taskOverrides, initialFrontmatter, options?.allDay)
             : this.buildFrontmatterOnlyContent(initialFrontmatter),
         );
+        logger.flow("NewEvent", "note:create-file-done", {
+          ...logContext,
+          route: createMode === "task" ? "dedicated-task-note" : "frontmatter-only-note",
+          path: file.path,
+        });
 
         // Create parent link if selected
         if (parentFile) {
@@ -292,10 +363,20 @@ export class NewEventService {
         await this.triggerPostCreationHooks(file);
         await this.canonicalizeCreatedEventFrontmatter(file);
 
+        logger.flow("NewEvent", "create:done", {
+          ...logContext,
+          route: createMode === "task" ? "dedicated-task-note" : "note",
+          path: file.path,
+          durationMs: Date.now() - startedAt,
+        });
         return file;
       }
     } catch (error) {
-      logger.error('[NewEventService] Error creating event:', error);
+      logger.flowError("NewEvent", "create:failed", error, {
+        start: start?.toISOString(),
+        end: end?.toISOString(),
+        durationMs: Date.now() - startedAt,
+      });
       throw error;
     } finally {
       this.createInProgress = false;
@@ -312,23 +393,82 @@ export class NewEventService {
     targetPath?: string | null,
     allDay?: boolean,
   ): Promise<TFile | null> {
-    logger.log("[NewEventService] createTaskInDailyNote", {
+    logger.flow("NewEvent", "task-line:start", {
       targetPath: targetPath || null,
       start: start?.toISOString(),
       end: end?.toISOString(),
+      allDay: !!allDay,
+      tags: tags.length,
+      overrideKeys: Object.keys(overrides || {}).sort(),
     });
     const dailyFile = targetPath
       ? await this.ensureTaskTargetFile(targetPath)
       : await this.ensureDailyNoteFile(start);
     const taskLine = this.buildTaskLine(title, start, end, tags, overrides, allDay);
-    await this.config.app.vault.process(dailyFile, (content) => insertLineAfterFrontmatter(content, taskLine));
+    const externalId = this.getTaskExternalId(overrides);
+    let duplicate = false;
+    await this.config.app.vault.process(dailyFile, (content) => {
+      if (externalId && this.hasTaskWithExternalId(content, externalId)) {
+        duplicate = true;
+        return content;
+      }
+      return insertLineAfterFrontmatter(content, taskLine);
+    });
+    if (duplicate) {
+      logger.flow("NewEvent", "task-line:skip-duplicate", {
+        path: dailyFile.path,
+        targetPath: targetPath || "",
+        title,
+        identity: "externalId",
+      });
+      return null;
+    }
+    logger.flow("NewEvent", "task-line:done", {
+      path: dailyFile.path,
+      targetPath: targetPath || "",
+      title,
+      taskLineLength: taskLine.length,
+    });
     return dailyFile;
   }
 
+  private getTaskExternalId(overrides: Record<string, any>): string {
+    const key = Object.keys(overrides || {}).find((candidate) => candidate.trim().toLowerCase() === "externalid");
+    return key ? String(overrides[key] ?? "").trim() : "";
+  }
+
+  private hasTaskWithExternalId(content: string, externalId: string): boolean {
+    return String(content || "")
+      .split(/\r?\n/)
+      .some((line) => this.taskLineHasExternalId(line, externalId));
+  }
+
+  private taskLineHasExternalId(line: string, externalId: string): boolean {
+    if (!/^\s*[-*]\s+\[[^\]]*\]\s+/.test(line)) return false;
+    const inlineProperty = /\[([^\[\]:]+)::\s*([^\]]*)\]/g;
+    let match: RegExpExecArray | null;
+    while ((match = inlineProperty.exec(line)) !== null) {
+      const key = match[1].trim().toLowerCase();
+      const value = match[2].trim();
+      if (key === "externalid" && value === externalId) return true;
+      if (key !== "tpsinlineprops" && key !== "tps-inline-props") continue;
+      try {
+        const decoded = JSON.parse(decodeURIComponent(value));
+        if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) continue;
+        const identityKey = Object.keys(decoded).find((candidate) => candidate.trim().toLowerCase() === "externalid");
+        if (identityKey && String(decoded[identityKey] ?? "").trim() === externalId) return true;
+      } catch {
+        // Malformed hidden task metadata must not block creation.
+      }
+    }
+    return false;
+  }
+
   private async ensureTaskTargetFile(rawPath: string): Promise<TFile> {
-    const path = this.normalizeTaskTargetPath(rawPath);
+    const path = normalizeCalendarTaskTargetPath(rawPath);
+    if (!path) throw new Error("Task target path is empty");
     const existing = this.config.app.vault.getAbstractFileByPath(path);
-    logger.log("[NewEventService] ensureTaskTargetFile", {
+    logger.flow("NewEvent", "task-target:resolved", {
       requested: rawPath,
       normalized: path,
       exists: existing instanceof TFile,
@@ -337,15 +477,9 @@ export class NewEventService {
     const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     if (folder) await this.ensureFolder(folder);
     const basename = path.split("/").pop()?.replace(/\.md$/i, "") || "Tasks";
-    return await this.config.app.vault.create(path, `---\ntitle: ${basename}\n---\n\n`);
-  }
-
-  private normalizeTaskTargetPath(rawPath: string): string {
-    const value = normalizePath(String(rawPath || "").trim()
-      .replace(/^\[\[|\]\]$/g, "")
-      .replace(/^\"+|\"+$/g, "")
-      .replace(/^\/+/, ""));
-    return value.toLowerCase().endsWith(".md") ? value : `${value}.md`;
+    const file = await this.config.app.vault.create(path, `---\ntitle: ${basename}\n---\n\n`);
+    logger.flow("NewEvent", "task-target:created", { path: file.path, folder });
+    return file;
   }
 
   private buildDedicatedTaskNoteContent(
@@ -373,8 +507,10 @@ export class NewEventService {
     const durationKey = this.getNoteFieldName(this.config.endProperty) || "timeEstimate";
     const allDayKey = this.getNoteFieldName(this.config.allDayProperty) || "allDay";
     const isAllDay = this.resolveAllDay(start, end, allDay);
-    const linkedTitle = formatTaskTitleAsContextLink(title.trim() || this.config.defaultTitle || "Untitled", "Untitled", start);
-    const parts = [`- [ ] ${linkedTitle}`];
+    const visibleTitle = String(title || this.config.defaultTitle || "Untitled")
+      .replace(/\s+/g, " ")
+      .trim() || "Untitled";
+    const parts = [`- [ ] ${visibleTitle}`];
     const hiddenProps: Record<string, any> = {};
     parts.push(`[${scheduledKey}:: ${this.formatCalendarValue(start, isAllDay)}]`);
     if (!isAllDay && this.config.useEndDuration !== false && end && end.getTime() > start.getTime()) {
@@ -406,6 +542,7 @@ export class NewEventService {
     const normalized = String(key || "").trim().toLowerCase();
     if (!normalized) return false;
     if (normalized === "tags") return false;
+    if (normalized === "associatednotepath") return false;
     if (["scheduled", "timeestimate", "status", "priority", "due", "start", "end"].includes(normalized)) return true;
     const gcm = getPluginById(this.config.app, "tps-global-context-menu") as any;
     const properties = Array.isArray(gcm?.settings?.properties) ? gcm.settings.properties : [];
@@ -559,6 +696,7 @@ export class NewEventService {
           super(app);
         }
         onOpen() {
+          this.modalEl.addClass("tps-keyboard-aware-modal");
           const { contentEl } = this;
           contentEl.empty();
           contentEl.createEl("h2", { text: `Select tag for #${originalTag}` });
@@ -633,7 +771,28 @@ export class NewEventService {
     return this.config.app.vault.getRoot().path;
   }
 
-  private async promptForTitle(typeFolderOverride?: string | null): Promise<string | undefined> {
+  private getPromptDestinationDisplay(typeFolderOverride: string | null | undefined, context: NewEventPromptContext): string {
+    if (context.createMode === "task") {
+      if (context.taskTargetPath) {
+        return `${context.taskTargetPath} (${context.hasTaskTargetPathOverride ? "from filter" : "from settings"})`;
+      }
+      if (context.taskDestination === "daily-note") return "Scheduled day's daily note";
+      return "Dedicated event note";
+    }
+    if (this.pendingTypeFolderPath) return this.pendingTypeFolderPath;
+    if (typeFolderOverride) return `${typeFolderOverride} (from filter)`;
+    return "Vault root";
+  }
+
+  private async promptForTitle(
+    typeFolderOverride?: string | null,
+    context: NewEventPromptContext = {
+      createMode: "note",
+      taskDestination: "daily-note",
+      taskTargetPath: null,
+      hasTaskTargetPathOverride: false,
+    },
+  ): Promise<string | undefined> {
     const service = this;
     return new Promise((resolve) => {
       const modal = new (class extends Modal {
@@ -641,6 +800,7 @@ export class NewEventService {
           super(app);
         }
         onOpen() {
+          this.modalEl.addClass("tps-keyboard-aware-modal");
           const { contentEl } = this;
           contentEl.empty();
           contentEl.addClass("tps-new-event-modal");
@@ -694,31 +854,35 @@ export class NewEventService {
           setTimeout(maintain, 0);
           focusLoop = window.setInterval(maintain, 250);
           service.modalInput = input;
+          const isTaskMode = context.createMode === "task";
           const typeRow = form.createDiv({ cls: "tps-calendar-template-row" });
           typeRow.style.display = "flex";
           typeRow.style.alignItems = "center";
           typeRow.style.gap = "8px";
           typeRow.style.marginBottom = "10px";
-          typeRow.createSpan({ text: "Type:" });
+          typeRow.createSpan({ text: isTaskMode ? "Task target:" : "Type:" });
           const getTypeDisplay = () => {
-            if (service.pendingTypeFolderPath) return service.pendingTypeFolderPath;
-            if (typeFolderOverride) return `${typeFolderOverride} (from filter)`;
-            return "Vault root";
+            return service.getPromptDestinationDisplay(typeFolderOverride, context);
           };
           typeValue = typeRow.createSpan({ text: getTypeDisplay() });
-          if (!service.pendingTypeFolderPath && typeFolderOverride) {
+          if (
+            (isTaskMode && (context.taskTargetPath || context.taskDestination === "daily-note")) ||
+            (!isTaskMode && !service.pendingTypeFolderPath && typeFolderOverride)
+          ) {
             typeValue.style.color = "var(--text-muted)";
           }
-          const clearTypeBtn = typeRow.createEl("button", { text: "Clear", type: "button" });
-          clearTypeBtn.addEventListener("click", (evt) => {
-            evt.preventDefault();
-            evt.stopPropagation();
-            service.pendingTypeFolderPath = null;
-            if (typeValue) {
-              typeValue.textContent = getTypeDisplay();
-              typeValue.style.color = typeFolderOverride ? "var(--text-muted)" : "";
-            }
-          });
+          if (!isTaskMode) {
+            const clearTypeBtn = typeRow.createEl("button", { text: "Clear", type: "button" });
+            clearTypeBtn.addEventListener("click", (evt) => {
+              evt.preventDefault();
+              evt.stopPropagation();
+              service.pendingTypeFolderPath = null;
+              if (typeValue) {
+                typeValue.textContent = getTypeDisplay();
+                typeValue.style.color = typeFolderOverride ? "var(--text-muted)" : "";
+              }
+            });
+          }
           const buttons = form.createDiv({ cls: "modal-button-container" });
           const createBtn = buttons.createEl("button", { text: "Create", cls: "mod-cta", type: "button" });
           const syncCreateState = () => {
@@ -742,29 +906,31 @@ export class NewEventService {
           });
           syncCreateState();
 
-          const typeBtn = buttons.createEl("button", { text: "Type...", type: "button" });
-          typeBtn.addEventListener("click", async (evt) => {
-            evt.preventDefault();
-            evt.stopPropagation();
-            if (focusLoop !== null) {
-              window.clearInterval(focusLoop);
-              focusLoop = null;
-            }
-            typePickInProgress = true;
-            const selected = await service.promptForTypeFolderSelection();
-            if (selected) {
-              service.pendingTypeFolderPath = selected.path;
-              if (typeValue) {
-                typeValue.textContent = selected.path;
-                typeValue.style.color = "";
+          if (!isTaskMode) {
+            const typeBtn = buttons.createEl("button", { text: "Type...", type: "button" });
+            typeBtn.addEventListener("click", async (evt) => {
+              evt.preventDefault();
+              evt.stopPropagation();
+              if (focusLoop !== null) {
+                window.clearInterval(focusLoop);
+                focusLoop = null;
               }
-            }
-            typePickInProgress = false;
-            setTimeout(maintain, 0);
-            if (focusLoop === null) {
-              focusLoop = window.setInterval(maintain, 250);
-            }
-          });
+              typePickInProgress = true;
+              const selected = await service.promptForTypeFolderSelection();
+              if (selected) {
+                service.pendingTypeFolderPath = selected.path;
+                if (typeValue) {
+                  typeValue.textContent = selected.path;
+                  typeValue.style.color = "";
+                }
+              }
+              typePickInProgress = false;
+              setTimeout(maintain, 0);
+              if (focusLoop === null) {
+                focusLoop = window.setInterval(maintain, 250);
+              }
+            });
+          }
 
           // Add "Link Existing Note" button
           const linkExistingBtn = buttons.createEl("button", { text: "Link Existing Note", type: "button" });
@@ -880,13 +1046,6 @@ export class NewEventService {
   private async applyParentLink(file: TFile, parentFile: TFile): Promise<void> {
     const parentKey = (this.config.parentLinkKey || "parent").trim() || "parent";
     await applyParentLinkToChild(this.config.app, file, parentFile, parentKey);
-  }
-
-  private async syncFolderPathFrontmatter(file: TFile): Promise<void> {
-    const folderPath = file.parent?.path || "/";
-    await this.processFrontmatterSafely(file, "sync-folder-path", (fm) => {
-      this.setFrontmatterValueCaseInsensitive(fm, "folderPath", folderPath);
-    });
   }
 
   private applyFocus() {
@@ -1297,8 +1456,11 @@ export class NewEventService {
     }
 
     const allDayField = this.noteField(this.config.allDayProperty) ?? "allDay";
-    // Write as a boolean, not a string
-    result[allDayField] = isAllDay;
+    // False is the ordinary timed-event state and does not need persisted metadata.
+    // Explicit Base/template/default values are merged separately and remain intact.
+    if (isAllDay) {
+      result[allDayField] = true;
+    }
 
     // Merge additional frontmatter (from filter templates)
     if (includeAdditionalFrontmatter && this.config.additionalFrontmatter) {
@@ -1517,6 +1679,7 @@ export class NewEventService {
           super(app);
         }
         onOpen() {
+          this.modalEl.addClass("tps-keyboard-aware-modal");
           const { contentEl } = this;
           contentEl.empty();
           contentEl.createEl("h2", { text: "Event in Past" });
@@ -1579,6 +1742,7 @@ export class NewEventService {
           });
         }
         onOpen() {
+          this.modalEl.addClass("tps-keyboard-aware-modal");
           const { contentEl } = this;
           contentEl.empty();
           contentEl.createEl("h2", { text: "Event In Progress" });
@@ -1640,6 +1804,7 @@ export class NewEventService {
           super(app);
         }
         onOpen() {
+          this.modalEl.addClass("tps-keyboard-aware-modal");
           const { contentEl } = this;
           contentEl.empty();
           contentEl.createEl("h2", { text: `Select parent note for '${keyName}'` });

@@ -217,3 +217,10 @@ export function getAutoRangeViewDayCount(diffDays: number): number {
   if (diffDays <= 7) return 7;
   return 30;
 }
+
+export function getInclusiveCalendarDayCount(startDate: Date, endDate: Date): number {
+  const startMs = Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+  const endMs = Date.UTC(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+  const diffDays = Math.floor((endMs - startMs) / (24 * 60 * 60 * 1000)) + 1;
+  return Number.isFinite(diffDays) && diffDays > 0 ? diffDays : 1;
+}

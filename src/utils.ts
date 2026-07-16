@@ -1,9 +1,9 @@
 import { ExternalCalendarConfig } from "./types";
 
-const MIN_SLOT_ZOOM = 0.15;  // Minimum zoom (most condensed)
+const MIN_SLOT_ZOOM = 0.08;  // Minimum zoom (most condensed)
 const MAX_SLOT_ZOOM = 1.5;   // Maximum zoom (most expanded)
 const BASE_SLOT_HEIGHT = 60; // Base height in pixels for 30-min slot
-export const MAX_CONDENSE_LEVEL = 220;
+export const MAX_CONDENSE_LEVEL = 300;
 
 export const DEFAULT_CONDENSE_LEVEL = 80;
 

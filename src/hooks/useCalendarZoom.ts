@@ -36,8 +36,8 @@ export function useCalendarZoom({
         const delta = e.deltaY;
         const adjustment = delta * -0.2;
 
-        // Clamp height: Min 9px (0.15 * 60), Max 90px (1.5 * 60)
-        const newHeight = Math.max(9, Math.min(90, current + adjustment));
+        // Clamp height: Min 5px (~0.08 * 60), Max 90px (1.5 * 60)
+        const newHeight = Math.max(5, Math.min(90, current + adjustment));
 
         if (newHeight !== current) {
           currentSlotHeightRef.current = newHeight;
@@ -52,8 +52,8 @@ export function useCalendarZoom({
           pinchDebounceRef.current = setTimeout(() => {
             const BASE = 60;
             const MAX_SLOT_ZOOM = 1.5;
-            const MIN_SLOT_ZOOM = 0.15;
-            const MAX_LEVEL = 220;
+            const MIN_SLOT_ZOOM = 0.08;
+            const MAX_LEVEL = 300;
             const range = MAX_SLOT_ZOOM - MIN_SLOT_ZOOM;
 
             const newZoom = newHeight / BASE;

@@ -40,14 +40,19 @@ import { useEventRenderer } from "./components/EventRenderer";
 import { CalendarNavigation } from "./components/CalendarNavigation";
 import { ContinuousScrollView } from "./components/ContinuousScrollView";
 import { revealCompletedCheckboxesForFile, shouldForceBaseLinkPreview } from "./tps-gcm-api";
+import {
+  buildCalendarExternalDropRequest,
+  buildCalendarExternalDropPreviewRange,
+  hasCalendarExternalDropData,
+  type CalendarExternalDropPayload,
+} from "./utils/calendar-external-drop";
+import { getAdaptiveTimeGridDayCount } from "./utils/calendar-day-count";
+import { getInclusiveCalendarDayCount } from "./utils/filter-date-utils";
 
 const DEFAULT_SLOT_MIN_TIME = "00:00:00";
 const DEFAULT_SLOT_MAX_TIME = "24:00:00";
 const DEFAULT_SCROLL_TIME = "08:00:00";
 const PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
-const TPS_TASK_LINE_MIME = "application/x-tps-task-line";
-const KANBAN_TASK_MIME = "application/x-kanban-task";
-
 const HEADER_HEIGHT_VAR = "var(--tps-bases-header-height, 84px)";
 const CALENDAR_EVENT_DENSITY_CSS = `
 .bases-calendar-wrapper .bases-calendar-event-title,
@@ -98,6 +103,15 @@ const MOBILE_UI_KEYBOARD_HIDDEN_CLASS = 'tps-tps-mobile-ui-keyboard-hidden';
 const MOBILE_UI_GESTURE_HIDDEN_CLASS = 'tps-tps-mobile-ui-gesture-hidden';
 const MOBILE_KEYBOARD_COLLAPSE_THRESHOLD_PX = 140;
 const MOBILE_SWIPE_HIDE_TIMEOUT_MS = 260;
+
+function getConfiguredTimeGridDayCount(viewMode: ViewMode): number {
+  if (viewMode === "day") return 1;
+  if (viewMode === "3d") return 3;
+  if (viewMode === "4d") return 4;
+  if (viewMode === "5d") return 5;
+  if (viewMode === "7d" || viewMode === "week") return 7;
+  return 7;
+}
 
 // ---------------------------------------------------------------------------
 // Persistent canvas-scale BCR patch
@@ -176,7 +190,7 @@ function _isFCMeasurementEl(el: Element): boolean {
 
 // Symbol used to mark synthetic events we create so our listener ignores them.
 const _SCALED_SYM = Symbol('tps-canvas-scaled');
-const _DRAG_EVENT_TYPES = ['pointerdown','pointermove','pointerup','mousedown','mousemove','mouseup'] as const;
+const _DRAG_EVENT_TYPES = ['mousedown','mousemove','mouseup'] as const;
 let _pointerPatchInstalled = false;
 
 function _interceptAndScaleEvent(e: Event): void {
@@ -189,10 +203,12 @@ function _interceptAndScaleEvent(e: Event): void {
     if (Math.abs(scale - 1) < 0.005) return;
 
     // Stop the original so FC never sees it; we'll re-dispatch with correct coords.
+    // PointerEvents stay native: FullCalendar relies on the browser pointer
+    // lifecycle for selection/drag-create, and synthetic pointer events can
+    // break that path inside Obsidian Canvas.
     e.stopImmediatePropagation();
 
     const me = e as MouseEvent;
-    const pe = e instanceof PointerEvent ? e : null;
     const inv = 1 / scale;
 
     const base: MouseEventInit = {
@@ -215,22 +231,7 @@ function _interceptAndScaleEvent(e: Event): void {
       relatedTarget: me.relatedTarget,
     };
 
-    let synth: MouseEvent;
-    if (pe) {
-      synth = new PointerEvent(e.type, {
-        ...base,
-        pointerId:   pe.pointerId,
-        pointerType: pe.pointerType,
-        isPrimary:   pe.isPrimary,
-        width:       pe.width,
-        height:      pe.height,
-        pressure:    pe.pressure,
-        tiltX:       pe.tiltX,
-        tiltY:       pe.tiltY,
-      } as PointerEventInit);
-    } else {
-      synth = new MouseEvent(e.type, base);
-    }
+    const synth = new MouseEvent(e.type, base);
     (synth as any)[_SCALED_SYM] = true;
     target.dispatchEvent(synth);
     return;
@@ -315,10 +316,6 @@ export type CalendarDayContext = {
   externalEvents: number;
 };
 
-type ExternalDropPayload =
-  | { type: "file"; filePath: string }
-  | { type: "task"; filePath: string; line: number; rawLine?: string; checkboxState?: string; text?: string };
-
 type CalendarDayMarkerOverlay = {
   dateKey: string;
   auxiliary: number;
@@ -354,7 +351,7 @@ interface CalendarReactViewProps {
     oldEnd?: Date,
   ) => Promise<void>;
   onCreateSelection?: (start: Date, end: Date, allDay?: boolean) => Promise<void>;
-  onExternalDrop?: (payload: ExternalDropPayload, start: Date, allDay: boolean) => Promise<void>;
+  onExternalDrop?: (payload: CalendarExternalDropPayload, start: Date, allDay: boolean) => Promise<void>;
   editable: boolean;
 
   condenseLevel?: number;
@@ -374,6 +371,7 @@ interface CalendarReactViewProps {
   defaultEventDuration?: number;
   embeddedHeight?: number;
   isEmbedded?: boolean;
+  preserveEmbeddedDayCount?: boolean;
   onDateClick?: (date: Date, targetEl?: HTMLElement, event?: MouseEvent) => void;
   allDayLimit?: number;
   headerContainer?: HTMLElement;
@@ -589,6 +587,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   defaultEventDuration = 60,
   embeddedHeight,
   isEmbedded,
+  preserveEmbeddedDayCount = false,
   onDateClick,
   headerContainer,
   showNavButtons,
@@ -627,11 +626,13 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       && a.getDate() === b.getDate()
   ), []);
   const [containerHeight, setContainerHeight] = useState<number>(0);
+  const [containerWidth, setContainerWidth] = useState<number>(0);
   // Ref and state for the flex child that holds FullCalendar (excludes nav chrome).
   // Used in embed mode so fullCalendarHeight doesn't include the toolbar height.
   const calendarBodyRef = useRef<HTMLDivElement>(null);
   const [calendarBodyHeight, setCalendarBodyHeight] = useState<number>(0);
   const [isEmbedMode, setIsEmbedMode] = useState(isEmbedded === true);
+  const [isCanvasEmbed, setIsCanvasEmbed] = useState(false);
   const [localShowFullDay, setLocalShowFullDay] = useState(
     showFullDay ?? true,
   );
@@ -639,10 +640,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   const [visibleDateRange, setVisibleDateRange] = useState<{ start: Date; end: Date } | null>(null);
   const [headerTitle, setHeaderTitle] = useState("");
   const [hiddenTimeVisible, setHiddenTimeVisible] = useState(false);
-	  const [isDraggingOver, setIsDraggingOver] = useState(false);
-	  const [isInternalDragging, setIsInternalDragging] = useState(false);
-	  const suppressEntryClickUntilRef = useRef(0);
-	  const mobileEntryTapRef = useRef<{ path: string; at: number } | null>(null);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [isInternalDragging, setIsInternalDragging] = useState(false);
+  const suppressEntryClickUntilRef = useRef(0);
+  const mobileEntryTapRef = useRef<{ path: string; at: number } | null>(null);
   const mobileEntryActionTimeoutRef = useRef<
     number | ReturnType<typeof window.setTimeout> | ReturnType<typeof setTimeout> | null
   >(null);
@@ -748,9 +749,9 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   const allowEdit = editable;
   const allowSelect = !!onCreateSelection;
   const floatingNavStyle: React.CSSProperties = {
-    position: isMobile ? 'fixed' : 'absolute',
+    position: isCanvasEmbed ? 'absolute' : isMobile ? 'fixed' : 'absolute',
     top: 'auto',
-    bottom: isMobile ? 'calc(112px + env(safe-area-inset-bottom, 0px))' : '24px',
+    bottom: isCanvasEmbed ? '10px' : isMobile ? 'calc(112px + env(safe-area-inset-bottom, 0px))' : '24px',
     left: '50%',
     transform: 'translateX(-50%)',
     backgroundColor: 'var(--background-primary)',
@@ -765,7 +766,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     minWidth: 0,
     pointerEvents: 'none',
     touchAction: 'pan-y',
-    zIndex: 10010,
+    zIndex: isCanvasEmbed ? 40 : 10010,
     opacity: !isMobile && navScrollHidden ? 0 : 1,
     visibility: !isMobile && navScrollHidden ? 'hidden' : 'visible',
     transition: 'opacity 0.2s ease, visibility 0.2s ease',
@@ -830,9 +831,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     const end = new Date(entryBoundsEnd);
     start.setHours(0, 0, 0, 0);
     end.setHours(0, 0, 0, 0);
-    const diffMs = end.getTime() - start.getTime();
-    if (!Number.isFinite(diffMs)) return null;
-    const inclusiveDays = Math.floor(diffMs / (24 * 60 * 60 * 1000)) + 1;
+    const inclusiveDays = getInclusiveCalendarDayCount(start, end);
     if (!Number.isFinite(inclusiveDays) || inclusiveDays < 1) return 1;
     return inclusiveDays;
   }, [viewMode, entryBoundsStart, entryBoundsEnd]);
@@ -849,20 +848,24 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     return "month";
   }, [viewMode, derivedFilterRangeDays]);
 
-  const targetDayCount =
-    resolvedFilterViewMode === "day" ? 1 :
-      resolvedFilterViewMode === "3d" ? 3 :
-        resolvedFilterViewMode === "4d" ? 4 :
-        resolvedFilterViewMode === "5d" ? 5 :
-          resolvedFilterViewMode === "7d" ? 7 :
-            resolvedFilterViewMode === "week" ? 7 :
-              7;
+  const configuredDayCount = getConfiguredTimeGridDayCount(resolvedFilterViewMode);
+  const targetDayCount = useMemo(() => {
+    if (resolvedFilterViewMode === "month" || resolvedFilterViewMode === "continuous" || preserveEmbeddedDayCount) {
+      return configuredDayCount;
+    }
+    return getAdaptiveTimeGridDayCount(
+      configuredDayCount,
+      containerWidth,
+      isEmbedMode || isCanvasEmbed,
+      isCanvasEmbed,
+    );
+  }, [configuredDayCount, containerWidth, isCanvasEmbed, isEmbedMode, preserveEmbeddedDayCount, resolvedFilterViewMode]);
   const viewName =
     resolvedFilterViewMode === "month" ? "dayGridMonth" :
-      resolvedFilterViewMode === "week" ? "timeGridWeek" :
+      resolvedFilterViewMode === "continuous" ? "timeGridDay" :
+        resolvedFilterViewMode === "week" && targetDayCount === 7 ? "timeGridWeek" :
         resolvedFilterViewMode === "day" ? "timeGridRange-1" :
-          resolvedFilterViewMode === "continuous" ? "timeGridDay" :
-              `timeGridRange-${targetDayCount}`;
+          `timeGridRange-${targetDayCount}`;
 
   const navStepValue = typeof navStep === "number" ? navStep : 0;
   // Only the 'week' view snaps by a full week; every other view defaults to 1 day.
@@ -947,9 +950,12 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   const slotMaxTimeValue = hiddenTimeVisible
     ? DEFAULT_SLOT_MAX_TIME
     : slotRange?.max ?? DEFAULT_SLOT_MAX_TIME;
-  const embeddedSlotMinTimeValue = isEmbedMode && !hiddenTimeVisible
-    ? `${defaultScrollTimeSetting}:00`
-    : slotMinTimeValue;
+  // Embeds still render the full configured slot range; scrollTime controls
+  // initial positioning without removing earlier hours from the grid.
+  const embeddedSlotMinTimeValue = slotMinTimeValue;
+  const fullCalendarScrollTimeValue = isEmbedMode
+    ? slotMinTimeValue
+    : `${defaultScrollTimeSetting}:00`;
 
   const getScrollTargetByKind = useCallback((kind: ScrollSnapshotKind): HTMLElement | null => {
     const root = containerRef.current;
@@ -1149,20 +1155,22 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   // --- Embed mode detection ---
   useLayoutEffect(() => {
+    if (!containerRef.current) return;
+    const leafContent = containerRef.current.closest('.workspace-leaf-content');
+    const viewType = leafContent?.getAttribute('data-type');
+    const isInCanvas = viewType === 'canvas' || !!containerRef.current.closest('.canvas-node-content, .canvas-node');
+    setIsCanvasEmbed(isInCanvas);
+
     if (typeof isEmbedded === "boolean") {
       setIsEmbedMode(isEmbedded);
       return;
     }
-    if (!containerRef.current) return;
     const embedSelectors = ".tps-auto-base-embed__panel, .tps-auto-base-embed__content, .markdown-embed, .internal-embed, .cm-embed-block, .canvas-node-content";
     const isInEmbed = !!containerRef.current.closest(embedSelectors);
     const previewView = containerRef.current.closest('.markdown-preview-view, .markdown-reading-view, .markdown-rendered');
     const isInReadingModeEmbed = previewView && !!containerRef.current.closest('.internal-embed, .markdown-embed');
-    const leafContent = containerRef.current.closest('.workspace-leaf-content');
-    const viewType = leafContent?.getAttribute('data-type');
     const isCalendarLeaf = viewType === 'calendar' || viewType === 'base' || viewType === 'bases';
     const isBasesInMarkdown = viewType === 'markdown' && !!containerRef.current.closest('.internal-embed, .markdown-embed');
-    const isInCanvas = viewType === 'canvas' || !!containerRef.current.closest('.canvas-node-content, .canvas-node');
     setIsEmbedMode(!isCalendarLeaf && (isInEmbed || isInReadingModeEmbed || isBasesInMarkdown || isInCanvas));
   }, []);
 
@@ -1180,15 +1188,18 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       slot.style.setProperty("min-height", `${slotHeight}px`, "important");
     });
   }, []);
-  const resolvedViewHeight = typeof embeddedHeight === "number" && Number.isFinite(embeddedHeight)
+  const useCanvasEmbedSizing = isEmbedMode && isCanvasEmbed;
+  const resolvedViewHeight = !useCanvasEmbedSizing && typeof embeddedHeight === "number" && Number.isFinite(embeddedHeight)
     ? Math.max(isMobile ? 260 : 300, embeddedHeight)
     : undefined;
   const resolvedEmbedHeight = isEmbedMode ? resolvedViewHeight : undefined;
-  const embedFallbackHeight = resolvedEmbedHeight ?? (isMobile ? 340 : 520);
+  const embedFallbackHeight = resolvedEmbedHeight ?? (useCanvasEmbedSizing ? Math.max(240, calendarBodyHeight || 0) : (isMobile ? 340 : 520));
   // Use calendarBodyHeight (the flex child below the nav bar) so FullCalendar is
   // sized to exactly the available space, preventing bottom-overflow in canvas nodes.
-  const computedEmbedCalendarHeight = resolvedEmbedHeight
-    ?? (calendarBodyHeight > 0
+  const computedEmbedCalendarHeight = useCanvasEmbedSizing
+    ? Math.max(180, calendarBodyHeight || 0)
+    : resolvedEmbedHeight
+      ?? (calendarBodyHeight > 0
       ? Math.max(isMobile ? 260 : 300, calendarBodyHeight)
       : embedFallbackHeight);
   const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 800;
@@ -1270,15 +1281,36 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   // header/body misalignment. A ResizeObserver on the container detects
   // width changes and calls updateSize() so FC remeasures and recalibrates.
   useEffect(() => {
-    if (!isEmbedMode || !containerRef.current) return;
+    if (!containerRef.current) return;
     const container = containerRef.current;
-    let lastWidth = container.getBoundingClientRect().width;
+    const readWidth = () => {
+      const layoutWidth = container.clientWidth || container.getBoundingClientRect().width;
+      if (!isCanvasEmbed) return layoutWidth;
+
+      const canvasNode = container.closest<HTMLElement>(".canvas-node");
+      const canvasNodeStyleWidth = canvasNode
+        ? Number.parseFloat(canvasNode.style.width || "")
+        : Number.NaN;
+      const visualWidth = _origBCR.call(container).width;
+      const candidates = [layoutWidth, visualWidth, canvasNodeStyleWidth]
+        .filter((width) => Number.isFinite(width) && width > 0);
+      return candidates.length ? Math.min(...candidates) : layoutWidth;
+    };
+    let lastWidth = readWidth();
+    if (lastWidth > 0) {
+      setContainerWidth((previousWidth) =>
+        Math.abs(previousWidth - lastWidth) >= 1 ? lastWidth : previousWidth,
+      );
+    }
     let debounceId: ReturnType<typeof setTimeout> | null = null;
 
     const ro = new ResizeObserver(() => {
-      const newWidth = container.getBoundingClientRect().width;
+      const newWidth = readWidth();
       if (Math.abs(newWidth - lastWidth) < 1) return;
       lastWidth = newWidth;
+      setContainerWidth((previousWidth) =>
+        Math.abs(previousWidth - newWidth) >= 1 ? newWidth : previousWidth,
+      );
       if (debounceId !== null) clearTimeout(debounceId);
       debounceId = setTimeout(() => {
         debounceId = null;
@@ -1292,7 +1324,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       ro.disconnect();
       if (debounceId !== null) clearTimeout(debounceId);
     };
-  }, [isEmbedMode]);
+  }, [isCanvasEmbed]);
 
   // Pinch-to-zoom hook
   const { currentSlotHeightRef } = useCalendarZoom({
@@ -2482,8 +2514,11 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       const isArchivedExternalPlaceholder = !!event.extendedProps?.isArchivedExternalPlaceholder;
 
       const isNonActiveEvent = !!event.extendedProps?.isNonActive || !!event.extendedProps?.isPast || event.classNames.includes("is-non-active") || event.classNames.includes("is-past");
+      const mutedEventOpacity = isCanvasEmbed
+        ? "1"
+        : "var(--tps-completed-event-opacity, var(--tps-past-event-opacity, 0.5))";
       if (isNonActiveEvent) {
-        element.style.setProperty("opacity", "var(--tps-completed-event-opacity, var(--tps-past-event-opacity, 0.5))", "important");
+        element.style.setProperty("opacity", mutedEventOpacity, "important");
       } else {
         element.style.removeProperty("opacity");
       }
@@ -2592,7 +2627,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             "important",
           );
           element.style.setProperty("box-shadow", "none", "important");
-          element.style.setProperty("opacity", isNonActiveEvent ? "var(--tps-completed-event-opacity, var(--tps-past-event-opacity, 0.5))" : "1", "important");
+          element.style.setProperty("opacity", isNonActiveEvent ? mutedEventOpacity : "1", "important");
         } else {
           element.style.setProperty("--tps-event-title-color", isNonActiveEvent ? "var(--text-muted)" : "white");
           element.style.setProperty(
@@ -2625,7 +2660,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
           );
           element.style.setProperty("box-shadow", isNonActiveEvent ? "none" : "inset 0 1px rgba(255,255,255,0.24), 0 1px 2px rgba(0,0,0,0.35)", "important");
           element.style.setProperty("filter", isNonActiveEvent ? "saturate(0.45) brightness(0.82)" : "none", "important");
-          element.style.setProperty("opacity", isNonActiveEvent ? "var(--tps-completed-event-opacity, var(--tps-past-event-opacity, 0.5))" : "1", "important");
+          element.style.setProperty("opacity", isNonActiveEvent ? mutedEventOpacity : "1", "important");
         }
       } else {
         const harness = element.closest(".fc-timegrid-event-harness, .fc-daygrid-event-harness") as HTMLElement | null;
@@ -2660,7 +2695,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             "important",
           );
           element.style.setProperty("box-shadow", "none", "important");
-          element.style.setProperty("opacity", isNonActiveEvent ? "var(--tps-completed-event-opacity, var(--tps-past-event-opacity, 0.5))" : "1", "important");
+          element.style.setProperty("opacity", isNonActiveEvent ? mutedEventOpacity : "1", "important");
         } else {
           element.style.removeProperty("background");
           element.style.removeProperty("background-image");
@@ -2809,11 +2844,14 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 	      const contextMenuHandler = (e: MouseEvent) => {
 	        suppressEntryClickUntilRef.current = Date.now() + 800;
 	        e.preventDefault();
-	        // In canvas embed mode, allow the contextmenu event to keep propagating
-	        // so the canvas node context menu (GCM) can still appear. In normal mode
-        // stop propagation to prevent workspace-level handlers from firing.
-        if (!isEmbedModeRef.current) {
+        const calendarEntry = event.extendedProps.calendarEntry as CalendarEntry | undefined;
+        const inlineTask = (calendarEntry?.entry as any)?.inlineTask as { lineNumber?: number } | undefined;
+        const isInlineTaskEntry = !!inlineTask && typeof inlineTask.lineNumber === "number";
+        // Task events are handled directly by GCM's task-line menu. Do not let
+        // Canvas replace that with the node/file context menu.
+        if (isInlineTaskEntry || !isEmbedModeRef.current) {
           e.stopPropagation();
+          e.stopImmediatePropagation();
         }
         const entry = event.extendedProps.entry as BasesEntry;
         if (entry && onEntryContextMenu) {
@@ -2847,7 +2885,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 	      (element as any)._tpsContextMouseDownHandler = contextMouseDownHandler;
 	      element.addEventListener("mousedown", contextMouseDownHandler);
 	    },
-    [app, basesEntryMap, clearEventClickPreview, highlightTaskLineInHoverPreview, onEntryClick, onEntryContextMenu, openEntryClickPreview, revealCompletedTaskForPreview],
+    [app, basesEntryMap, clearEventClickPreview, highlightTaskLineInHoverPreview, isCanvasEmbed, onEntryClick, onEntryContextMenu, openEntryClickPreview, revealCompletedTaskForPreview],
 	  );
 
   const handleDayMount = useCallback((arg: any) => {
@@ -3002,111 +3040,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, []);
 
   // --- External file drop handling ---
-  const extractExternalDropPayload = useCallback((e: React.DragEvent): ExternalDropPayload | null => {
-    const parseObsidianUrl = (url: string): string | null => {
-      try {
-        const fileMatch = url.match(/[?&]file=([^&]+)/);
-        if (fileMatch) {
-          const filePath = decodeURIComponent(fileMatch[1]);
-          return filePath.endsWith('.md') ? filePath : `${filePath}.md`;
-        }
-      } catch (err) { /* ignore */ }
-      return null;
-    };
-
-    const parseTaskPayload = (raw: string): ExternalDropPayload | null => {
-      if (!raw) return null;
-      try {
-        const parsed = JSON.parse(raw) as any;
-        const filePath = String(parsed?.path || parsed?.filePath || "").trim();
-        const line = Math.max(1, Math.floor(Number(parsed?.line || 1)));
-        if (!filePath || !line) return null;
-        return {
-          type: "task",
-          filePath,
-          line,
-          rawLine: String(parsed?.rawLine || ""),
-          checkboxState: String(parsed?.checkboxState || ""),
-          text: String(parsed?.text || ""),
-        };
-      } catch {
-        return null;
-      }
-    };
-
-    const taskPayload =
-      parseTaskPayload(e.dataTransfer.getData(TPS_TASK_LINE_MIME)) ||
-      parseTaskPayload(e.dataTransfer.getData(KANBAN_TASK_MIME));
-    if (taskPayload) return taskPayload;
-
-    // 1. Obsidian native drag types (Notebook Navigator, file explorer)
-    const kanbanEntry = e.dataTransfer.getData("application/x-kanban-entry");
-    if (kanbanEntry && kanbanEntry.trim().length > 0) {
-      const cleaned = kanbanEntry.trim();
-      return { type: "file", filePath: cleaned.endsWith('.md') ? cleaned : `${cleaned}.md` };
-    }
-
-    const obsidianFile = e.dataTransfer.getData("obsidian/file");
-    if (obsidianFile && obsidianFile.trim().length > 0) {
-      const cleaned = obsidianFile.trim();
-      return { type: "file", filePath: cleaned.endsWith('.md') ? cleaned : `${cleaned}.md` };
-    }
-
-    const obsidianFiles = e.dataTransfer.getData("obsidian/files");
-    if (obsidianFiles) {
-      try {
-        const paths = JSON.parse(obsidianFiles);
-        if (Array.isArray(paths) && paths.length > 0 && typeof paths[0] === "string") {
-          const first = paths[0].trim();
-          return { type: "file", filePath: first.endsWith('.md') ? first : `${first}.md` };
-        }
-      } catch { /* ignore */ }
-    }
-
-    // 2. text/plain — could be obsidian:// URL, raw .md path, or markdown link
-    const textData = e.dataTransfer.getData("text/plain");
-    if (textData) {
-      if (textData.startsWith('obsidian://')) {
-        const parsed = parseObsidianUrl(textData);
-        if (parsed) return { type: "file", filePath: parsed };
-      }
-      const cleaned = textData.trim();
-      if (cleaned.endsWith(".md")) return { type: "file", filePath: cleaned };
-
-      // Parse markdown wikilink [[path]] or [[path|alias]]
-      const wikiMatch = cleaned.match(/^\[\[([^\]|]+)(?:\|[^\]]+)?\]\]$/);
-      if (wikiMatch) {
-        const linkTarget = wikiMatch[1].trim();
-        return { type: "file", filePath: linkTarget.endsWith('.md') ? linkTarget : `${linkTarget}.md` };
-      }
-
-      // Parse markdown link [text](path)
-      const mdLinkMatch = cleaned.match(/^\[.*?\]\((.+?)\)$/);
-      if (mdLinkMatch) {
-        const linkTarget = mdLinkMatch[1].trim();
-        return { type: "file", filePath: linkTarget.endsWith('.md') ? linkTarget : `${linkTarget}.md` };
-      }
-
-    }
-
-    // 3. text/uri-list
-    const uriData = e.dataTransfer.getData("text/uri-list");
-    if (uriData && uriData.startsWith('obsidian://')) {
-      const parsed = parseObsidianUrl(uriData);
-      if (parsed) return { type: "file", filePath: parsed };
-    }
-
-    // 4. OS file drop
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      const file = files[0];
-      if (file.name.endsWith(".md")) {
-        return { type: "file", filePath: (file as any).path || file.name };
-      }
-    }
-    return null;
-  }, []);
-
   const getDateFromDropEvent = useCallback((e: React.DragEvent): { date: Date; allDay: boolean } | null => {
     const stack = document.elementsFromPoint(e.clientX, e.clientY) as HTMLElement[];
     const elementAtPoint = stack[0] ?? document.elementFromPoint(e.clientX, e.clientY);
@@ -3213,39 +3146,28 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     return { date, allDay: isAllDay };
   }, []);
 
-  const hasDroppableData = useCallback((types: readonly string[]): boolean => {
-    return (
-      types.includes('Files') ||
-      types.includes('application/x-kanban-entry') ||
-      types.includes(TPS_TASK_LINE_MIME) ||
-      types.includes(KANBAN_TASK_MIME) ||
-      types.includes('text/plain') ||
-      types.includes('obsidian/file') ||
-      types.includes('obsidian/files')
-    );
-  }, []);
-
   const handleExternalDragOver = useCallback((e: React.DragEvent) => {
-    if (hasDroppableData(e.dataTransfer.types) && onExternalDrop) {
+    if (hasCalendarExternalDropData(e.dataTransfer.types) && onExternalDrop) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       const dropInfo = getDateFromDropEvent(e);
       if (dropInfo) {
-        const durationMinutes = Math.max(5, snapDurationMinutes || defaultEventDuration || 30);
-        const start = new Date(dropInfo.date);
-        const end = dropInfo.allDay
-          ? new Date(start.getTime() + 24 * 60 * 60 * 1000)
-          : new Date(start.getTime() + durationMinutes * 60 * 1000);
+        const preview = buildCalendarExternalDropPreviewRange({
+          date: dropInfo.date,
+          allDay: dropInfo.allDay,
+          snapDurationMinutes,
+          defaultEventDurationMinutes: defaultEventDuration,
+        });
         setExternalDropPreview((prev) => {
           if (
             prev &&
-            prev.allDay === dropInfo.allDay &&
-            prev.start.getTime() === start.getTime() &&
-            prev.end.getTime() === end.getTime()
+            prev.allDay === preview.allDay &&
+            prev.start.getTime() === preview.start.getTime() &&
+            prev.end.getTime() === preview.end.getTime()
           ) {
             return prev;
           }
-          return { start, end, allDay: dropInfo.allDay };
+          return preview;
         });
       } else {
         setExternalDropPreview(null);
@@ -3255,7 +3177,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   const handleExternalDragEnter = useCallback((e: React.DragEvent) => {
     dragCounterRef.current++;
-    if (hasDroppableData(e.dataTransfer.types) && onExternalDrop) {
+    if (hasCalendarExternalDropData(e.dataTransfer.types) && onExternalDrop) {
       e.preventDefault();
       setIsDraggingOver(true);
     }
@@ -3275,16 +3197,14 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     setIsDraggingOver(false);
     setExternalDropPreview(null);
     if (!onExternalDrop) return;
-    const payload = extractExternalDropPayload(e);
-    if (!payload) return;
-    const dropInfo = getDateFromDropEvent(e);
-    if (!dropInfo) return;
+    const request = buildCalendarExternalDropRequest(e.dataTransfer, getDateFromDropEvent(e));
+    if (!request) return;
     try {
-      await onExternalDrop(payload, dropInfo.date, dropInfo.allDay);
+      await onExternalDrop(request.payload, request.date, request.allDay);
     } catch (error) {
       logger.error('[Calendar] Error handling external drop:', error);
     }
-  }, [onExternalDrop, extractExternalDropPayload, getDateFromDropEvent]);
+  }, [onExternalDrop, getDateFromDropEvent]);
 
   const eventsWithExternalDropPreview = useMemo(() => {
     const previewEvent = externalDropPreview
@@ -3721,6 +3641,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   const views = {
     "timeGridRange-1": { type: "timeGrid", duration: { days: 1 }, buttonText: "Day" },
+    "timeGridRange-2": { type: "timeGrid", duration: { days: 2 }, buttonText: "2d" },
     "timeGridRange-3": { type: "timeGrid", duration: { days: 3 }, buttonText: "3d" },
     "timeGridRange-4": { type: "timeGrid", duration: { days: 4 }, buttonText: "4d" },
     "timeGridRange-5": { type: "timeGrid", duration: { days: 5 }, buttonText: "5d" },
@@ -3732,10 +3653,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   return (
     <div
       ref={containerRef}
-      className={`bases-calendar-wrapper ${isEmbedMode ? 'bases-calendar-embedded' : 'bases-calendar-dedicated'} ${isDraggingOver ? 'is-drag-over' : ''} ${isMini ? 'bases-calendar-mini' : ''} ${allDayStickyScroll ? 'allday-sticky' : 'allday-no-sticky'}`}
+      className={`bases-calendar-wrapper ${isEmbedMode ? 'bases-calendar-embedded' : 'bases-calendar-dedicated'} ${isCanvasEmbed ? 'bases-calendar-canvas-embedded' : ''} ${isDraggingOver ? 'is-drag-over' : ''} ${isMini ? 'bases-calendar-mini' : ''} ${allDayStickyScroll ? 'allday-sticky' : 'allday-no-sticky'}`}
       style={{
         height: isEmbedMode ? scrollSurfaceHeight : isMobile ? "auto" : `${dedicatedCalendarHeight}px`,
-        minHeight: isEmbedMode ? `${embedFallbackHeight}px` : isMobile ? undefined : `${dedicatedCalendarHeight}px`,
+        minHeight: isEmbedMode ? (useCanvasEmbedSizing ? 0 : `${embedFallbackHeight}px`) : isMobile ? undefined : `${dedicatedCalendarHeight}px`,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -3756,7 +3677,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             : "var(--font-ui-small)",
         "--tps-event-title-weight": "400",
         "--tps-event-title-line-height": isMobile ? "1.05" : "1.1",
-        "--tps-event-title-shadow": "0 1px 1px rgba(0, 0, 0, 0.28)",
+        "--tps-event-title-shadow": isCanvasEmbed ? "none" : "0 1px 1px rgba(0, 0, 0, 0.28)",
         position: "relative"
       } as React.CSSProperties}
       onDragOver={handleExternalDragOver}
@@ -3840,9 +3761,9 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         />
       )}
 
-      {!isEmbedMode && (
+      {(!isEmbedMode || isCanvasEmbed) && (
         <CalendarNavigation
-          showNavButtons={showNavButtons}
+          showNavButtons={isCanvasEmbed ? true : showNavButtons}
           navigationLocked={navigationLocked}
           canNavigatePrev={canNavigatePrev}
           canNavigateNext={canNavigateNext}
@@ -3993,7 +3914,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               selectMirror={allowSelect}
               selectOverlap={allowSelect}
               selectAllow={allowSelect ? handleSelectAllow : undefined}
-              slotEventOverlap={true}
+              slotEventOverlap={!isEmbedMode}
               select={allowSelect ? handleSelect : undefined}
               selectLongPressDelay={isMobile ? 600 : 300}
               longPressDelay={isMobile ? 600 : 300}
@@ -4033,7 +3954,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               firstDay={safeWeekStartDay}
               slotMinTime={embeddedSlotMinTimeValue}
               slotMaxTime={slotMaxTimeValue}
-              scrollTime={`${defaultScrollTimeSetting}:00`}
+              scrollTime={fullCalendarScrollTimeValue}
               scrollTimeReset={false}
               slotDuration={formatFullCalendarDuration(slotDurationMinutes, 30)}
               slotLaneDidMount={handleSlotMount}
