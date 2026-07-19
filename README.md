@@ -6,6 +6,12 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 
 - 2026-07-16 isolation validation: all 68 declared tests and the required final `npm run build` passed; both production-mode builds reported `[runtime-deploy] target=test ... unchanged`. Obsidian 1.12.7 loaded the plugin in the registered test vault, where the synthetic Calendar Base view rendered. No live promotion occurred, and production runtime checksums remained unchanged.
 
+## Install with BRAT
+
+BRAT 2.2.0 or newer can install and update this private repository from `ZachTish/tps-calendar-base`. In BRAT, configure a fine-grained GitHub token that grants this repository `Contents: Read-only`, add that repository path as a beta plugin, and track `Latest` to receive the highest semantic-version release. Store the token only through Obsidian SecretStorage/BRAT settings; never commit it to this repository or the vault.
+
+Release `0.2.2` makes fresh BRAT installs self-contained: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling no longer depends on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+
 ## Mobile modal contract
 
 Calendar event, task-drop, selection, and style modals use `tps-keyboard-aware-modal`. TPS GCM supplies the shared visible-viewport rules so Calendar inputs remain above the mobile keyboard.

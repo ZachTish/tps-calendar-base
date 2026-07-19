@@ -33,16 +33,6 @@ export default class ObsidianCalendarPlugin
   async onload() {
     const startedAt = performance.now();
     this.externalCalendarService = new ExternalCalendarService();
-    // Load shared UI styles
-    try {
-      const cssPath = `${this.manifest.dir}/styles-ui.css`;
-      const cssContent = await this.app.vault.adapter.read(cssPath);
-      this.register(() => document.head.querySelector('style#tps-calendar-ui-styles')?.remove());
-      const styleEl = document.head.createEl('style', { attr: { id: 'tps-calendar-ui-styles' } });
-      styleEl.textContent = cssContent;
-    } catch (e) {
-      logger.flowError("Plugin", "load-styles-failed", e, { path: `${this.manifest.dir}/styles-ui.css` });
-    }
     this.registerBasesView(CalendarViewType, {
       name: "Calendar",
       icon: "lucide-calendar",

@@ -27,6 +27,18 @@ const newEventServiceSource = await readFile(
   fileURLToPath(new URL("../src/services/new-event-service.ts", import.meta.url)),
   "utf8",
 );
+const buildSource = await readFile(
+  fileURLToPath(new URL("../esbuild.config.mjs", import.meta.url)),
+  "utf8",
+);
+const standardStyles = await readFile(
+  fileURLToPath(new URL("../styles.css", import.meta.url)),
+  "utf8",
+);
+const sharedUiStyles = await readFile(
+  fileURLToPath(new URL("../styles-ui.css", import.meta.url)),
+  "utf8",
+);
 
 test("calendar command palette keeps one polished open command", () => {
   assert.match(mainSource, /id: "open-default-calendar-base-sidebar"/);
@@ -104,4 +116,14 @@ test("calendar logging records high-level fetch, parse, and creation outcomes", 
   assert.match(newEventServiceSource, /logger\.flow\("NewEvent", "task-line:done"/);
   assert.match(newEventServiceSource, /logger\.flow\("NewEvent", "create:done"/);
   assert.match(newEventServiceSource, /logger\.flowError\("NewEvent", "create:failed"/);
+});
+
+test("BRAT release styling is complete without an extra runtime stylesheet", () => {
+  assert.doesNotMatch(mainSource, /styles-ui\.css/);
+  assert.match(buildSource, /readFile\("styles-ui\.css", "utf8"\)/);
+  assert.match(buildSource, /writeFile\(\s*"styles\.css"/);
+  assert.ok(
+    standardStyles.includes(sharedUiStyles.trim()),
+    "styles.css should contain the complete shared UI stylesheet",
+  );
 });

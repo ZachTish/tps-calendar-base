@@ -1,7 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
-import { copyFile, stat } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { runtimeDeployPlugin } from "../deploy-runtime.mjs";
 
 const banner =
@@ -20,9 +20,18 @@ const syncStylesheet = {
 			if (result.errors.length > 0) return;
 			try {
 				await stat("main.css");
-				await copyFile("main.css", "styles.css");
+				await stat("styles-ui.css");
+				const [calendarStyles, sharedUiStyles] = await Promise.all([
+					readFile("main.css", "utf8"),
+					readFile("styles-ui.css", "utf8"),
+				]);
+				await writeFile(
+					"styles.css",
+					`${calendarStyles.trimEnd()}\n\n/* BRAT-compatible bundled UI styles. */\n${sharedUiStyles.trimStart()}`,
+					"utf8",
+				);
 			} catch (error) {
-				console.warn("[tps-calendar-base] Failed to sync main.css -> styles.css", error);
+				console.warn("[tps-calendar-base] Failed to build the standard styles.css bundle", error);
 			}
 		});
 	},
