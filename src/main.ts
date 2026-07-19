@@ -328,14 +328,7 @@ export default class ObsidianCalendarPlugin
     containerEl.empty();
     containerEl.addClass("tps-calendar-base-embed");
     const child = new CalendarEmbedRenderChild(containerEl, file, this, viewConfig || {}, parsed || {}, options);
-    await child.render();
-    (child as any).unload = () => child.onunload();
-    (child as any).navigatePrevious = () => child.view?.navigateEmbeddedCalendar(-1);
-    (child as any).navigateToday = () => child.view?.navigateEmbeddedCalendar(0);
-    (child as any).navigateNext = () => child.view?.navigateEmbeddedCalendar(1);
-    (child as any).navigateToDate = (date: Date | string | number) => child.view?.jumpToDateTime(new Date(date));
-    (child as any).scrollToNow = () => child.view?.scrollToNow();
-    return child;
+    return child.mount();
   }
 
   getExternalEventHideKey(event: ExternalCalendarEvent): string {

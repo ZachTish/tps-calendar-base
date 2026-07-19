@@ -8,9 +8,17 @@ import {
 } from "obsidian";
 import { CalendarView } from "./calendar-view";
 import { CalendarPluginBridge } from "./plugin-interface";
+import * as logger from "./logger";
 
 export interface CalendarEmbedRenderOptions {
     preserveDayCount?: boolean;
+}
+
+class CalendarEmbedRenderCanceledError extends Error {
+    constructor() {
+        super("Calendar embed unloaded before rendering completed.");
+        this.name = "CalendarEmbedRenderCanceledError";
+    }
 }
 
 // Mock QueryController since we can't easily instantiate the real one without internal API access.
@@ -61,6 +69,8 @@ class InlineBaseConfig {
 
 export class CalendarEmbedRenderChild extends MarkdownRenderChild {
     view: CalendarView | null = null;
+    private renderPromise: Promise<void> = Promise.resolve();
+    private lifecycleGeneration = 0;
 
     constructor(
         public containerEl: HTMLElement,
@@ -73,16 +83,49 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
         super(containerEl);
     }
 
-    async onload() {
-        super.onload();
-        this.render();
+    onload(): void {
+        const generation = ++this.lifecycleGeneration;
+        this.renderPromise = this.render(generation);
+        void this.renderPromise.catch((error) => this.handleRenderFailure(generation, error));
     }
 
-    async render() {
-        if (this.view) {
-            this.view.onunload();
-            this.view = null;
+    async mount(): Promise<this> {
+        this.load();
+        const generation = this.lifecycleGeneration;
+        const renderPromise = this.renderPromise;
+        try {
+            await renderPromise;
+            if (generation !== this.lifecycleGeneration) throw new CalendarEmbedRenderCanceledError();
+            return this;
+        } catch (error) {
+            if (generation === this.lifecycleGeneration && renderPromise === this.renderPromise) {
+                this.unload();
+            }
+            throw error;
         }
+    }
+
+    navigatePrevious(): void {
+        this.view?.navigateEmbeddedCalendar(-1);
+    }
+
+    navigateToday(): void {
+        this.view?.navigateEmbeddedCalendar(0);
+    }
+
+    navigateNext(): void {
+        this.view?.navigateEmbeddedCalendar(1);
+    }
+
+    navigateToDate(date: Date | string | number): void {
+        this.view?.jumpToDateTime(new Date(date));
+    }
+
+    scrollToNow(): void {
+        this.view?.scrollToNow();
+    }
+
+    private async render(generation: number): Promise<void> {
         this.containerEl.empty();
         const contentEl = this.containerEl.createDiv({ cls: "calendar-embed-view" });
 
@@ -92,16 +135,26 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
         controller.queryResult = queryResult;
         controller.result = queryResult;
 
-        this.view = new CalendarView(controller, contentEl, this.plugin);
-        (this.view as any).config = new InlineBaseConfig(this.withCalendarDefaults(this.viewConfig));
-        (this.view as any).forceDirectEmbedRender = true;
-        (this.view as any).preserveEmbeddedDayCount = this.options.preserveDayCount === true;
-        (this.view as any).data = queryResult;
-        (this.view as any).queryResult = queryResult;
-        (this.view as any).result = queryResult;
-        if (this.view.onload) await this.view.onload();
-        (this.view as any).onDataUpdated?.();
-        await (this.view as any).updateCalendar?.(true);
+        const view = new CalendarView(controller, contentEl, this.plugin);
+        (view as any).config = new InlineBaseConfig(this.withCalendarDefaults(this.viewConfig));
+        (view as any).forceDirectEmbedRender = true;
+        (view as any).preserveEmbeddedDayCount = this.options.preserveDayCount === true;
+        (view as any).data = queryResult;
+        (view as any).queryResult = queryResult;
+        (view as any).result = queryResult;
+        this.view = view;
+        this.addChild(view);
+        view.onDataUpdated();
+        await view.updateCalendar(true);
+        if (generation !== this.lifecycleGeneration || this.view !== view) {
+            throw new CalendarEmbedRenderCanceledError();
+        }
+    }
+
+    private handleRenderFailure(generation: number, error: unknown): void {
+        if (generation !== this.lifecycleGeneration) return;
+        logger.flowError("EmbedRenderer", "render-failed", error, { path: this.file?.path || "" });
+        this.unload();
     }
 
     private withCalendarDefaults(config: Record<string, unknown>): Record<string, unknown> {
@@ -141,12 +194,12 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
         return key ? fm[key] : undefined;
     }
 
-    onunload() {
-        if (this.view) {
-            this.view.onunload();
-            this.view = null;
-        }
-        super.onunload();
+    onunload(): void {
+        this.lifecycleGeneration += 1;
+        this.view = null;
+        // Disconnect the nested view so its public readiness guards suppress any
+        // work that resumes after an asynchronous update crosses this teardown.
+        this.containerEl.empty();
     }
 }
 

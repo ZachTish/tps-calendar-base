@@ -7,7 +7,7 @@
     "scripts": {
         "dev": "node esbuild.config.mjs",
         "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-        "test": "node --test scripts/test-tps-contracts.mjs && node --test scripts/test-gcm-event-adapter.mjs && node --test scripts/test-identity-fields.mjs && node --test scripts/test-date-link-preview.mjs && node --test scripts/test-calendar-timezone.mjs && node --test scripts/test-external-calendar-cancellation.mjs && node --test scripts/test-create-snap-and-mobile-open.mjs && node --test scripts/test-new-event-service-creation.mjs && node --test scripts/test-bases-hidden-render-guard.mjs && node --test scripts/test-deleted-link-cleanup.mjs && node --test scripts/test-command-surface.mjs && npm run build",
+        "test": "node --test scripts/test-tps-contracts.mjs && node --test scripts/test-gcm-event-adapter.mjs && node --test scripts/test-identity-fields.mjs && node --test scripts/test-date-link-preview.mjs && node --test scripts/test-calendar-timezone.mjs && node --test scripts/test-external-calendar-cancellation.mjs && node --test scripts/test-create-snap-and-mobile-open.mjs && node --test scripts/test-new-event-service-creation.mjs && node --test scripts/test-bases-hidden-render-guard.mjs && node --test scripts/test-deleted-link-cleanup.mjs && node --test scripts/test-command-surface.mjs && node --test scripts/test-embed-lifecycle.mjs && npm run build",
         "bundle-to-weekly": "node esbuild.config.mjs production && node scripts/copy-to-weekly.js",
         "migrate-calendar-tasks": "node scripts/migrate-calendar-tasks-to-daily-notes.mjs",
         "version": "node version-bump.mjs && git add manifest.json versions.json"

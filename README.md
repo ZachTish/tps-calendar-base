@@ -2,9 +2,10 @@
 
 ## Development and deployment
 
-Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtisherman/TishOS Plugin Development/TPS-Calendar-Base (Dev)`, outside both vaults. `npm run build` and watch builds deploy byte-changed runtime artifacts by default only to `/Users/zachtisherman/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Plugin Test Vault/.obsidian/plugins/tps-calendar-base`; `npm test` is therefore isolated even though it ends with a production-mode build. Promotion to `/Users/zachtisherman/TishOS v0.1/.obsidian/plugins/tps-calendar-base` is an explicit guarded post-validation action. Neither target overwrites `data.json` or other runtime-owned state.
+Canonical source, tests, Git metadata, and dependency links live in this test vault under `Plugin Development`. Stable work uses `TPS-Calendar-Base (Dev)` on `main`; optimization work uses the separate `TPS-Calendar-Base (Optimize)` worktree on `optimization`. Stable builds may deploy byte-changed runtime artifacts only to this test vault. Optimization builds are build-only and report `[runtime-deploy] target=none lane=optimization`, so they cannot replace the installed test or production plugin. Promotion to `/Users/zachtisherman/TishOS v0.1/.obsidian/plugins/tps-calendar-base` remains an explicit guarded post-validation action, and deployment never overwrites `data.json` or other runtime-owned state.
 
 - 2026-07-16 isolation validation: all 68 declared tests and the required final `npm run build` passed; both production-mode builds reported `[runtime-deploy] target=test ... unchanged`. Obsidian 1.12.7 loaded the plugin in the registered test vault, where the synthetic Calendar Base view rendered. No live promotion occurred, and production runtime checksums remained unchanged.
+- 2026-07-19 optimization validation: direct Calendar embeds now use Obsidian's supported `Component` load/addChild/unload lifecycle and real typed navigation methods instead of calling lifecycle hooks or replacing methods at runtime. Behavioral regressions cover normal and failed mounts, inherited cleanup registration, idempotent teardown, navigation delegation, unload-before-render completion, and overlapping unload/reload generations. All 72 declared tests passed, and the required separate `npm run build` reported `[runtime-deploy] target=none lane=optimization`; no vault runtime was deployed, so reload and UI verification were not applicable. No version, tag, release, or production promotion was created.
 
 ## Install with BRAT
 
@@ -130,9 +131,8 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Define visual rules in settings: match frontmatter conditions → apply a color or CSS class.
 - `StyleRuleService` evaluates rules at render time for per-event styling without modifying files.
 
-### Embed Renderer
-- Register a markdown post-processor so `calendar` code blocks in notes render a mini calendar embed.
-- Exposes `api.renderBaseCalendarEmbed(containerEl, basePath)` for rendered plugin views such as TPS Home. The API reads the target `.base`, selects its first calendar view config, mounts the same Calendar Base embedded calendar renderer, and returns a component that callers should unload with their own view lifecycle. Direct embeds carry both top-level Base filters and active-view filters into Calendar rendering so note events and inline scheduled tasks respect the same Base visibility rules as the full Base view. Returned components expose `navigatePrevious()`, `navigateToday()`, `navigateNext()`, `navigateToDate(date)`, and `scrollToNow()` so rendered hosts can place calendar navigation in their own headers and recenter the current-time row without duplicating Calendar Base internals.
+### Direct Embed API
+- Exposes `api.renderBaseCalendarEmbed(containerEl, basePath)` for rendered plugin views such as TPS Home. The API reads the target `.base`, selects its first calendar view config, mounts the same Calendar Base embedded calendar renderer, and resolves only after its Obsidian `Component` parent has loaded the nested `CalendarView` through `addChild()`. Callers retain the returned component and call its inherited `unload()` during their own teardown; the parent lifecycle then releases the nested view's registered workspace and DOM resources. A host replacement creates a fresh component after unloading the previous one. Direct embeds carry both top-level Base filters and active-view filters into Calendar rendering so note events and inline scheduled tasks respect the same Base visibility rules as the full Base view. Returned components define typed `navigatePrevious()`, `navigateToday()`, `navigateNext()`, `navigateToDate(date)`, and `scrollToNow()` methods so rendered hosts can place calendar navigation in their own headers and recenter the current-time row without runtime method injection.
 
 ### Filter-Based View Mode
 - New view mode option that automatically adjusts the calendar display based on your filtered data range.
@@ -151,7 +151,7 @@ src/
   CalendarReactView.tsx     — Top-level React component
   context.tsx               — React context for shared plugin state
   hooks.tsx                 — Custom React hook entry point
-  embed-renderer.ts         — Markdown code-block embed support
+  embed-renderer.ts         — Direct Base embed lifecycle and legacy unregistered Markdown helper
   plugin-interface.ts       — Typed bridge between plugin & view
   settings-migration.ts     — Upgrades persisted settings across versions
   settings-tab.ts           — Settings UI
@@ -220,6 +220,8 @@ src/
 - `ExternalCalendarConfig` remains defined in both plugins because the plugins build independently. Their shared fields require parity coverage until a typed runtime contract replaces the duplicate type.
 
 ### Medium
+- **Direct embed construction shim** — Direct TPS Home embeds now use the supported `Component` lifecycle, but they still construct a `BasesView` with a local `MockQueryController` and use `MarkdownRenderChild` in a non-Markdown host. Keep that compatibility boundary isolated; replace it with a public/versioned Bases embed host contract when Obsidian exposes one or split the direct host into a plain `Component` with a thin Markdown-only wrapper.
+- **Unregistered Markdown embed helper** — `embed-renderer.ts` still exports a legacy `EmbedRenderer` postprocessor helper, but `main.ts` does not register or import it, so Markdown `calendar` code blocks are not a current plugin feature. The helper also contains asynchronous element traversal that has not received the direct API's lifecycle coverage. Remove it after confirming no source consumer imports it, or register a redesigned and explicitly tested processor in a separate feature change.
 - **`registerBasesView()` stability** — The Bases API is cutting-edge and semi-experimental. A version guard checking `app.internalPlugins` or checking for API existence before registration would prevent crashes on older Obsidian versions.
 - **`app.workspace.activeLeaf` (deprecated)** — Replace with `getActiveViewOfType()` / `ensureSideLeaf()` (public since v1.7.2).
 - **`CalendarView.ts` still large** — ~4088 lines after last refactor. Consider splitting into `CalendarEventService`, `CalendarRenderService`, `CalendarStateManager`.
