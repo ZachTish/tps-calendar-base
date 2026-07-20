@@ -48,6 +48,7 @@ import {
 } from "./utils/calendar-external-drop";
 import { getAdaptiveTimeGridDayCount } from "./utils/calendar-day-count";
 import { getInclusiveCalendarDayCount } from "./utils/filter-date-utils";
+import { resolveCalendarCanvasInteractionPolicy } from "./utils/calendar-canvas-interaction-policy";
 
 const DEFAULT_SLOT_MIN_TIME = "00:00:00";
 const DEFAULT_SLOT_MAX_TIME = "24:00:00";
@@ -111,169 +112,6 @@ function getConfiguredTimeGridDayCount(viewMode: ViewMode): number {
   if (viewMode === "5d") return 5;
   if (viewMode === "7d" || viewMode === "week") return 7;
   return 7;
-}
-
-// ---------------------------------------------------------------------------
-// Persistent canvas-scale BCR patch
-// ---------------------------------------------------------------------------
-// Obsidian canvas applies transform:scale() to its viewport. FullCalendar's
-// PositionCache builds slot top/height arrays via getBoundingClientRect(),
-// which returns *visual* (scaled) pixels. FC then uses those values as
-// layout-pixel `style.top` offsets for events and the now-indicator, so
-// everything is mis-positioned at any canvas zoom ≠ 100%.
-//
-// Patching only during updateSize() doesn't help because PositionCache is
-// also rebuilt on every React componentDidUpdate (resize, slot-zoom change,
-// event data change, etc.).
-//
-// Solution: while any embed is mounted, temporarily override
-// Element.prototype.getBoundingClientRect so that calls on elements *inside*
-// a registered canvas-embed container return unscaled layout-pixel values.
-// Multiple simultaneous embeds are handled via a shared Set + ref count.
-// ---------------------------------------------------------------------------
-const _canvasEmbedContainers = new Set<HTMLElement>();
-const _origBCR = Element.prototype.getBoundingClientRect;
-let _bcrPatched = false;
-const _scaleCache = new Map<HTMLElement, { scale: number; ts: number }>();
-const _SCALE_TTL = 80; // ms — short-lived cache so zoom changes propagate quickly
-
-function _getContainerScale(container: HTMLElement): number {
-  const now = Date.now();
-  const hit = _scaleCache.get(container);
-  if (hit && now - hit.ts < _SCALE_TTL) return hit.scale;
-  const fcEl = container.querySelector('.fc') as HTMLElement | null;
-  if (!fcEl || fcEl.offsetWidth === 0) {
-    _scaleCache.set(container, { scale: 1, ts: now });
-    return 1;
-  }
-  const r = _origBCR.call(fcEl);
-  const scale = r.width / fcEl.offsetWidth;
-  _scaleCache.set(container, { scale, ts: now });
-  return scale;
-}
-
-// FullCalendar's coordinate system under canvas scale(n) — two problems:
-//
-// 1. RENDERING (PositionCache.build):
-//    FC calls getBoundingClientRect() on structural slat/col elements to build
-//    position arrays, then writes the values directly to style.top (CSS px).
-//    BCR returns visual pixels; style.top needs CSS (layout) pixels.
-//    Fix: unscale BCR for the four structural measurement elements.
-//
-// 2. HIT-TESTING / INTERACTION (PointerDragging + HitDragging):
-//    FC computes: relativePos = event.clientY − positionCache.originRect.top
-//    The "origin" element for both PositionCache.build AND for hit-testing is
-//    the *same* .fc-timegrid-slots element.  After fix #1 its BCR.top is
-//    returned as visualTop/scale.  So the hit equation needs:
-//
-//      event.clientY / scale − originBCR.top/scale
-//      = (event.clientY − originBCR_visual.top) / scale
-//      = visualRelY / scale
-//      = layoutRelY  ✓  matches PositionCache layout-px entries.
-//
-//    So we only need to scale event.clientX/Y by 1/scale.
-//    We do this by stopping the original event and re-dispatching a
-//    *synthetic* PointerEvent / MouseEvent whose coords are already scaled.
-//    Synthetic events are ordinary JS objects — all properties writable.
-//
-// NOTE: contextmenu and click are intentionally excluded from re-dispatch so
-// context-menu popup positioning and link clicks stay in visual-px space.
-
-function _isFCMeasurementEl(el: Element): boolean {
-  const tag = el.tagName;
-  if (tag === 'TR') return true;                                              // slat rows
-  if (tag === 'TD' && el.classList.contains('fc-timegrid-col')) return true; // col cells
-  if (el.classList.contains('fc-timegrid-slots')) return true;               // slat/hit origin
-  if (el.classList.contains('fc-timegrid-cols')) return true;                // col origin
-  return false;
-}
-
-// Symbol used to mark synthetic events we create so our listener ignores them.
-const _SCALED_SYM = Symbol('tps-canvas-scaled');
-const _DRAG_EVENT_TYPES = ['mousedown','mousemove','mouseup'] as const;
-let _pointerPatchInstalled = false;
-
-function _interceptAndScaleEvent(e: Event): void {
-  if ((e as any)[_SCALED_SYM]) return; // our own re-dispatched event — skip
-  const target = e.target as Element | null;
-  if (!target) return;
-  for (const container of _canvasEmbedContainers) {
-    if (!container.contains(target)) continue;
-    const scale = _getContainerScale(container);
-    if (Math.abs(scale - 1) < 0.005) return;
-
-    // Stop the original so FC never sees it; we'll re-dispatch with correct coords.
-    // PointerEvents stay native: FullCalendar relies on the browser pointer
-    // lifecycle for selection/drag-create, and synthetic pointer events can
-    // break that path inside Obsidian Canvas.
-    e.stopImmediatePropagation();
-
-    const me = e as MouseEvent;
-    const inv = 1 / scale;
-
-    const base: MouseEventInit = {
-      bubbles: e.bubbles,
-      cancelable: e.cancelable,
-      composed: true,
-      view: me.view,
-      clientX:   me.clientX   * inv,
-      clientY:   me.clientY   * inv,
-      screenX:   me.screenX   * inv,
-      screenY:   me.screenY   * inv,
-      movementX: me.movementX * inv,
-      movementY: me.movementY * inv,
-      button:    me.button,
-      buttons:   me.buttons,
-      ctrlKey:   me.ctrlKey,
-      shiftKey:  me.shiftKey,
-      altKey:    me.altKey,
-      metaKey:   me.metaKey,
-      relatedTarget: me.relatedTarget,
-    };
-
-    const synth = new MouseEvent(e.type, base);
-    (synth as any)[_SCALED_SYM] = true;
-    target.dispatchEvent(synth);
-    return;
-  }
-}
-
-function _installCanvasBCRPatch(): void {
-  if (_bcrPatched) return;
-  _bcrPatched = true;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (Element.prototype as any).getBoundingClientRect = function (this: Element) {
-    const r = _origBCR.call(this);
-    if (!_isFCMeasurementEl(this)) return r;
-    for (const container of _canvasEmbedContainers) {
-      if (!container.contains(this)) continue;
-      const scale = _getContainerScale(container);
-      if (Math.abs(scale - 1) < 0.005) return r;
-      return new DOMRect(r.x / scale, r.y / scale, r.width / scale, r.height / scale);
-    }
-    return r;
-  };
-
-  if (!_pointerPatchInstalled) {
-    _pointerPatchInstalled = true;
-    for (const type of _DRAG_EVENT_TYPES) {
-      // Non-passive so we can call stopImmediatePropagation
-      window.addEventListener(type, _interceptAndScaleEvent, { capture: true, passive: false });
-    }
-  }
-}
-
-function _uninstallCanvasBCRPatch(): void {
-  if (_canvasEmbedContainers.size > 0) return;
-  if (!_bcrPatched) return;
-  _bcrPatched = false;
-  Element.prototype.getBoundingClientRect = _origBCR;
-  if (_pointerPatchInstalled) {
-    _pointerPatchInstalled = false;
-    for (const type of _DRAG_EVENT_TYPES) {
-      window.removeEventListener(type, _interceptAndScaleEvent, { capture: true });
-    }
-  }
 }
 
 export interface CalendarEntry {
@@ -746,8 +584,20 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   const isMobile = Platform.isMobile;
   const mobileNavHidden = isInternalDragging;
   const activePlugins = isMobile ? [dayGridPlugin, timeGridPlugin, interactionPlugin] : PLUGINS;
-  const allowEdit = editable;
-  const allowSelect = !!onCreateSelection;
+  const interactionPolicy = resolveCalendarCanvasInteractionPolicy({
+    isCanvasEmbed,
+    editable,
+    canCreateSelection: !!onCreateSelection,
+    canAcceptExternalDrop: !!onExternalDrop,
+    showNowIndicator,
+  });
+  const {
+    allowEdit,
+    allowSelect,
+    allowExternalDrop,
+    allowNowIndicator,
+    showCanvasReliabilityNotice,
+  } = interactionPolicy;
   const floatingNavStyle: React.CSSProperties = {
     position: isCanvasEmbed ? 'absolute' : isMobile ? 'fixed' : 'absolute',
     top: 'auto',
@@ -1291,7 +1141,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       const canvasNodeStyleWidth = canvasNode
         ? Number.parseFloat(canvasNode.style.width || "")
         : Number.NaN;
-      const visualWidth = _origBCR.call(container).width;
+      const visualWidth = container.getBoundingClientRect().width;
       const candidates = [layoutWidth, visualWidth, canvasNodeStyleWidth]
         .filter((width) => Number.isFinite(width) && width > 0);
       return candidates.length ? Math.min(...candidates) : layoutWidth;
@@ -1357,25 +1207,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     allDayProperty,
     defaultEventDuration,
     minEventHeight,
-    noteEventsEditable: editable,
+    noteEventsEditable: allowEdit,
     visibleDateRange: eventRenderDateRange,
     doneStatuses,
   });
-
-  // Canvas BCR patch: register this container so the module-level patch
-  // unscales getBoundingClientRect() for every FC measurement (PositionCache
-  // builds, scroll dims, now-indicator, events) while this embed is mounted.
-  useEffect(() => {
-    if (!isEmbedMode || !containerRef.current) return;
-    const container = containerRef.current;
-    _canvasEmbedContainers.add(container);
-    _installCanvasBCRPatch();
-    return () => {
-      _canvasEmbedContainers.delete(container);
-      _scaleCache.delete(container);
-      _uninstallCanvasBCRPatch();
-    };
-  }, [isEmbedMode]);
 
   // Data-refresh size sync: when events change (Obsidian file watcher fires ~every minute),
   // React re-renders FC with new props, triggering componentDidUpdate → handleSizing() →
@@ -3147,7 +2982,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, []);
 
   const handleExternalDragOver = useCallback((e: React.DragEvent) => {
-    if (hasCalendarExternalDropData(e.dataTransfer.types) && onExternalDrop) {
+    if (allowExternalDrop && hasCalendarExternalDropData(e.dataTransfer.types) && onExternalDrop) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       const dropInfo = getDateFromDropEvent(e);
@@ -3173,25 +3008,28 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         setExternalDropPreview(null);
       }
     }
-  }, [onExternalDrop, getDateFromDropEvent, snapDurationMinutes, defaultEventDuration]);
+  }, [allowExternalDrop, onExternalDrop, getDateFromDropEvent, snapDurationMinutes, defaultEventDuration]);
 
   const handleExternalDragEnter = useCallback((e: React.DragEvent) => {
+    if (!allowExternalDrop) return;
     dragCounterRef.current++;
     if (hasCalendarExternalDropData(e.dataTransfer.types) && onExternalDrop) {
       e.preventDefault();
       setIsDraggingOver(true);
     }
-  }, [onExternalDrop]);
+  }, [allowExternalDrop, onExternalDrop]);
 
   const handleExternalDragLeave = useCallback((e: React.DragEvent) => {
+    if (!allowExternalDrop) return;
     dragCounterRef.current--;
     if (dragCounterRef.current === 0) {
       setIsDraggingOver(false);
       setExternalDropPreview(null);
     }
-  }, []);
+  }, [allowExternalDrop]);
 
   const handleExternalDrop = useCallback(async (e: React.DragEvent) => {
+    if (!allowExternalDrop) return;
     e.preventDefault();
     dragCounterRef.current = 0;
     setIsDraggingOver(false);
@@ -3204,7 +3042,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     } catch (error) {
       logger.error('[Calendar] Error handling external drop:', error);
     }
-  }, [onExternalDrop, getDateFromDropEvent]);
+  }, [allowExternalDrop, onExternalDrop, getDateFromDropEvent]);
 
   const eventsWithExternalDropPreview = useMemo(() => {
     const previewEvent = externalDropPreview
@@ -3680,10 +3518,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         "--tps-event-title-shadow": isCanvasEmbed ? "none" : "0 1px 1px rgba(0, 0, 0, 0.28)",
         position: "relative"
       } as React.CSSProperties}
-      onDragOver={handleExternalDragOver}
-      onDragEnter={handleExternalDragEnter}
-      onDragLeave={handleExternalDragLeave}
-      onDrop={handleExternalDrop}
+      onDragOver={allowExternalDrop ? handleExternalDragOver : undefined}
+      onDragEnter={allowExternalDrop ? handleExternalDragEnter : undefined}
+      onDragLeave={allowExternalDrop ? handleExternalDragLeave : undefined}
+      onDrop={allowExternalDrop ? handleExternalDrop : undefined}
       onTouchStart={handleWrapperTouchStart}
       onTouchEnd={handleWrapperTouchEnd}
       onTouchMove={handleWrapperTouchMove}
@@ -3875,6 +3713,24 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         </div>
       )}
 
+      {showCanvasReliabilityNotice && (
+        <div
+          className="bases-calendar-canvas-reliability-notice"
+          role="status"
+          style={{
+            flex: "0 0 auto",
+            padding: "5px 9px",
+            borderBottom: "1px solid var(--background-modifier-border)",
+            background: "var(--background-secondary)",
+            color: "var(--text-muted)",
+            fontSize: "var(--font-ui-smaller)",
+            lineHeight: 1.3,
+          }}
+        >
+          Canvas preview: transformed time-grid placement is not guaranteed. Selection-create, event move/resize, external drop, and the now indicator are disabled; open this Base in a tab for accurate placement and those actions.
+        </div>
+      )}
+
       <div
         ref={calendarBodyRef}
         style={{
@@ -3943,7 +3799,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               // @ts-ignore
               eventResizeStop={handleDragStop}
 
-              nowIndicator={showNowIndicator}
+              nowIndicator={allowNowIndicator}
               dayHeaderFormat={
                 resolvedFilterViewMode === "month"
                   ? { weekday: dayHeaderFormatSetting }
@@ -4006,6 +3862,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               safeWeekStartDay={safeWeekStartDay}
               allowEdit={allowEdit}
               allowSelect={allowSelect}
+              showNowIndicator={allowNowIndicator}
               onEventResize={onEventResize}
               handleEventClick={handleEventClick}
               renderEventContent={renderEventContent}

@@ -4363,6 +4363,7 @@ export class CalendarView extends BasesView {
   }
 
   private async handleTaskPointerDropEvent(evt: CustomEvent): Promise<void> {
+    if (this.containerEl.closest(".canvas-node-content, .canvas-node")) return;
     const detail = (evt as CustomEvent<{ payload?: any; x?: number; y?: number }>).detail || {};
     const x = Number(detail.x);
     const y = Number(detail.y);

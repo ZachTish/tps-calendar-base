@@ -34,6 +34,7 @@ interface ContinuousScrollViewProps {
   safeWeekStartDay: number;
   allowEdit: boolean;
   allowSelect: boolean;
+  showNowIndicator: boolean;
   onEventResize?: (...args: any[]) => any;
   // Handlers (shared with main calendar)
   handleEventClick: (info: any) => void;
@@ -73,6 +74,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   safeWeekStartDay,
   allowEdit,
   allowSelect,
+  showNowIndicator,
   onEventResize,
   handleEventClick,
   renderEventContent,
@@ -333,7 +335,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
             select={allowSelect ? handleSelect : undefined}
             selectAllow={allowSelect ? handleSelectAllow : undefined}
             unselect={allowSelect ? handleUnselect : undefined}
-            nowIndicator={true}
+            nowIndicator={showNowIndicator}
             dayMaxEvents={allDayExpanded ? false : (allDayMaxRows ?? 3)}
             dayMaxEventRows={allDayExpanded ? false : (allDayMaxRows ?? 3)}
             // @ts-ignore

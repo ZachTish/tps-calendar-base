@@ -582,12 +582,12 @@ test("reading-mode embedded calendars stay compact and preserve Bases chrome by 
   assert.match(calendarDayCountSource, /const CANVAS_TIMEGRID_MIN_DAY_WIDTH_PX = 230/);
   assert.match(calendarDayCountSource, /if \(!isConstrainedEmbed \|\|/);
   assert.match(reactViewSource, /getAdaptiveTimeGridDayCount/);
-  assert.match(reactViewSource, /const _DRAG_EVENT_TYPES = \['mousedown','mousemove','mouseup'\] as const/);
+  assert.match(reactViewSource, /resolveCalendarCanvasInteractionPolicy/);
   assert.doesNotMatch(reactViewSource, /new PointerEvent\(e\.type/);
   assert.match(reactViewSource, /Task events are handled directly by GCM's task-line menu/);
   assert.match(reactViewSource, /if \(isInlineTaskEntry \|\| !isEmbedModeRef\.current\) \{/);
   assert.match(reactViewSource, /const \[containerWidth, setContainerWidth\] = useState<number>\(0\)/);
-  assert.match(reactViewSource, /const visualWidth = _origBCR\.call\(container\)\.width/);
+  assert.match(reactViewSource, /const visualWidth = container\.getBoundingClientRect\(\)\.width/);
   assert.match(reactViewSource, /closest<HTMLElement>\("\.canvas-node"\)/);
   assert.match(reactViewSource, /Number\.parseFloat\(canvasNode\.style\.width \|\| ""\)/);
   assert.match(reactViewSource, /return candidates\.length \? Math\.min\(\.\.\.candidates\) : layoutWidth/);
