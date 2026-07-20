@@ -34,7 +34,7 @@ test("calendar date links open previews from click, not hover", () => {
   assert.match(handleDateClickSource, /this\.scheduleDateTargetPreview\(previewFile, targetEl, event\)/);
 });
 
-test("calendar day marker chips are clickable controls that do not overlap tight headers", () => {
+test("calendar day marker chips leave the full header width available to the date label", () => {
   assert.match(reactViewSource, /const showDayMarkerMenu = useCallback/);
   assert.match(reactViewSource, /event\.stopPropagation\(\)/);
   assert.match(reactViewSource, /<button\s+type="button"\s+className="tps-calendar-day-marker-chip is-auxiliary-date"/);
@@ -45,19 +45,18 @@ test("calendar day marker chips are clickable controls that do not overlap tight
   const calendarCss = readFileSync(new URL("../src/calendar.css", import.meta.url), "utf8");
   assert.match(calendarCss, /\.tps-calendar-day-marker-overlay \{[\s\S]*pointer-events: auto !important;/);
   assert.match(calendarCss, /\.tps-calendar-day-marker-chip \{[\s\S]*cursor: pointer !important;/);
-  assert.match(calendarCss, /\.fc \.fc-col-header-cell-cushion \{[\s\S]*text-overflow: ellipsis !important;/);
+  assert.match(calendarCss, /\.fc \.fc-col-header-cell-cushion \{[\s\S]*max-width: 100% !important;[\s\S]*text-overflow: ellipsis !important;/);
+  assert.doesNotMatch(calendarCss, /fc-col-header-cell-cushion \{[\s\S]{0,120}max-width: calc\(100% - (?:44|24)px\)/);
 });
 
-test("calendar day context indicators summarize daily tasks and scheduled items", () => {
+test("calendar headers omit the aggregate task context control and retain numeric dates", () => {
   assert.match(reactViewSource, /export type CalendarDayContext = \{/);
   assert.match(reactViewSource, /externalEvents: number;/);
   assert.match(reactViewSource, /dayContextByDate\?: Record<string, CalendarDayContext>/);
-  assert.match(reactViewSource, /className="tps-calendar-day-marker-chip is-day-context"/);
-  assert.match(reactViewSource, /const showDayContextMenu = useCallback/);
-  assert.match(reactViewSource, /open daily note task/);
-  assert.match(reactViewSource, /scheduled task/);
-  assert.match(reactViewSource, /scheduled note/);
-  assert.match(reactViewSource, /external event/);
+  assert.doesNotMatch(reactViewSource, /className="tps-calendar-day-marker-chip is-day-context"/);
+  assert.doesNotMatch(reactViewSource, /const showDayContextMenu = useCallback/);
+  assert.doesNotMatch(reactViewSource, /<CalendarMarkerIcon iconName="list-checks"/);
+  assert.match(reactViewSource, /dayHeaderShowDate[\s\S]*\? \{ weekday: dayHeaderFormatSetting, month: "short", day: "numeric" \}/);
 
   assert.match(calendarViewSource, /private dayContextByDate: Record<string, CalendarDayContext> = \{\};/);
   assert.match(calendarViewSource, /this\.dayContextByDate = await this\.buildDayContextByDate\(finalEntries\);/);
@@ -73,7 +72,6 @@ test("calendar day context counts unmatched external events once", () => {
   assert.match(calendarViewSource, /const finalEntries = Array\.from\(uniqueEntries\.values\(\)\);[\s\S]*this\.dayContextByDate = await this\.buildDayContextByDate\(finalEntries\);/);
   assert.match(calendarViewSource, /if \(entry\.isExternal\) \{[\s\S]*context\.externalEvents \+= 1;[\s\S]*\} else if \(\(entry\.entry as any\)\?\.inlineTask\) \{/);
   assert.match(calendarViewSource, /context\.externalEvents > 0/);
-  assert.match(reactViewSource, /\+ \(context\.externalEvents \|\| 0\)/);
 });
 
 test("embedded calendars render the configured slot range instead of cutting to scroll time", () => {

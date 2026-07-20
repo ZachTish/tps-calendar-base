@@ -8,9 +8,9 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 
 ## Install with BRAT
 
-BRAT 2.2.0 or newer can install and update this private repository from `ZachTish/tps-calendar-base`. In BRAT, configure a fine-grained GitHub token that grants this repository `Contents: Read-only`, add that repository path as a beta plugin, and track `Latest` to receive the highest semantic-version release. Store the token only through Obsidian SecretStorage/BRAT settings; never commit it to this repository or the vault.
+BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.2.2` makes fresh BRAT installs self-contained: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling no longer depends on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.2.3` remains self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 
@@ -27,6 +27,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Renders notes as events using configurable frontmatter fields (date, startTime, endTime, title, etc.).
 - Supports week, day, continuous-scroll, and **filter-based** display modes.
 - Navigation controls (previous/next/today) and condensed event display levels.
+- Day headers omit the aggregate task/context checklist badge and give the date label the full header width, keeping the day number visible in constrained layouts. Separate auxiliary-date and archived-external warning markers remain available.
 
 ### External Calendar Sync
 - Reads iCal feed configurations from **TPS-Controller** settings (no duplicate config).
@@ -186,6 +187,7 @@ src/
 
 ## Recent Improvements
 
+- 2026-07-20 (0.2.3): Removed the aggregate checklist/count control from Calendar day headers and released its reserved 44px back to the native date label. This keeps the day number visible in narrow desktop, split-pane, and mobile layouts while preserving auxiliary-date and archived-external warning controls. The focused day-header regression, complete declared suite, separate production build, test-vault reload, and constrained Calendar UI check all passed; no production-vault deployment was performed.
 - 2026-07-09: Calendar creation mode now treats bare semantic `kind`/`type` filters such as `run`, `workout`, `food`, `log`, and other expandable record kinds as note creation. Explicit `task.*` kind filters remain task-line mode, while structural `all`/`mixed` filters continue to defer to the configured default. This matches TPS Kanban's semantic-kind contract and prevents type-specific record views from creating task rows they cannot display. Validation: focused creation-mode regression, production build, and live `kind == "run"` Calendar creation QA.
 - 2026-07-13 (0.1.1): Scoped the document-level Calendar toolbar-create interceptor to the exact Calendar instance's nearest Home panel/embed. This prevents a Daily Note Feed or other neighboring Base `+ New` from opening `New calendar event`; ambiguous standalone leaves fail closed. Claimed routes log the owner class and Home component without record contents.
 - 2026-07-09: Note-mode Calendar toolbar creation now resolves `file.folder` defaults into the actual new-note path and creates missing nested folders before delegating to Bases. This fixes first-use `ENOENT` failures for semantic record Calendars targeting a new folder. The route logs the resolved folder, basename, and default keys without note content. Validation: focused creation regression, production build, and live creation into a previously absent folder.

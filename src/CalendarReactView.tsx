@@ -320,7 +320,6 @@ type CalendarDayMarkerOverlay = {
   dateKey: string;
   auxiliary: number;
   archived: number;
-  context: CalendarDayContext;
   title: string;
   left: number;
   top: number;
@@ -615,7 +614,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   pastEventOpacity = 50,
   eventFontSize = "default",
   doneStatuses,
-  dayContextByDate = {},
 }) => {
   const app = useApp() || ((window as any).app as App);
   const calendarRef = useRef<FullCalendar>(null);
@@ -1400,29 +1398,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   });
 
   const dayMarkerSources = useMemo(() => {
-    const markersByDay = new Map<string, { auxiliary: number; archived: number; context: CalendarDayContext; titleParts: string[] }>();
-    for (const [dateKey, context] of Object.entries(dayContextByDate)) {
-      const total = (context.openDailyTasks || 0) + (context.scheduledTasks || 0) + (context.scheduledNotes || 0) + (context.externalEvents || 0);
-      if (total <= 0) continue;
-      markersByDay.set(dateKey, {
-        auxiliary: 0,
-        archived: 0,
-        context: {
-          openDailyTasks: context.openDailyTasks || 0,
-          scheduledTasks: context.scheduledTasks || 0,
-          scheduledNotes: context.scheduledNotes || 0,
-          externalEvents: context.externalEvents || 0,
-        },
-        titleParts: [
-          [
-            context.openDailyTasks ? `${context.openDailyTasks} open daily note task${context.openDailyTasks === 1 ? "" : "s"}` : "",
-            context.scheduledTasks ? `${context.scheduledTasks} scheduled task${context.scheduledTasks === 1 ? "" : "s"}` : "",
-            context.scheduledNotes ? `${context.scheduledNotes} scheduled note${context.scheduledNotes === 1 ? "" : "s"}` : "",
-            context.externalEvents ? `${context.externalEvents} external event${context.externalEvents === 1 ? "" : "s"}` : "",
-          ].filter(Boolean).join("\n"),
-        ].filter(Boolean),
-      });
-    }
+    const markersByDay = new Map<string, { auxiliary: number; archived: number; titleParts: string[] }>();
     for (const entry of entries) {
       const isAuxiliary = !!entry.isAuxiliaryDate;
       const isArchived = !!entry.isArchivedExternalPlaceholder;
@@ -1435,7 +1411,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       const marker = markersByDay.get(key) || {
         auxiliary: 0,
         archived: 0,
-        context: { openDailyTasks: 0, scheduledTasks: 0, scheduledNotes: 0, externalEvents: 0 },
         titleParts: [],
       };
       if (isAuxiliary) marker.auxiliary += Math.max(1, Number(entry.auxiliaryDateCount || 1));
@@ -1454,12 +1429,11 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
           dateKey,
           auxiliary: marker.auxiliary,
           archived: marker.archived,
-          context: marker.context,
         })),
       });
     }
     return markersByDay;
-  }, [dayContextByDate, entries]);
+  }, [entries]);
 
   useLayoutEffect(() => {
     const root = containerRef.current;
@@ -1489,7 +1463,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
           dateKey,
           auxiliary: marker.auxiliary,
           archived: marker.archived,
-          context: marker.context,
           title: marker.titleParts.join("\n"),
           left: Math.max(0, columnRect.right - rootRect.left - 8),
           top: Math.max(0, columnRect.bottom - rootRect.top - 24),
@@ -2024,35 +1997,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       showArchivedExternalMenu(representative, event.nativeEvent);
     }
   }, [entries, showArchivedExternalMenu, showAuxiliaryDateMenu]);
-
-  const showDayContextMenu = useCallback((marker: CalendarDayMarkerOverlay, event: React.MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    const menu = new Menu();
-    const date = parseDateKey(marker.dateKey);
-    menu.addItem((item) => item
-      .setTitle(date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }))
-      .setIcon("calendar-days")
-      .setDisabled(true));
-    menu.addSeparator();
-    menu.addItem((item) => item
-      .setTitle(`${marker.context.openDailyTasks || 0} open daily note task${marker.context.openDailyTasks === 1 ? "" : "s"}`)
-      .setIcon("square-check")
-      .setDisabled(true));
-    menu.addItem((item) => item
-      .setTitle(`${marker.context.scheduledTasks || 0} scheduled task${marker.context.scheduledTasks === 1 ? "" : "s"}`)
-      .setIcon("list-checks")
-      .setDisabled(true));
-    menu.addItem((item) => item
-      .setTitle(`${marker.context.scheduledNotes || 0} scheduled note${marker.context.scheduledNotes === 1 ? "" : "s"}`)
-      .setIcon("file-clock")
-      .setDisabled(true));
-    menu.addItem((item) => item
-      .setTitle(`${marker.context.externalEvents || 0} external event${marker.context.externalEvents === 1 ? "" : "s"}`)
-      .setIcon("calendar")
-      .setDisabled(true));
-    menu.showAtMouseEvent(event.nativeEvent);
-  }, []);
 
   const eventClickPreviewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -3792,21 +3736,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             "--tps-marker-top": `${marker.top}px`,
           } as React.CSSProperties}
         >
-          {((marker.context.openDailyTasks || 0) + (marker.context.scheduledTasks || 0) + (marker.context.scheduledNotes || 0) + (marker.context.externalEvents || 0)) > 0 && (
-            <button
-              type="button"
-              className="tps-calendar-day-marker-chip is-day-context"
-              title={marker.title || "Open day context"}
-              aria-label={`Open day context for ${marker.dateKey}`}
-              onClick={(event) => showDayContextMenu(marker, event)}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <CalendarMarkerIcon iconName="list-checks" />
-              <span className="tps-calendar-day-marker-count">
-                {(marker.context.openDailyTasks || 0) + (marker.context.scheduledTasks || 0) + (marker.context.scheduledNotes || 0) + (marker.context.externalEvents || 0)}
-              </span>
-            </button>
-          )}
           {marker.auxiliary > 0 && (
             <button
               type="button"

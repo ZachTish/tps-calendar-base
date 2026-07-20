@@ -419,11 +419,6 @@ body.is-tablet .bases-calendar-wrapper .fc .bases-calendar-aux-date-content svg,
   color: var(--text-warning, var(--text-accent)) !important;
 }
 
-.bases-calendar-wrapper .tps-calendar-day-marker-chip.is-day-context {
-  color: var(--text-accent) !important;
-  background: color-mix(in srgb, var(--interactive-accent) 18%, var(--background-primary) 74%) !important;
-}
-
 .bases-calendar-wrapper .tps-calendar-day-marker-chip:hover,
 .bases-calendar-wrapper .tps-calendar-day-marker-chip:focus-visible {
   color: var(--text-normal) !important;
@@ -440,17 +435,13 @@ body.is-tablet .bases-calendar-wrapper .fc .bases-calendar-aux-date-content svg,
 
 .bases-calendar-wrapper .fc .fc-col-header-cell-cushion {
   display: block !important;
-  max-width: calc(100% - 44px) !important;
+  max-width: 100% !important;
   overflow: hidden !important;
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
 
 @container (max-width: 84px) {
-  .bases-calendar-wrapper .fc .fc-col-header-cell-cushion {
-    max-width: calc(100% - 24px) !important;
-  }
-
   .bases-calendar-wrapper .tps-calendar-day-marker-count {
     display: none !important;
   }
