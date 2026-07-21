@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.2.4
+
+- Settings saves now reload the newest plugin data and merge only locally changed fields, preserving synchronized preferences and unknown newer-release fields.
+- Rapid edits retain quick reverts, every caller waits for durable state, and a queued newer edit can supersede an in-flight failure without being stranded.
+- An intentionally empty event-style rule list stays empty, all supported color targets survive reload, and text controls persist each change without an unload-unsafe debounce.
+- This backward-compatible patch keeps the minimum supported Obsidian version at 1.10.0 and requires no manual migration.
+
 ## Development and deployment
 
 Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtisherman/TishOS Plugin Development/TPS-Calendar-Base (Dev)`, outside both vaults. `npm run build` and watch builds deploy byte-changed runtime artifacts by default only to `/Users/zachtisherman/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Plugin Test Vault/.obsidian/plugins/tps-calendar-base`; `npm test` is therefore isolated even though it ends with a production-mode build. Promotion to `/Users/zachtisherman/TishOS v0.1/.obsidian/plugins/tps-calendar-base` is an explicit guarded post-validation action. Neither target overwrites `data.json` or other runtime-owned state.
@@ -10,7 +17,7 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.2.3` remains self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.2.4` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 

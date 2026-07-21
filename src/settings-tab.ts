@@ -1,4 +1,4 @@
-import { Plugin, PluginSettingTab, Setting, debounce } from "obsidian";
+import { Plugin, PluginSettingTab, Setting } from "obsidian";
 import ObsidianCalendarPlugin from "./main";
 import { normalizeCalendarUrl } from "./utils";
 import { getPluginById } from "./core";
@@ -46,8 +46,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     const { containerEl } = this;
     this.captureSettingsViewState(containerEl);
     containerEl.empty();
-
-    const debouncedSave = debounce(() => this.plugin.saveSettings(), 300);
 
     containerEl.createEl("h2", { text: "TPS Calendar Settings" });
 
@@ -200,9 +198,9 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           text
             .setPlaceholder("Canceled, Tentative")
             .setValue(this.plugin.settings.externalCalendarFilter || "")
-            .onChange((value) => {
+            .onChange(async (value) => {
               this.plugin.settings.externalCalendarFilter = value;
-              void debouncedSave();
+              await this.plugin.saveSettings();
             }),
         );
     }
@@ -293,9 +291,9 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
         text
           .setPlaceholder("01 Action Items/Calendar.md")
           .setValue(this.plugin.settings.sidebarBasePath ?? "")
-          .onChange((value) => {
+          .onChange(async (value) => {
             this.plugin.settings.sidebarBasePath = value.trim();
-            void debouncedSave();
+            await this.plugin.saveSettings();
           }),
       );
 

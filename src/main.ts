@@ -10,6 +10,7 @@ import { removeChildLinkFromParent } from "./services/parent-child-link";
 import { normalizeCalendarUrl, normalizeCalendarTag } from "./utils";
 import { ExternalCalendarConfig, CalendarPluginSettings, ExternalCalendarEvent } from "./types";
 import { DEFAULT_SETTINGS, migrateSettings } from "./settings-migration";
+import { CalendarSettingsPersistence } from "./settings-persistence";
 import { getPluginById } from "./core";
 import { getTPSControllerApi } from "./tps-controller-api";
 import { TPS_EVENTS } from "./tps-events";
@@ -21,8 +22,11 @@ export default class ObsidianCalendarPlugin
   extends Plugin
   implements CalendarPluginBridge {
   settings: CalendarPluginSettings = DEFAULT_SETTINGS;
-  private settingsSavePromise: Promise<void> | null = null;
-  private settingsSavePending = false;
+  private readonly settingsPersistence = new CalendarSettingsPersistence({
+    loadLatest: () => this.loadData(),
+    saveMerged: (settings) => this.saveData(settings),
+    getLiveSettings: () => this.settings,
+  });
   private deletedLinkCleanupChain: Promise<void> = Promise.resolve();
   private deletedLinkCleanupPending = 0;
   private controllerExternalCalendars: ExternalCalendarConfig[] = [];
@@ -204,6 +208,7 @@ export default class ObsidianCalendarPlugin
   async loadSettings() {
     const stored = await this.loadData();
     this.settings = migrateSettings(stored);
+    this.settingsPersistence.setBaseline(this.settings);
     await this.loadControllerCalendarSettingsSnapshot();
     logger.setLoggingEnabled(this.settings.enableLogging);
     logger.flow("Settings", "load:done", {
@@ -261,33 +266,20 @@ export default class ObsidianCalendarPlugin
 
 
   async saveSettings() {
-    if (this.settingsSavePromise) {
-      this.settingsSavePending = true;
-      logger.flow("Settings", "save:queued");
-      await this.settingsSavePromise;
-      return;
+    const snapshot = JSON.parse(JSON.stringify(this.settings)) as CalendarPluginSettings;
+    try {
+      logger.flow("Settings", "save:start", {
+        enableLogging: snapshot.enableLogging,
+        sidebarBasePath: snapshot.sidebarBasePath || "",
+        createMode: snapshot.initialCreateMode || "",
+        taskCreateTargetPath: snapshot.taskCreateTargetPath || "",
+      });
+      await this.settingsPersistence.request(snapshot);
+      logger.flow("Settings", "save:done");
+    } catch (error) {
+      logger.flowError("Settings", "save:failed", error);
+      throw error;
     }
-
-    do {
-      this.settingsSavePending = false;
-      const snapshot = JSON.parse(JSON.stringify(this.settings));
-      this.settingsSavePromise = this.saveData(snapshot);
-      try {
-        logger.flow("Settings", "save:start", {
-          enableLogging: snapshot.enableLogging,
-          sidebarBasePath: snapshot.sidebarBasePath || "",
-          createMode: snapshot.initialCreateMode || "",
-          taskCreateTargetPath: snapshot.taskCreateTargetPath || "",
-        });
-        await this.settingsSavePromise;
-        logger.flow("Settings", "save:done");
-      } catch (error) {
-        logger.flowError("Settings", "save:failed", error);
-        throw error;
-      } finally {
-        this.settingsSavePromise = null;
-      }
-    } while (this.settingsSavePending);
 
     logger.setLoggingEnabled(this.settings.enableLogging);
     this.refreshCalendarViews();

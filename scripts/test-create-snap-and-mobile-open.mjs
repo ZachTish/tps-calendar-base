@@ -146,6 +146,40 @@ async function importCalendarDayCountUtility() {
   return import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
 }
 
+async function importSettingsMigration() {
+  const build = await esbuild.build({
+    entryPoints: [fileURLToPath(new URL("../src/settings-migration.ts", import.meta.url))],
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    write: false,
+  });
+  const bundled = build.outputFiles[0].text;
+  return import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
+}
+
+async function importSettingsPersistence() {
+  const build = await esbuild.build({
+    entryPoints: [fileURLToPath(new URL("../src/settings-persistence.ts", import.meta.url))],
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    write: false,
+  });
+  const bundled = build.outputFiles[0].text;
+  return import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 function dataTransferFrom(values, files = []) {
   return {
     getData(type) {
@@ -164,6 +198,224 @@ test("drag-create selections snap to separate configured gates before creation",
   assert.match(reactViewSource, /await onCreateSelection\(start, end, allDay\)/);
   assert.match(calendarViewSource, /snapCreateSelections=\{this\.plugin\.settings\.snapCreateSelections !== false\}/);
   assert.match(calendarViewSource, /createSnapDurationMinutes=\{this\.plugin\.settings\.createSnapDuration \|\| 15\}/);
+});
+
+test("saved empty style rules and supported color targets survive settings migration", async () => {
+  const { migrateSettings, DEFAULT_SETTINGS } = await importSettingsMigration();
+
+  assert.deepEqual(migrateSettings({ noteEventStyleRules: [] }).noteEventStyleRules, []);
+  assert.ok(migrateSettings({}).noteEventStyleRules.length > 0);
+  assert.deepEqual(migrateSettings({}).noteEventStyleRules, DEFAULT_SETTINGS.noteEventStyleRules);
+  for (const target of ["off", "card", "icon", "both"]) {
+    assert.equal(migrateSettings({ noteEventFrontmatterColorTarget: target }).noteEventFrontmatterColorTarget, target);
+  }
+  assert.equal(migrateSettings({ noteEventFrontmatterColorTarget: "invalid" }).noteEventFrontmatterColorTarget, "card");
+  assert.doesNotMatch(settingsTabSource, /const debouncedSave = debounce/);
+});
+
+test("calendar settings persistence merges local keys into latest data and preserves unknown fields", async () => {
+  const { CalendarSettingsPersistence } = await importSettingsPersistence();
+  const { migrateSettings } = await importSettingsMigration();
+  let stored = {
+    enableLogging: false,
+    sidebarBasePath: "Before sync",
+    futureSettingsVersion: 12,
+    futureCalendarOption: { mode: "preserve-me" },
+  };
+  const live = migrateSettings(stored);
+  const persistence = new CalendarSettingsPersistence({
+    loadLatest: async () => structuredClone(stored),
+    saveMerged: async (next) => {
+      stored = structuredClone(next);
+    },
+    getLiveSettings: () => live,
+  });
+  persistence.setBaseline(live);
+
+  stored.sidebarBasePath = "Changed on another device";
+  stored.futureCalendarOption = { mode: "still-preserved" };
+  live.enableLogging = true;
+  await persistence.request(live);
+
+  assert.equal(stored.enableLogging, true);
+  assert.equal(stored.sidebarBasePath, "Changed on another device");
+  assert.equal(stored.futureSettingsVersion, 12);
+  assert.deepEqual(stored.futureCalendarOption, { mode: "still-preserved" });
+  assert.equal(live.sidebarBasePath, "Changed on another device");
+});
+
+test("calendar settings persistence retains an in-flight old-new-old revert until every caller is durable", async () => {
+  const { CalendarSettingsPersistence } = await importSettingsPersistence();
+  const { migrateSettings } = await importSettingsMigration();
+  let stored = { enableLogging: false, sidebarBasePath: "Synced" };
+  const live = migrateSettings(stored);
+  const firstStarted = deferred();
+  const secondStarted = deferred();
+  const releaseFirst = deferred();
+  const releaseSecond = deferred();
+  const writes = [];
+  const persistence = new CalendarSettingsPersistence({
+    loadLatest: async () => structuredClone(stored),
+    saveMerged: async (next) => {
+      writes.push(structuredClone(next));
+      if (writes.length === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      } else {
+        secondStarted.resolve();
+        await releaseSecond.promise;
+      }
+      stored = structuredClone(next);
+    },
+    getLiveSettings: () => live,
+  });
+  persistence.setBaseline(live);
+
+  stored.sidebarBasePath = "Changed externally during the local edit";
+  live.enableLogging = true;
+  let firstResolved = false;
+  const firstSave = persistence.request(live).then(() => {
+    firstResolved = true;
+  });
+  await firstStarted.promise;
+
+  live.sidebarBasePath = "Temporary local value";
+  const intermediateSave = persistence.request(live);
+  live.sidebarBasePath = "Synced";
+  live.enableLogging = false;
+  const secondSave = persistence.request(live);
+  releaseFirst.resolve();
+  await secondStarted.promise;
+  await Promise.resolve();
+  assert.equal(firstResolved, false, "the first caller must wait for the queued revert");
+  assert.equal(live.enableLogging, false, "first-write reconciliation must not undo the live revert");
+
+  live.taskCreateTargetPath = "Edited while the second write is in flight";
+  releaseSecond.resolve();
+  await Promise.all([firstSave, intermediateSave, secondSave]);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].enableLogging, true);
+  assert.equal(writes[1].enableLogging, false);
+  assert.equal(stored.enableLogging, false);
+  assert.equal(stored.sidebarBasePath, "Synced");
+  assert.equal(live.sidebarBasePath, "Synced");
+  assert.equal(
+    live.taskCreateTargetPath,
+    "Edited while the second write is in flight",
+    "reconciliation must preserve edits made after a snapshot was captured",
+  );
+});
+
+test("calendar settings persistence lets a queued snapshot supersede a failed in-flight write", async () => {
+  const { CalendarSettingsPersistence } = await importSettingsPersistence();
+  const { migrateSettings } = await importSettingsMigration();
+  let stored = { enableLogging: false, sidebarBasePath: "Original" };
+  const live = migrateSettings(stored);
+  const firstStarted = deferred();
+  const failFirst = deferred();
+  let attempts = 0;
+  const persistence = new CalendarSettingsPersistence({
+    loadLatest: async () => structuredClone(stored),
+    saveMerged: async (next) => {
+      attempts += 1;
+      if (attempts === 1) {
+        firstStarted.resolve();
+        await failFirst.promise;
+        throw new Error("simulated stale write failure");
+      }
+      stored = structuredClone(next);
+    },
+    getLiveSettings: () => live,
+  });
+  persistence.setBaseline(live);
+
+  live.enableLogging = true;
+  const firstSave = persistence.request(live);
+  await firstStarted.promise;
+  live.enableLogging = false;
+  live.sidebarBasePath = "Newest local value";
+  const secondSave = persistence.request(live);
+  failFirst.resolve();
+
+  await Promise.all([firstSave, secondSave]);
+  assert.equal(attempts, 2);
+  assert.equal(stored.enableLogging, false);
+  assert.equal(stored.sidebarBasePath, "Newest local value");
+});
+
+test("calendar settings persistence carries revert intent when a third request replaces the pending snapshot", async () => {
+  const { CalendarSettingsPersistence } = await importSettingsPersistence();
+  const { migrateSettings } = await importSettingsMigration();
+  let stored = { enableLogging: false, sidebarBasePath: "Original" };
+  const live = migrateSettings(stored);
+  const firstStarted = deferred();
+  const releaseFirst = deferred();
+  const writes = [];
+  const persistence = new CalendarSettingsPersistence({
+    loadLatest: async () => structuredClone(stored),
+    saveMerged: async (next) => {
+      writes.push(structuredClone(next));
+      if (writes.length === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+      }
+      stored = structuredClone(next);
+    },
+    getLiveSettings: () => live,
+  });
+  persistence.setBaseline(live);
+
+  live.enableLogging = true;
+  const changed = persistence.request(live);
+  await firstStarted.promise;
+  live.enableLogging = false;
+  const reverted = persistence.request(live);
+  live.sidebarBasePath = "Third request value";
+  const replacedPending = persistence.request(live);
+  releaseFirst.resolve();
+
+  await Promise.all([changed, reverted, replacedPending]);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].enableLogging, true);
+  assert.equal(writes[1].enableLogging, false);
+  assert.equal(writes[1].sidebarBasePath, "Third request value");
+  assert.equal(stored.enableLogging, false);
+  assert.equal(stored.sidebarBasePath, "Third request value");
+});
+
+test("calendar settings persistence starts a new drain for a completion-window request", async () => {
+  const { CalendarSettingsPersistence } = await importSettingsPersistence();
+  const { migrateSettings } = await importSettingsMigration();
+  let stored = { enableLogging: false, sidebarBasePath: "Original" };
+  const live = migrateSettings(stored);
+  let completionWindowRequest;
+  let writeCount = 0;
+  let persistence;
+  persistence = new CalendarSettingsPersistence({
+    loadLatest: async () => structuredClone(stored),
+    saveMerged: async (next) => {
+      writeCount += 1;
+      stored = structuredClone(next);
+      if (writeCount === 1) {
+        queueMicrotask(() => queueMicrotask(() => {
+          live.sidebarBasePath = "Completion-window value";
+          completionWindowRequest = persistence.request(live);
+        }));
+      }
+    },
+    getLiveSettings: () => live,
+  });
+  persistence.setBaseline(live);
+
+  live.enableLogging = true;
+  await persistence.request(live);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(completionWindowRequest);
+  await completionWindowRequest;
+
+  assert.equal(writeCount, 2);
+  assert.equal(stored.enableLogging, true);
+  assert.equal(stored.sidebarBasePath, "Completion-window value");
 });
 
 test("creation callsites pass resolved create mode and explicit task target overrides", () => {

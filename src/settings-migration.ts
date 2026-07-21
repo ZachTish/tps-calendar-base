@@ -189,12 +189,10 @@ export function migrateSettings(stored: any): CalendarPluginSettings {
         noteEventIconSource: ["frontmatter", "off"].includes(stored?.noteEventIconSource)
             ? stored.noteEventIconSource
             : "frontmatter",
-        noteEventFrontmatterColorTarget: stored?.noteEventFrontmatterColorTarget === "off"
-            ? "off"
-            : ["card", "icon", "both"].includes(stored?.noteEventFrontmatterColorTarget)
-                ? "card"
-                : "card",
-        noteEventStyleRules: Array.isArray(stored?.noteEventStyleRules) && stored.noteEventStyleRules.length
+        noteEventFrontmatterColorTarget: ["off", "card", "icon", "both"].includes(stored?.noteEventFrontmatterColorTarget)
+            ? stored.noteEventFrontmatterColorTarget
+            : "card",
+        noteEventStyleRules: Array.isArray(stored?.noteEventStyleRules)
             ? stored.noteEventStyleRules.map(normalizeStoredRule)
             : DEFAULT_PRIORITY_CARD_STYLE_RULES,
         allDayEventHeight: stored?.allDayEventHeight ?? 24,
