@@ -68,6 +68,7 @@ export class CalendarStyleBuilderModal extends Modal {
             }
             .calendar-condition-row {
                 display: flex;
+                flex-wrap: wrap;
                 gap: 8px;
                 align-items: center;
                 margin-bottom: 8px;
@@ -76,9 +77,29 @@ export class CalendarStyleBuilderModal extends Modal {
                 border-radius: 6px;
                 border: 1px solid var(--background-modifier-border);
             }
+            .calendar-condition-field-group {
+                display: flex;
+                flex: 1 1 190px;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: center;
+                min-width: 0;
+            }
             .calendar-condition-row select,
             .calendar-condition-row input {
-                background: var(--background-primary);
+                background-color: var(--background-primary);
+                min-width: 0;
+            }
+            .calendar-condition-row > select {
+                flex: 1 1 150px;
+            }
+            .calendar-condition-row > .condition-value {
+                flex: 2 1 180px !important;
+            }
+            .calendar-condition-field-group > select,
+            .calendar-condition-field-group > input {
+                flex: 1 1 120px;
+                width: auto !important;
             }
             .calendar-visual-preview {
                 height: 40px;
@@ -95,7 +116,31 @@ export class CalendarStyleBuilderModal extends Modal {
                 gap: 8px;
                 flex-wrap: wrap;
             }
+            .calendar-style-tabs {
+                display: flex;
+                gap: 0;
+                margin-bottom: 12px;
+                border-bottom: 1px solid var(--background-modifier-border);
+            }
+            .calendar-style-tab {
+                height: auto;
+                padding: 8px 14px;
+                border: 0;
+                border-bottom: 2px solid transparent;
+                border-radius: 0;
+                background: transparent;
+                color: var(--text-muted);
+                font-weight: 500;
+                box-shadow: none;
+            }
+            .calendar-style-tab.is-active,
+            .calendar-style-tab[aria-pressed="true"] {
+                border-bottom-color: var(--interactive-accent);
+                color: var(--text-normal);
+                font-weight: 600;
+            }
             .calendar-style-btn {
+                height: auto;
                 padding: 6px 12px;
                 border-radius: 4px;
                 border: 1px solid var(--background-modifier-border);
@@ -110,6 +155,28 @@ export class CalendarStyleBuilderModal extends Modal {
                 background: var(--interactive-accent);
                 color: var(--text-on-accent);
                 border-color: var(--interactive-accent);
+            }
+            @media (max-width: 600px) {
+                .calendar-builder-section {
+                    padding: 12px;
+                }
+                .calendar-condition-row {
+                    flex-direction: column;
+                    align-items: stretch;
+                }
+                .calendar-condition-field-group {
+                    width: 100%;
+                    flex-direction: column;
+                    align-items: stretch !important;
+                }
+                .calendar-condition-row select,
+                .calendar-condition-row input {
+                    width: 100% !important;
+                    max-width: none;
+                }
+                .calendar-condition-row .explorer2-icon-button {
+                    align-self: flex-end;
+                }
             }
         `;
             document.head.appendChild(style);
@@ -174,11 +241,13 @@ export class CalendarStyleBuilderModal extends Modal {
         const allowText = this.mode !== "color";
 
         if (allowColor && allowText) {
-            const tabContainer = visualsSection.createDiv();
-            tabContainer.style.display = "flex";
-            tabContainer.style.gap = "0";
-            tabContainer.style.marginBottom = "12px";
-            tabContainer.style.borderBottom = "1px solid var(--background-modifier-border)";
+            const tabContainer = visualsSection.createDiv({
+                cls: "calendar-style-tabs",
+                attr: {
+                    role: "group",
+                    "aria-label": "Style category",
+                },
+            });
 
             const tabs: { id: StyleBuilderMode; label: string }[] = [
                 { id: "color", label: "Color" },
@@ -186,12 +255,14 @@ export class CalendarStyleBuilderModal extends Modal {
             ];
             tabs.forEach((tab) => {
                 const isActive = this.activeTab === tab.id;
-                const tabEl = tabContainer.createDiv({ text: tab.label });
-                tabEl.style.padding = "8px 14px";
-                tabEl.style.cursor = "pointer";
-                tabEl.style.fontWeight = isActive ? "600" : "500";
-                tabEl.style.color = isActive ? "var(--text-normal)" : "var(--text-muted)";
-                tabEl.style.borderBottom = isActive ? "2px solid var(--interactive-accent)" : "2px solid transparent";
+                const tabEl = tabContainer.createEl("button", {
+                    text: tab.label,
+                    cls: `calendar-style-tab ${isActive ? "is-active" : ""}`,
+                    attr: {
+                        type: "button",
+                        "aria-pressed": isActive ? "true" : "false",
+                    },
+                });
                 tabEl.addEventListener("click", () => {
                     if (this.activeTab === tab.id) return;
                     this.activeTab = tab.id;
@@ -238,14 +309,23 @@ export class CalendarStyleBuilderModal extends Modal {
             ];
 
             styles.forEach(s => {
-                const btn = toggles.createDiv({ cls: `calendar-style-btn ${currentStyles.has(s.id) ? 'is-active' : ''}`, text: s.label });
+                const isActive = currentStyles.has(s.id);
+                const btn = toggles.createEl("button", {
+                    cls: `calendar-style-btn ${isActive ? "is-active" : ""}`,
+                    text: s.label,
+                    attr: {
+                        type: "button",
+                        "aria-pressed": isActive ? "true" : "false",
+                    },
+                });
                 btn.addEventListener("click", () => {
                     if (currentStyles.has(s.id)) currentStyles.delete(s.id);
                     else currentStyles.add(s.id);
 
                     this.rule.textStyle = Array.from(currentStyles).join(", ");
-                    if (currentStyles.has(s.id)) btn.classList.add("is-active");
-                    else btn.classList.remove("is-active");
+                    const isNowActive = currentStyles.has(s.id);
+                    btn.classList.toggle("is-active", isNowActive);
+                    btn.setAttr("aria-pressed", isNowActive ? "true" : "false");
                     this.updatePreview(previewBox);
                 });
             });
@@ -301,12 +381,10 @@ export class CalendarStyleBuilderModal extends Modal {
 
             // Field Wrapper
             const fieldContainer = row.createDiv({ cls: "calendar-condition-field-group" });
-            fieldContainer.style.display = "flex";
-            fieldContainer.style.gap = "8px";
-            fieldContainer.style.alignItems = "center";
 
             // Field Select
             const fieldSelect = fieldContainer.createEl("select", { cls: "dropdown" });
+            fieldSelect.setAttr("aria-label", `Condition ${idx + 1} field`);
             const isCustom = !["status", "priority"].includes(cond.field);
 
             ["status", "priority", "custom"].forEach(f => {
@@ -333,7 +411,7 @@ export class CalendarStyleBuilderModal extends Modal {
                 const customInput = fieldContainer.createEl("input", { type: "text", cls: "condition-custom-field" });
                 customInput.value = cond.field;
                 customInput.placeholder = "Property name";
-                customInput.style.width = "120px";
+                customInput.setAttr("aria-label", `Condition ${idx + 1} property name`);
                 customInput.addEventListener("change", () => {
                     cond.field = customInput.value;
                 });
@@ -341,10 +419,13 @@ export class CalendarStyleBuilderModal extends Modal {
 
             // Operator
             const operatorSelect = row.createEl("select", { cls: "dropdown" });
+            operatorSelect.setAttr("aria-label", `Condition ${idx + 1} operator`);
             const ops: { v: CalendarOperator, l: string }[] = [
                 { v: "is", l: "is" }, { v: "!is", l: "is not" },
                 { v: "contains", l: "contains" }, { v: "!contains", l: "does not contain" },
-                { v: "starts", l: "starts with" }, { v: "exists", l: "exists" }, { v: "!exists", l: "is missing" }
+                { v: "starts", l: "starts with" }, { v: "!starts", l: "does not start with" },
+                { v: "ends", l: "ends with" }, { v: "!ends", l: "does not end with" },
+                { v: "exists", l: "exists" }, { v: "!exists", l: "is missing" }
             ];
             ops.forEach(op => {
                 const opt = operatorSelect.createEl("option", { value: op.v, text: op.l });
@@ -359,12 +440,18 @@ export class CalendarStyleBuilderModal extends Modal {
             const valueInput = row.createEl("input", { type: "text", cls: "condition-value" });
             valueInput.value = cond.value || "";
             valueInput.placeholder = "Value";
-            valueInput.style.flex = "1";
+            valueInput.setAttr("aria-label", `Condition ${idx + 1} value`);
             valueInput.disabled = ["exists", "!exists"].includes(cond.operator);
             valueInput.addEventListener("change", () => cond.value = valueInput.value);
 
             // Remove
-            const removeBtn = row.createEl("button", { cls: "explorer2-icon-button" });
+            const removeBtn = row.createEl("button", {
+                cls: "explorer2-icon-button",
+                attr: {
+                    type: "button",
+                    "aria-label": `Remove condition ${idx + 1}`,
+                },
+            });
             removeBtn.innerHTML = "×";
             removeBtn.style.color = "var(--text-muted)";
             removeBtn.style.cursor = "pointer";

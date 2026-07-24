@@ -3,32 +3,71 @@ import ObsidianCalendarPlugin from "./main";
 import { normalizeCalendarUrl } from "./utils";
 import { getPluginById } from "./core";
 import { renderListWithControls } from "./utils/list-renderer";
+import { CalendarStyleBuilderModal } from "./services/visual-builder";
+import { createDefaultCondition } from "./services/style-rule-service";
+import type { CalendarStyleRule } from "./types";
 
 const createCalendarId = () =>
   `calendar-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
 
-const createCollapsibleSection = (
+const createStyleRuleId = () =>
+  `calendar-style-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+type CalendarSettingsPage =
+  | "rules"
+  | "sources"
+  | "view"
+  | "appearance"
+  | "advanced";
+
+const CALENDAR_SETTINGS_PAGES: Array<{
+  id: CalendarSettingsPage;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "rules",
+    label: "Rules & creation",
+    description: "Base rules and new item defaults",
+  },
+  {
+    id: "sources",
+    label: "Calendar sources",
+    description: "External feeds and import filters",
+  },
+  {
+    id: "view",
+    label: "View & navigation",
+    description: "Dates, hours, and movement",
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    description: "Event cards, style rules, and layout",
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    description: "Files, linking, fields, and logging",
+  },
+];
+
+const createSettingsGroup = (
   parent: HTMLElement,
   title: string,
   description?: string,
-  defaultOpen = false
 ): HTMLElement => {
-  const details = parent.createEl("details", { cls: "tps-collapsible-section" });
-  if (defaultOpen) {
-    details.setAttr("open", "true");
-  }
-
-  const summary = details.createEl("summary", { cls: "tps-collapsible-section-summary" });
-  summary.createSpan({ cls: "tps-collapsible-section-title", text: title });
+  const section = parent.createEl("section", { cls: "tps-settings-group" });
+  section.createEl("h3", { cls: "tps-settings-group-title", text: title });
 
   if (description) {
-    details.createEl("p", {
-      cls: "tps-collapsible-section-description",
+    section.createEl("p", {
+      cls: "tps-settings-group-description",
       text: description,
     });
   }
 
-  return details.createDiv({ cls: "tps-collapsible-section-content" });
+  return section.createDiv({ cls: "tps-settings-group-content" });
 };
 
 export class CalendarPluginSettingsTab extends PluginSettingTab {
@@ -36,6 +75,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
   private settingsViewState = new Map<string, boolean>();
   private settingsScrollTop = 0;
   private hasRenderedSettings = false;
+  private activeSettingsPage: CalendarSettingsPage = "rules";
 
   constructor(app: Plugin["app"], plugin: ObsidianCalendarPlugin) {
     super(app, plugin);
@@ -48,31 +88,97 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl("h2", { text: "TPS Calendar Settings" });
+    containerEl.createEl("p", {
+      cls: "setting-item-description tps-settings-intro",
+      text: "Choose an area below. Only that settings page is shown, so common controls stay easy to find without a long wall of options.",
+    });
+
+    const hub = containerEl.createDiv({ cls: "tps-settings-hub" });
+    hub.createDiv({
+      cls: "tps-settings-hub-title",
+      text: "Choose what to configure",
+    });
+    const hubButtons = hub.createDiv({
+      cls: "tps-settings-hub-buttons",
+      attr: {
+        role: "group",
+        "aria-label": "TPS Calendar settings pages",
+      },
+    });
+    const pagesHost = containerEl.createDiv({ cls: "tps-settings-pages" });
+    const pageElements = {} as Record<CalendarSettingsPage, HTMLElement>;
+    const pageButtons = {} as Record<CalendarSettingsPage, HTMLButtonElement>;
+
+    const activatePage = (pageId: CalendarSettingsPage, resetScroll = false) => {
+      this.activeSettingsPage = pageId;
+      CALENDAR_SETTINGS_PAGES.forEach(({ id }) => {
+        const isActive = id === pageId;
+        pageButtons[id].setAttr("aria-pressed", isActive ? "true" : "false");
+        pageButtons[id].classList.toggle("is-active", isActive);
+        pageElements[id].hidden = !isActive;
+      });
+      if (resetScroll) {
+        containerEl.scrollTop = 0;
+        pageElements[pageId]
+          .querySelector<HTMLElement>(".tps-settings-page-title")
+          ?.focus({ preventScroll: false });
+      }
+    };
+
+    CALENDAR_SETTINGS_PAGES.forEach(({ id, label, description }) => {
+      const button = hubButtons.createEl("button", {
+        cls: "tps-settings-destination",
+        attr: {
+          type: "button",
+          "aria-pressed": "false",
+          "aria-controls": `tps-calendar-settings-${id}`,
+        },
+      });
+      button.createSpan({ cls: "tps-settings-destination-label", text: label });
+      button.createSpan({
+        cls: "tps-settings-destination-description",
+        text: description,
+      });
+      button.addEventListener("click", () => activatePage(id, true));
+      pageButtons[id] = button;
+
+      const page = pagesHost.createEl("section", {
+        cls: "tps-settings-page",
+        attr: {
+          id: `tps-calendar-settings-${id}`,
+          "data-settings-page": id,
+          "aria-labelledby": `tps-calendar-settings-${id}-title`,
+        },
+      });
+      page.createEl("h2", {
+        cls: "tps-settings-page-title",
+        text: label,
+        attr: {
+          id: `tps-calendar-settings-${id}-title`,
+          tabindex: "-1",
+        },
+      });
+      page.createEl("p", {
+        cls: "tps-settings-page-description",
+        text: description,
+      });
+      pageElements[id] = page;
+    });
+
+    activatePage(this.activeSettingsPage);
+
+    const rulesPage = pageElements.rules;
+    const sourcesPage = pageElements.sources;
+    const viewPage = pageElements.view;
+    const appearancePage = pageElements.appearance;
+    const advancedPage = pageElements.advanced;
 
     // Check for Controller override
     const controller = getPluginById(this.app, "tps-controller") as any;
-    if (controller?.settings) {
-      const warning = containerEl.createDiv({ cls: 'tps-settings-warning' });
-      warning.createEl("strong", { text: "⚠️ Managed by TPS Controller" });
-      warning.createEl("p", {
-        text: "External calendars are currently being managed by the TPS Controller plugin. The settings below are being overridden.",
-        attr: { style: "margin-top: 5px; margin-bottom: 0;" }
-      });
-    }
-
-    const coreSettings = containerEl.createDiv({ cls: "tps-settings-core" });
-    new Setting(coreSettings).setName("Core settings").setHeading();
-    this.renderBaseQueryGuide(containerEl);
+    this.renderBaseQueryGuide(rulesPage);
 
     // 1. Calendars Section (Top Priority)
-    const calendarsSection = createCollapsibleSection(
-      containerEl,
-      "External Calendar Sources and Import Filters",
-      "Source feeds and quick import. This is the highest-priority setup area for the calendar plugin.",
-      false
-    );
-
-    new Setting(coreSettings)
+    new Setting(sourcesPage)
       .setName("Enable external calendar integration")
       .setDesc("Master toggle for external calendar sources and external event rendering.")
       .addToggle((toggle) =>
@@ -85,16 +191,34 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
+    const calendarsSection = createSettingsGroup(
+      sourcesPage,
+      "External Calendar Sources and Import Filters",
+      "Source feeds and quick import. This is the highest-priority setup area for the calendar plugin.",
+    );
+
     if (!(this.plugin.settings.enableExternalCalendars ?? true)) {
       calendarsSection.createEl("p", {
         text: "External calendars are disabled. Enable the master toggle to configure calendar sources and import rules.",
         cls: "setting-item-description",
       });
     } else if (controller?.settings) {
-      calendarsSection.createEl("p", {
-        text: "Calendar sources are managed by TPS Controller. Use Controller settings to change feeds, filters, archive behavior, and shared field mappings.",
-        cls: "setting-item-description",
+      const managedNotice = calendarsSection.createDiv({
+        cls: "tps-settings-managed-notice",
       });
+      managedNotice.createEl("strong", { text: "Managed by TPS Controller" });
+      managedNotice.createEl("p", {
+        text: "Change feeds, import rules, archive behavior, and shared field mappings in Controller settings.",
+      });
+      new Setting(managedNotice)
+        .setName("External calendar rules")
+        .setDesc("Go directly to the plugin that owns these settings.")
+        .addButton((button) =>
+          button
+            .setButtonText("Open Controller settings")
+            .setCta()
+            .onClick(() => this.openPluginSettings("tps-controller")),
+        );
     } else {
       const calendarsContainer = calendarsSection.createDiv();
       this.renderExternalCalendars(calendarsContainer);
@@ -206,14 +330,13 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     }
 
     // 2. General Settings
-    const generalSection = createCollapsibleSection(
-      containerEl,
-      "Date Clicks, New Item Creation, and Default Calendar Base",
-      "Primary interaction settings that most users are likely to change.",
-      false
+    const generalSection = createSettingsGroup(
+      rulesPage,
+      "New items and date clicks",
+      "Choose what Calendar creates and where task items are stored.",
     );
 
-    new Setting(coreSettings)
+    new Setting(generalSection)
       .setName("Calendar day click action")
       .setDesc("Open Daily Note (.md) or Canvas (.canvas) when clicking a date header.")
       .addDropdown((dropdown) =>
@@ -227,7 +350,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(coreSettings)
+    new Setting(generalSection)
       .setName("Initial calendar create")
       .setDesc("Choose whether drag-select and dropped unscheduled items create a note event or a task item.")
       .addDropdown((dropdown) =>
@@ -284,7 +407,13 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
         );
     }
 
-    new Setting(generalSection)
+    const fileSection = createSettingsGroup(
+      advancedPage,
+      "Files and opening",
+      "Default files, workspace location, daily-note naming, and note-open behavior.",
+    );
+
+    new Setting(fileSection)
       .setName("Default calendar base path")
       .setDesc("File to open with the Command/Ribbon calendar action.")
       .addText((text) =>
@@ -297,7 +426,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(generalSection)
+    new Setting(fileSection)
       .setName("Default calendar open location")
       .setDesc("Choose where the Command/Ribbon calendar action opens the default base.")
       .addDropdown((dropdown) =>
@@ -311,7 +440,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(generalSection)
+    new Setting(fileSection)
       .setName("Auto-focus backlinks panel on note open")
       .setDesc("When you open a markdown note, automatically reveal the Backlinks panel in the sidebar.")
       .addToggle((toggle) =>
@@ -323,11 +452,16 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    const viewBehaviorSection = createCollapsibleSection(
-      containerEl,
-      "Default Calendar View, Visible Hours, and Hidden-Hour Toggle",
+    const frontmatterKeysSection = createSettingsGroup(
+      advancedPage,
+      "Frontmatter field names",
+      "Calendar display key names. Shared identity remains managed by TPS Global Context Menu as tpsId and externalId.",
+    );
+
+    const viewBehaviorSection = createSettingsGroup(
+      viewPage,
+      "Calendar view and navigation",
       "Default navigation and visible time-range behavior.",
-      false
     );
 
     new Setting(viewBehaviorSection)
@@ -375,7 +509,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(viewBehaviorSection)
+    new Setting(fileSection)
       .setName("Daily note date format")
       .setDesc(
         "Moment.js format string for daily note filenames (e.g. YYYYMMDD, DD-MM-YYYY). " +
@@ -391,7 +525,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(viewBehaviorSection)
+    new Setting(frontmatterKeysSection)
       .setName("Primary event date field")
       .setDesc("First frontmatter field used to place notes on the calendar.")
       .addText((text) =>
@@ -404,7 +538,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    viewBehaviorSection.createEl("p", {
+    frontmatterKeysSection.createEl("p", {
       text:
         "Per-base controls: open each Calendar Base view options to choose the single start date source and optional duration. Other date fields render as small notice markers at their own dates.",
     }).addClass("setting-item-description");
@@ -495,11 +629,10 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       );
 
     // 3. Event Handling (UI-related settings only)
-    const handlingSection = createCollapsibleSection(
-      containerEl,
-      "Calendar Note Linking and Event Status Values",
+    const handlingSection = createSettingsGroup(
+      advancedPage,
+      "Note linking and event status",
       "Linking and status behavior for calendar-created notes.",
-      false
     );
 
     let linkDetails: HTMLElement;
@@ -560,11 +693,10 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       );
 
     // 4. Appearance
-    const appearanceSection = createCollapsibleSection(
-      containerEl,
-      "Calendar Event Appearance, Colors, Icons, and Time Grid Layout",
+    const appearanceSection = createSettingsGroup(
+      appearancePage,
+      "Event cards and calendar layout",
       "Lower-priority visual tuning and optional style rules.",
-      false
     );
 
     new Setting(appearanceSection)
@@ -655,25 +787,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(appearanceSection)
-      .setName("Frontmatter value style rules")
-      .setDesc("JSON array of rules. Each rule can match any frontmatter field and apply card color/textStyle. Icons are not changed by these rules.")
-      .addTextArea((text) => {
-        text.inputEl.rows = 8;
-        text.inputEl.style.width = "100%";
-        text
-          .setPlaceholder('[{"label":"Priority: high","conditions":[{"field":"priority","operator":"is","value":"high"}],"color":"#ef4444"}]')
-          .setValue(JSON.stringify(this.plugin.settings.noteEventStyleRules || [], null, 2))
-          .onChange(async (value) => {
-            try {
-              const parsed = value.trim() ? JSON.parse(value) : [];
-              this.plugin.settings.noteEventStyleRules = Array.isArray(parsed) ? parsed : [];
-              await this.plugin.saveSettings();
-            } catch {
-              // Keep the user's draft text intact until valid JSON is entered.
-            }
-          });
-      });
+    this.renderStyleRuleManager(appearanceSection);
 
     new Setting(appearanceSection)
       .setName("Layout & Dimensions")
@@ -768,21 +882,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    // 5. Advanced / Developer
-    const advancedSection = createCollapsibleSection(
-      containerEl,
-      "Calendar Frontmatter Field Names",
-      "Shared key names and lower-frequency advanced behavior.",
-      false
-    );
-
-    const frontmatterKeysSection = createCollapsibleSection(
-      advancedSection,
-      "Display and Status Field Keys",
-      "Calendar display key names. Shared identity is managed by TPS Global Context Menu as tpsId and externalId.",
-      false
-    );
-
     const keys = [
       { name: "Title", key: "titleKey", default: "title" },
       { name: "Status", key: "statusKey", default: "status" },
@@ -805,11 +904,10 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     });
 
     // 6. Debug
-    const debugSection = createCollapsibleSection(
-      containerEl,
-      "Debug Logging",
+    const debugSection = createSettingsGroup(
+      advancedPage,
+      "Debug logging",
       "Low-frequency troubleshooting controls.",
-      false
     );
 
     new Setting(debugSection)
@@ -822,6 +920,161 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
         })
       );
     this.restoreSettingsViewState(containerEl);
+  }
+
+  private openPluginSettings(pluginId: string): void {
+    const settings = (this.app as any).setting;
+    settings?.open?.();
+    settings?.openTabById?.(pluginId);
+  }
+
+  private renderStyleRuleManager(parent: HTMLElement): void {
+    const heading = new Setting(parent)
+      .setName("Event style rules")
+      .setDesc("Match note properties and apply a card color or text style. Rules are checked from top to bottom.");
+    heading.addButton((button) =>
+      button
+        .setIcon("plus")
+        .setButtonText("Add rule")
+        .setCta()
+        .onClick(() => {
+          const rule: CalendarStyleRule = {
+            id: createStyleRuleId(),
+            label: "New style rule",
+            active: true,
+            match: "all",
+            conditions: [createDefaultCondition()],
+            color: "#3b82f6",
+            textStyle: "",
+          };
+          this.openStyleRuleEditor(rule, null);
+        }),
+    );
+
+    const list = parent.createDiv({ cls: "tps-calendar-style-rule-list" });
+    const rules = this.plugin.settings.noteEventStyleRules || [];
+    renderListWithControls(list, {
+      items: rules,
+      emptyState: "No event style rules. Calendar will use its normal event appearance.",
+      template: (rule) => {
+        const content = document.createElement("div");
+        content.className = "tps-calendar-style-rule-summary";
+
+        const titleRow = document.createElement("div");
+        titleRow.className = "tps-calendar-style-rule-title-row";
+        const swatch = document.createElement("span");
+        swatch.className = "tps-calendar-style-rule-swatch";
+        swatch.style.backgroundColor = rule.color || "transparent";
+        swatch.setAttribute(
+          "aria-label",
+          rule.color ? `Rule color ${rule.color}` : "No rule color",
+        );
+        const title = document.createElement("strong");
+        title.textContent = rule.label?.trim() || "Untitled rule";
+        titleRow.append(swatch, title);
+
+        const condition = document.createElement("span");
+        condition.className = "tps-calendar-style-rule-conditions";
+        condition.textContent = this.describeStyleRule(rule);
+        content.append(titleRow, condition);
+        return content;
+      },
+      controls: (rule, index) => ({
+        canMoveUp: index > 0,
+        canMoveDown: index < rules.length - 1,
+        status: rule.active === false ? "Inactive" : "Active",
+        onEdit: () => this.openStyleRuleEditor(rule, rule.id),
+        onDuplicate: () => {
+          void this.duplicateStyleRule(index);
+        },
+        onDelete: () => {
+          void this.deleteStyleRule(index);
+        },
+        onMoveUp: index > 0
+          ? () => {
+              void this.moveStyleRule(index, index - 1);
+            }
+          : undefined,
+        onMoveDown: index < rules.length - 1
+          ? () => {
+              void this.moveStyleRule(index, index + 1);
+            }
+          : undefined,
+      }),
+    });
+  }
+
+  private describeStyleRule(rule: CalendarStyleRule): string {
+    const operatorLabels: Record<string, string> = {
+      is: "is",
+      "!is": "is not",
+      contains: "contains",
+      "!contains": "does not contain",
+      starts: "starts with",
+      "!starts": "does not start with",
+      ends: "ends with",
+      "!ends": "does not end with",
+      exists: "exists",
+      "!exists": "is missing",
+    };
+    const conditions = (rule.conditions || []).map((condition) => {
+      const operator = operatorLabels[condition.operator] || condition.operator;
+      if (condition.operator === "exists" || condition.operator === "!exists") {
+        return `${condition.field} ${operator}`;
+      }
+      return `${condition.field} ${operator} ${condition.value || "…"}`;
+    });
+    if (!conditions.length) return "No conditions configured";
+    return `Match ${rule.match === "any" ? "any" : "all"}: ${conditions.join("; ")}`;
+  }
+
+  private openStyleRuleEditor(rule: CalendarStyleRule, existingRuleId: string | null): void {
+    new CalendarStyleBuilderModal(this.app, rule, (updatedRule) => {
+      const rules = [...(this.plugin.settings.noteEventStyleRules || [])];
+      if (existingRuleId === null) {
+        rules.push(updatedRule);
+      } else {
+        const currentIndex = rules.findIndex((candidate) => candidate.id === existingRuleId);
+        if (currentIndex < 0) return;
+        rules[currentIndex] = {
+          ...updatedRule,
+          id: existingRuleId,
+        };
+      }
+      void this.persistStyleRules(rules);
+    }).open();
+  }
+
+  private async duplicateStyleRule(index: number): Promise<void> {
+    const rules = [...(this.plugin.settings.noteEventStyleRules || [])];
+    const source = rules[index];
+    if (!source) return;
+    const duplicate = JSON.parse(JSON.stringify(source)) as CalendarStyleRule;
+    duplicate.id = createStyleRuleId();
+    duplicate.label = `${source.label?.trim() || "Untitled rule"} copy`;
+    rules.splice(index + 1, 0, duplicate);
+    await this.persistStyleRules(rules);
+  }
+
+  private async deleteStyleRule(index: number): Promise<void> {
+    const rules = [...(this.plugin.settings.noteEventStyleRules || [])];
+    if (!rules[index]) return;
+    rules.splice(index, 1);
+    await this.persistStyleRules(rules);
+  }
+
+  private async moveStyleRule(from: number, to: number): Promise<void> {
+    const rules = [...(this.plugin.settings.noteEventStyleRules || [])];
+    if (!rules[from] || to < 0 || to >= rules.length) return;
+    const [rule] = rules.splice(from, 1);
+    rules.splice(to, 0, rule);
+    await this.persistStyleRules(rules);
+  }
+
+  private async persistStyleRules(rules: CalendarStyleRule[]): Promise<void> {
+    this.plugin.settings.noteEventStyleRules = rules;
+    await this.plugin.saveSettings();
+    this.display();
   }
 
   private captureSettingsViewState(containerEl: HTMLElement): void {
@@ -856,11 +1109,10 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
   }
 
   private renderBaseQueryGuide(parent: HTMLElement): void {
-    const section = createCollapsibleSection(
+    const section = createSettingsGroup(
       parent,
-      "Base query guide",
-      "How TPS Calendar interprets ordinary Obsidian Base filters for visibility and event creation defaults.",
-      false,
+      "Base rules",
+      "Set visibility and creation rules in the Filter controls of each Obsidian Base. Calendar reads those rules directly.",
     );
 
     section.createEl("p", {
@@ -876,22 +1128,28 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     defaults.createEl("li", { text: "Use task.tags for inline task tags; use tags or note.tags only for note frontmatter tags." });
     defaults.createEl("li", { text: "Negative filters and ambiguous OR branches constrain matching but are not guessed as creation defaults." });
 
-    section.createEl("h4", { text: "Examples" });
-    this.renderGuideExample(section, "Scheduled project events", [
+    const reference = section.createEl("details", {
+      cls: "tps-settings-reference",
+    });
+    reference.createEl("summary", { text: "Base rule examples" });
+    const examples = reference.createDiv({
+      cls: "tps-settings-reference-content",
+    });
+    this.renderGuideExample(examples, "Scheduled project events", [
       "filters:",
       "  and:",
       "    - file.path.contains(\"Projects/\")",
       "    - status == \"active\"",
       "    - !scheduled.isEmpty()",
     ]);
-    this.renderGuideExample(section, "Create notes into a folder with defaults", [
+    this.renderGuideExample(examples, "Create notes into a folder with defaults", [
       "filters:",
       "  and:",
       "    - folder is \"Projects\"",
       "    - type == \"meeting\"",
       "    - status == \"scheduled\"",
     ]);
-    this.renderGuideExample(section, "Include multiple statuses without guessing one on create", [
+    this.renderGuideExample(examples, "Include multiple statuses without guessing one on create", [
       "filters:",
       "  and:",
       "    - !scheduled.isEmpty()",
@@ -899,14 +1157,14 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       "        - status == \"scheduled\"",
       "        - status == \"working\"",
     ]);
-    this.renderGuideExample(section, "Scheduled tasks tagged #todo without notes tagged #todo", [
+    this.renderGuideExample(examples, "Scheduled tasks tagged #todo without notes tagged #todo", [
       "filters:",
       "  and:",
       "    - kind == \"task\"",
       "    - task.tags.contains(\"#todo\")",
       "    - !scheduled.isEmpty()",
     ]);
-    this.renderGuideExample(section, "Create scheduled tasks in a specific file", [
+    this.renderGuideExample(examples, "Create scheduled tasks in a specific file", [
       "filters:",
       "  and:",
       "    - kind == \"task\"",

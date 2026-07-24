@@ -18,10 +18,12 @@ const taskAssociatedNoteSource = readFileSync(new URL("../src/utils/task-associa
 const inlineTaskLineUpdateSource = readFileSync(new URL("../src/utils/inline-task-line-update.ts", import.meta.url), "utf8");
 const taskTargetPathSource = readFileSync(new URL("../src/utils/task-target-path.ts", import.meta.url), "utf8");
 const viewOptionsSource = readFileSync(new URL("../src/view-options.ts", import.meta.url), "utf8");
+const visualBuilderSource = readFileSync(new URL("../src/services/visual-builder.ts", import.meta.url), "utf8");
 const utilsSource = readFileSync(new URL("../src/utils.ts", import.meta.url), "utf8");
 const calendarDayCountSource = readFileSync(new URL("../src/utils/calendar-day-count.ts", import.meta.url), "utf8");
 const calendarCss = readFileSync(new URL("../src/calendar.css", import.meta.url), "utf8");
 const embedCalendarCss = readFileSync(new URL("../src/embed-calendar.css", import.meta.url), "utf8");
+const settingsUiCss = readFileSync(new URL("../styles-ui.css", import.meta.url), "utf8");
 
 async function importFrontmatterInsertUtility() {
   const build = await esbuild.build({
@@ -684,10 +686,13 @@ test("calendar wrapper create options are deterministic across modal and drop ca
   });
 });
 
-test("settings include a Base-native query guide", () => {
-  assert.match(settingsTabSource, /Base query guide/);
+test("settings include concise Base-native rule guidance", () => {
+  assert.match(settingsTabSource, /"Base rules"/);
+  assert.match(settingsTabSource, /Set visibility and creation rules in the Filter controls of each Obsidian Base/);
+  assert.match(settingsTabSource, /Base rule examples/);
   assert.match(settingsTabSource, /Keep filters Base-native/);
   assert.match(settingsTabSource, /positive folder\/path filters as creation location hints/);
+  assert.match(settingsTabSource, /Positive note property equality filters can become frontmatter defaults/);
   assert.match(settingsTabSource, /Task creation in daily-note mode writes scheduled inline tasks/);
   assert.match(settingsTabSource, /unless task\.path chooses a target note/);
   assert.match(settingsTabSource, /task\.path == \\"Collections\/Toget\.md\\"/);
@@ -696,6 +701,80 @@ test("settings include a Base-native query guide", () => {
   assert.match(settingsTabSource, /task\.tags\.contains/);
   assert.match(settingsTabSource, /#todo/);
   assert.match(settingsTabSource, /Negative filters and ambiguous OR branches constrain matching but are not guessed as creation defaults/);
+});
+
+test("settings use a shallow routed hub and visual style-rule manager", () => {
+  for (const destination of [
+    "Rules & creation",
+    "Calendar sources",
+    "View & navigation",
+    "Appearance",
+    "Advanced",
+  ]) {
+    assert.ok(settingsTabSource.includes(destination));
+  }
+  assert.match(settingsTabSource, /Choose what to configure/);
+  assert.match(settingsTabSource, /private activeSettingsPage: CalendarSettingsPage = "rules"/);
+  assert.match(settingsTabSource, /"aria-label": "TPS Calendar settings pages"/);
+  assert.match(settingsTabSource, /"aria-pressed": "false"/);
+  assert.match(settingsTabSource, /pageButtons\[id\]\.setAttr\("aria-pressed", isActive \? "true" : "false"\)/);
+  assert.match(settingsTabSource, /pageElements\[id\]\.hidden = !isActive/);
+  assert.match(settingsTabSource, /"aria-labelledby": `tps-calendar-settings-\$\{id\}-title`/);
+  assert.match(settingsTabSource, /tabindex: "-1"/);
+  assert.match(settingsTabSource, /\.focus\(\{ preventScroll: false \}\)/);
+  assert.match(settingsTabSource, /const generalSection = createSettingsGroup\(\s*rulesPage/);
+  assert.match(settingsTabSource, /new Setting\(generalSection\)\s*\.setName\("Initial calendar create"\)/);
+  assert.match(settingsTabSource, /new Setting\(generalSection\)\s*\.setName\("Task item destination"\)/);
+  assert.match(settingsTabSource, /new Setting\(viewBehaviorSection\)\s*\.setName\("Default view mode"\)/);
+  assert.match(settingsTabSource, /new Setting\(fileSection\)\s*\.setName\("Default calendar base path"\)/);
+  assert.match(settingsTabSource, /new Setting\(frontmatterKeysSection\)\s*\.setName\("Primary event date field"\)/);
+  assert.match(settingsTabSource, /Open Controller settings/);
+  assert.match(settingsTabSource, /openPluginSettings\("tps-controller"\)/);
+  assert.match(settingsTabSource, /new CalendarStyleBuilderModal/);
+  assert.match(settingsTabSource, /renderListWithControls\(list/);
+  assert.match(settingsTabSource, /onEdit: \(\) => this\.openStyleRuleEditor\(rule, rule\.id\)/);
+  assert.match(settingsTabSource, /rules\.findIndex\(\(candidate\) => candidate\.id === existingRuleId\)/);
+  assert.match(settingsTabSource, /id: existingRuleId/);
+  assert.match(settingsTabSource, /onDuplicate:/);
+  assert.match(settingsTabSource, /onDelete:/);
+  assert.match(settingsTabSource, /onMoveUp:/);
+  assert.match(settingsTabSource, /onMoveDown:/);
+  assert.doesNotMatch(settingsTabSource, /JSON\.stringify\(this\.plugin\.settings\.noteEventStyleRules/);
+  assert.equal((settingsTabSource.match(/createEl\("details"/g) || []).length, 1);
+  assert.doesNotMatch(settingsTabSource, /createCollapsibleSection/);
+
+  assert.match(settingsUiCss, /\.tps-settings-hub-buttons/);
+  assert.match(settingsUiCss, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(settingsUiCss, /button\.tps-settings-destination\[aria-pressed="true"\]/);
+  assert.match(settingsUiCss, /button\.tps-settings-destination \{[\s\S]*display: flex;[\s\S]*flex-direction: column;/);
+  assert.match(settingsUiCss, /@media \(max-width: 520px\)/);
+  assert.match(settingsUiCss, /grid-template-columns: repeat\(5, minmax\(132px, 1fr\)\)/);
+  assert.match(settingsUiCss, /overflow-x: auto/);
+  assert.match(settingsUiCss, /\.tps-settings-destination-description \{\s*display: none;/);
+
+  for (const operator of [
+    "is",
+    "!is",
+    "contains",
+    "!contains",
+    "starts",
+    "!starts",
+    "ends",
+    "!ends",
+    "exists",
+    "!exists",
+  ]) {
+    assert.ok(visualBuilderSource.includes(`{ v: "${operator}"`));
+  }
+  assert.match(visualBuilderSource, /tabContainer\.createEl\("button"/);
+  assert.match(visualBuilderSource, /toggles\.createEl\("button"/);
+  assert.match(visualBuilderSource, /"aria-pressed": isActive \? "true" : "false"/);
+  assert.match(visualBuilderSource, /btn\.setAttr\("aria-pressed", isNowActive \? "true" : "false"\)/);
+  assert.match(visualBuilderSource, /"aria-label": `Remove condition \$\{idx \+ 1\}`/);
+  assert.match(visualBuilderSource, /\.calendar-condition-row \{\s*display: flex;\s*flex-wrap: wrap;/);
+  assert.match(visualBuilderSource, /\.calendar-condition-row select,[\s\S]*background-color: var\(--background-primary\);/);
+  assert.match(visualBuilderSource, /@media \(max-width: 600px\)/);
+  assert.match(visualBuilderSource, /\.calendar-condition-row \{\s*flex-direction: column;/);
 });
 
 test("reading-mode embedded calendars stay compact and preserve Bases chrome by default", () => {

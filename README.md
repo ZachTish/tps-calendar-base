@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.3.0
+
+- Replaced the long settings accordion with a sticky five-destination **Choose what to configure** hub: Rules & creation, Calendar sources, View & navigation, Appearance, and Advanced. Only the selected page is shown, and mobile uses a compact horizontal strip.
+- Kept Base-filter guidance and every note/task creation default together. Controller-owned calendar feeds now have a direct **Open Controller settings** handoff.
+- Replaced raw event-style-rule JSON with readable rule cards and a visual Add/Edit/Duplicate/Delete/reorder editor. The editor supports every stored operator, preserves rule identity during edits, and remains keyboard- and mobile-usable.
+- Preserved all existing setting keys and defaults; no settings migration is required. Minimum supported Obsidian remains 1.10.0.
+- Validation passed the complete declared suite and standalone production-mode build. Obsidian 1.12.7 was reloaded in the isolated test vault; all five routes, the source handoff, and the visual rule editor were checked without saving changes. Production was not directly changed.
+
 ## 0.2.4
 
 - Settings saves now reload the newest plugin data and merge only locally changed fields, preserving synchronized preferences and unknown newer-release fields.
@@ -17,7 +25,7 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.2.4` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.3.0` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 
@@ -194,6 +202,7 @@ src/
 
 ## Recent Improvements
 
+- 2026-07-24 (0.3.0): Consolidated Calendar settings into five shallow destinations and replaced raw style-rule JSON with a visual rule manager. Cross-audits preserved every prior control, fixed mobile hub density and route focus, and verified every persisted style operator. The complete suite, standalone build, test-vault reload, and live settings/rule-editor UI checks passed; no production-vault deployment was performed.
 - 2026-07-20 (0.2.3): Removed the aggregate checklist/count control from Calendar day headers and released its reserved 44px back to the native date label. This keeps the day number visible in narrow desktop, split-pane, and mobile layouts while preserving auxiliary-date and archived-external warning controls. The focused day-header regression, complete declared suite, separate production build, test-vault reload, and constrained Calendar UI check all passed; no production-vault deployment was performed.
 - 2026-07-09: Calendar creation mode now treats bare semantic `kind`/`type` filters such as `run`, `workout`, `food`, `log`, and other expandable record kinds as note creation. Explicit `task.*` kind filters remain task-line mode, while structural `all`/`mixed` filters continue to defer to the configured default. This matches TPS Kanban's semantic-kind contract and prevents type-specific record views from creating task rows they cannot display. Validation: focused creation-mode regression, production build, and live `kind == "run"` Calendar creation QA.
 - 2026-07-13 (0.1.1): Scoped the document-level Calendar toolbar-create interceptor to the exact Calendar instance's nearest Home panel/embed. This prevents a Daily Note Feed or other neighboring Base `+ New` from opening `New calendar event`; ambiguous standalone leaves fail closed. Claimed routes log the owner class and Home component without record contents.
@@ -205,9 +214,12 @@ src/
 - Day-link target toggles and default open-location toggles remain settings/UI concerns instead of standalone commands.
 
 ### Settings Surface
-- Settings use direct collapsible sections with descriptive titles for external sources, Base query guidance, new item creation, view defaults, event linking/status, appearance/layout, frontmatter field names, and debug logging.
-- Empty/non-configurable sections are intentionally omitted from the settings tab.
-- 2026-06-29 validation: `npm test`; Obsidian settings UI reload check.
+- The always-visible **Choose what to configure** hub has five responsive button destinations: Rules & creation, Calendar sources, View & navigation, Appearance, and Advanced. Only the selected page is shown, the active button exposes `aria-pressed`, and the selected page survives settings-triggered rerenders. On narrow screens the destinations stay in one compact horizontally scrollable strip instead of becoming a tall sticky stack; route changes move focus to the newly shown page heading.
+- **Rules & creation** is the default page. It keeps concise Base-filter guidance, initial note/task creation mode, and all dependent task destination/path/open-after-create controls together. Longer Base examples are contained in one optional reference disclosure.
+- **Calendar sources** keeps the master toggle and source controls together. When TPS Controller owns the feeds, a prominent **Open Controller settings** button routes directly to the owning settings tab.
+- **Appearance** presents event style rules as readable cards with Add, Edit, Duplicate, Delete, and reorder controls. The existing visual rule editor handles conditions, match mode, color, text style, and preview; users no longer edit rule JSON.
+- **Advanced** uses plain internal headings for files/opening, note linking, frontmatter field names, and debug logging rather than nested collapsible sections. This navigation-only redesign does not change stored setting keys or require migration.
+- Focused settings-surface validation lives in `scripts/test-create-snap-and-mobile-open.mjs`. On 2026-07-24 the settings-related subset passed 9/9, the complete declared suite and standalone build passed, and Obsidian 1.12.7 was reloaded in the isolated test vault for live hub and visual-rule-editor checks.
 
 ### Filter-Based View Mode (New)
 - Added new `"filter-based"` view mode option that always auto-calculates the optimal view based on filtered data range.
