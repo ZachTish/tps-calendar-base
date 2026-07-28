@@ -106,6 +106,10 @@ export function useCalendarEvents({
   }, [entries, visibleDateRange, defaultEventDuration]);
 
   const events = useMemo(() => {
+    const normalizedNonActiveStatuses = doneStatuses.map((status) =>
+      status.trim().toLowerCase()
+    );
+
     return renderedEntries.flatMap((calEntry) => {
       const startDate = new Date(calEntry.startDate);
       const endDate = calEntry.endDate
@@ -163,7 +167,6 @@ export function useCalendarEvents({
       // Time-based past detection is intentionally not used: an incomplete past event
       // should remain fully visible so the user notices it still needs attention.
       const statusNormalized = String(calEntry.status ?? "").trim().toLowerCase();
-      const normalizedNonActiveStatuses = doneStatuses.map((s) => s.trim().toLowerCase());
       const isNonActive = normalizedNonActiveStatuses.includes(statusNormalized);
 
       const baseTitle = calEntry.title || calEntry.entry?.file?.basename || "Untitled";

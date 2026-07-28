@@ -235,14 +235,11 @@ export function findStyleOverride(
       if (rule.active === false) continue;
       const conditions = rule.conditions || [];
       if (!conditions.length) continue;
-      const conditionResults = conditions.map((condition) => {
-        return evaluateCondition(data, condition);
-      });
       const matchMode = rule.match || DEFAULT_MATCH;
       const matches =
         matchMode === "any"
-          ? conditionResults.some((result) => result)
-          : conditionResults.every((result) => result);
+          ? conditions.some((condition) => evaluateCondition(data, condition))
+          : conditions.every((condition) => evaluateCondition(data, condition));
       if (matches) return rule;
     }
     return null;

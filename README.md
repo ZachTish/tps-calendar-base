@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.3.2
+
+- Restored source-to-release reproducibility for the public `0.3.1` runtime by committing the per-view now-indicator behavior and three small efficiency changes that were already present in that release artifact.
+- Calendar event rendering now normalizes non-active statuses once per render, style-rule matching stops after a decisive condition, and type-folder discovery uses one coherent vault snapshot and traversal. Supported outputs and ordering remain unchanged.
+- An explicit per-view **Show now indicator** value overrides the global preference; a view without a value continues to inherit the global preference.
+- This backward-compatible source-alignment patch has no settings or note-data migration. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.3.1
 
 - Date-header opens and task-mode event creation now ask GCM for the canonical Daily Note before considering any Calendar-local path. An available GCM result is authoritative, so Periodic Notes and partial Core Daily Notes settings cannot be bypassed by an unrelated same-date file.
@@ -29,6 +36,7 @@
 Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtisherman/TishOS Plugin Development/TPS-Calendar-Base (Dev)`, outside both vaults. `npm run build` and watch builds deploy byte-changed runtime artifacts by default only to `/Users/zachtisherman/Library/Mobile Documents/iCloud~md~obsidian/Documents/Obsidian Plugin Test Vault/.obsidian/plugins/tps-calendar-base`; `npm test` is therefore isolated even though it ends with a production-mode build. Promotion to `/Users/zachtisherman/TishOS v0.1/.obsidian/plugins/tps-calendar-base` is an explicit guarded post-validation action. Neither target overwrites `data.json` or other runtime-owned state.
 
 - 2026-07-16 isolation validation: all 68 declared tests and the required final `npm run build` passed; both production-mode builds reported `[runtime-deploy] target=test ... unchanged`. Obsidian 1.12.7 loaded the plugin in the registered test vault, where the synthetic Calendar Base view rendered. No live promotion occurred, and production runtime checksums remained unchanged.
+- 2026-07-28 (0.3.2) source-alignment validation: all five focused view/efficiency regressions and all 94 release-declared tests passed with TypeScript. The versioned runtime kept the exact `0.3.1` `main.js` bytes, changed only `manifest.json`, and preserved the absent `data.json` state. After `Reload app without saving`, Obsidian 1.12.7 rendered `Inbox/TishOS Phone Calendar QA.base` as its three-day Calendar with four results; no settings, notes, feeds, or outbound automation were changed. The required final build reported the test runtime unchanged, and production was not accessed.
 
 ## Install with BRAT
 
@@ -52,6 +60,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Supports week, day, continuous-scroll, and **filter-based** display modes.
 - Navigation controls (previous/next/today) and condensed event display levels.
 - Day headers omit the aggregate task/context checklist badge and give the date label the full header width, keeping the day number visible in constrained layouts. Separate auxiliary-date and archived-external warning markers remain available.
+- `Show now indicator` is a per-view display option. An explicit Show/Hide value overrides the global plugin setting; a view that omits the option inherits the global setting.
 
 ### External Calendar Sync
 - Reads iCal feed configurations from **TPS-Controller** settings (no duplicate config).
@@ -214,6 +223,7 @@ src/
 
 - 2026-07-24 (0.3.0): Consolidated Calendar settings into five shallow destinations and replaced raw style-rule JSON with a visual rule manager. Cross-audits preserved every prior control, fixed mobile hub density and route focus, and verified every persisted style operator. The complete suite, standalone build, test-vault reload, and live settings/rule-editor UI checks passed; no production-vault deployment was performed.
 - 2026-07-20 (0.2.3): Removed the aggregate checklist/count control from Calendar day headers and released its reserved 44px back to the native date label. This keeps the day number visible in narrow desktop, split-pane, and mobile layouts while preserving auxiliary-date and archived-external warning controls. The focused day-header regression, complete declared suite, separate production build, test-vault reload, and constrained Calendar UI check all passed; no production-vault deployment was performed.
+- 2026-07-17: Calendar Bases now honor the per-view `Show now indicator` value instead of always using the global setting. Explicit Hide overrides global Show, explicit Show overrides global Hide, and an omitted view value continues to inherit the global default. Focused override coverage passed 2/2 and the complete declared suite passed 70/70; the suite's production build deployed only `main.js` to the test vault and a follow-up production build reported the runtime unchanged. The deployed runtime matched the canonical artifact, no `data.json` state existed to overwrite, and no live promotion occurred. Coordinating iPhone QA explicitly restarted Obsidian, opened `Inbox/TishOS Phone Calendar QA.base` through the companion widget, and confirmed the isolated three-result Calendar Base rendered from the reloaded test runtime; the initial mobile viewport remained at the early-hour grid, so the override itself remains covered by the focused behavioral test rather than a claimed visual line check.
 - 2026-07-09: Calendar creation mode now treats bare semantic `kind`/`type` filters such as `run`, `workout`, `food`, `log`, and other expandable record kinds as note creation. Explicit `task.*` kind filters remain task-line mode, while structural `all`/`mixed` filters continue to defer to the configured default. This matches TPS Kanban's semantic-kind contract and prevents type-specific record views from creating task rows they cannot display. Validation: focused creation-mode regression, production build, and live `kind == "run"` Calendar creation QA.
 - 2026-07-13 (0.1.1): Scoped the document-level Calendar toolbar-create interceptor to the exact Calendar instance's nearest Home panel/embed. This prevents a Daily Note Feed or other neighboring Base `+ New` from opening `New calendar event`; ambiguous standalone leaves fail closed. Claimed routes log the owner class and Home component without record contents.
 - 2026-07-09: Note-mode Calendar toolbar creation now resolves `file.folder` defaults into the actual new-note path and creates missing nested folders before delegating to Bases. This fixes first-use `ENOENT` failures for semantic record Calendars targeting a new folder. The route logs the resolved folder, basename, and default keys without note content. Validation: focused creation regression, production build, and live creation into a previously absent folder.

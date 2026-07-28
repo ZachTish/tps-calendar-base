@@ -1,4 +1,4 @@
-import { App, TFile, normalizePath } from "obsidian";
+import { App, normalizePath } from "obsidian";
 import { getPluginById } from "../core";
 
 export interface TypeFolderOption {
@@ -18,8 +18,33 @@ export class TypeFolderService {
 
   getTypeFolderOptions(): TypeFolderOption[] {
     const templateRoot = this.getTypeTemplateRoot();
-    const templateBacked = this.getTemplateBackedTypeFolders(templateRoot);
-    const vaultFolders = this.getVaultMarkdownFolders(templateRoot);
+    const templateBacked = new Set<string>();
+    const vaultFolders = new Set<string>();
+    const templatePrefix = templateRoot ? `${templateRoot}/` : null;
+    const templateRootNormalized = templateRoot ? normalizePath(templateRoot) : null;
+    const markdownFiles = this.app.vault.getMarkdownFiles();
+
+    for (const file of markdownFiles) {
+      if (templatePrefix) {
+        const normalizedPath = normalizePath(file.path);
+        if (
+          normalizedPath.startsWith(templatePrefix) &&
+          normalizedPath.toLowerCase().endsWith(".md")
+        ) {
+          const relative = normalizedPath.slice(templatePrefix.length, -3).trim();
+          if (relative) {
+            templateBacked.add(normalizePath(relative));
+          }
+        }
+      }
+
+      const parentPath = file.parent?.path;
+      if (!parentPath || parentPath === "/") continue;
+      const normalizedParent = normalizePath(parentPath);
+      if (templateRootNormalized && normalizedParent === templateRootNormalized) continue;
+      if (templatePrefix && normalizedParent.startsWith(templatePrefix)) continue;
+      vaultFolders.add(normalizedParent);
+    }
 
     const all = new Map<string, TypeFolderOption>();
     templateBacked.forEach((path) => {
@@ -56,39 +81,5 @@ export class TypeFolderService {
       return normalizePath(configuredRoot.trim());
     }
     return "System/Templates/Types";
-  }
-
-  private getTemplateBackedTypeFolders(templateRoot: string | null): Set<string> {
-    const result = new Set<string>();
-    if (!templateRoot) return result;
-    const rootPrefix = `${templateRoot}/`;
-
-    this.app.vault.getMarkdownFiles().forEach((file) => {
-      const normalizedPath = normalizePath(file.path);
-      if (!normalizedPath.startsWith(rootPrefix)) return;
-      if (!normalizedPath.toLowerCase().endsWith(".md")) return;
-      const relative = normalizedPath.slice(rootPrefix.length, -3).trim();
-      if (!relative) return;
-      result.add(normalizePath(relative));
-    });
-
-    return result;
-  }
-
-  private getVaultMarkdownFolders(templateRoot: string | null): Set<string> {
-    const result = new Set<string>();
-    const templatePrefix = templateRoot ? `${templateRoot}/` : null;
-    const templateRootNormalized = templateRoot ? normalizePath(templateRoot) : null;
-
-    this.app.vault.getMarkdownFiles().forEach((file: TFile) => {
-      const parentPath = file.parent?.path;
-      if (!parentPath || parentPath === "/") return;
-      const normalizedParent = normalizePath(parentPath);
-      if (templateRootNormalized && normalizedParent === templateRootNormalized) return;
-      if (templatePrefix && normalizedParent.startsWith(templatePrefix)) return;
-      result.add(normalizedParent);
-    });
-
-    return result;
   }
 }

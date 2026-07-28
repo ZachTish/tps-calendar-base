@@ -88,6 +88,7 @@ import {
   ensureCalendarDailyNote,
   ensureCalendarDailyNoteTitleFallback,
 } from "./utils/daily-note-creation";
+import { resolveShowNowIndicator } from "./utils/view-config";
 
 type CalendarEventTitlePromptResult = {
   title: string;
@@ -5548,7 +5549,10 @@ export class CalendarView extends BasesView {
             snapCreateSelections={this.plugin.settings.snapCreateSelections !== false}
             createSnapDurationMinutes={this.plugin.settings.createSnapDuration || 15}
             defaultScrollTimeSetting={this.plugin.settings.defaultScrollTime}
-            showNowIndicator={this.plugin.settings.showNowIndicator}
+            showNowIndicator={resolveShowNowIndicator(
+              this.config.get("showNowIndicator"),
+              this.plugin.settings.showNowIndicator,
+            )}
             pastEventOpacity={this.plugin.settings.pastEventOpacity}
             eventFontSize={this.plugin.settings.eventFontSize}
             doneStatuses={this.buildNonActiveStatuses()}
