@@ -9,6 +9,7 @@ async function importNewEventService() {
     stdin: {
       contents: `
         export { NewEventService } from "./src/services/new-event-service.ts";
+        export { ensureCalendarDailyNoteTitleFallback } from "./src/utils/daily-note-creation.ts";
         export { TFile } from "obsidian";
       `,
       resolveDir: fileURLToPath(new URL("..", import.meta.url)),
@@ -110,13 +111,34 @@ async function importNewEventService() {
   return import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
 }
 
-function createFakeCalendarApp(TFileClass, initialFiles = {}) {
+function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
   const files = new Map();
   const folders = new Set([""]);
+  const pluginRegistry = {};
+  const workspaceListeners = new Map();
+  let createCount = 0;
+  let templaterRuns = 0;
+  const templaterPendingFiles = new Set();
+  const hasLocalTemplaterSetting = options.templaterLocalSettingsUnavailable !== true;
+  const localTemplaterAutoTrigger = options.templaterLocalAutoTrigger
+    ?? options.templaterAutoTrigger
+    ?? false;
+  const legacyTemplaterAutoTrigger = options.templaterLegacyAutoTrigger
+    ?? options.templaterAutoTrigger
+    ?? false;
 
-  const createFile = (path, content) => {
+  const triggerWorkspaceEvent = (name, detail) => {
+    for (const callback of workspaceListeners.get(name) ?? []) callback(detail);
+  };
+
+  const createFile = (path, content, createdAt = Date.now() - 10_000) => {
     const normalized = normalizePathForFake(path);
     const file = new TFileClass(normalized);
+    file.stat = {
+      ctime: createdAt,
+      mtime: createdAt,
+      size: String(content || "").length,
+    };
     files.set(normalized, { file, content });
     const folder = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
     if (folder) folders.add(folder);
@@ -127,21 +149,103 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}) {
     createFile(path, content);
   }
 
-  const app = {
-    plugins: { plugins: {}, getPlugin: () => null },
+  let app;
+  if (typeof options.gcmEnsureForIsoDate === "function") {
+    pluginRegistry["tps-global-context-menu"] = {
+      api: {
+        dailyNotes: {
+          version: 1,
+          ensureForIsoDate: (isoDate) => options.gcmEnsureForIsoDate(isoDate, app),
+        },
+      },
+    };
+  }
+  if (typeof options.templaterTransform === "function") {
+    pluginRegistry["templater-obsidian"] = {
+      settings: {
+        trigger_on_file_creation: legacyTemplaterAutoTrigger === true,
+        templates_folder: "Templates",
+        ignore_folders_on_creation: [],
+      },
+      templater: {
+        files_with_pending_templates: templaterPendingFiles,
+        overwrite_file_commands: async (file) => {
+          templaterRuns += 1;
+          const record = files.get(file.path);
+          if (!record) throw new Error(`Missing file: ${file.path}`);
+          templaterPendingFiles.add(file.path);
+          try {
+            const snapshot = record.content;
+            record.content = await options.templaterTransform(snapshot, file);
+            triggerWorkspaceEvent(options.templaterEventName ?? "templater:overwrite-file", {
+              file,
+              content: record.content,
+            });
+          } finally {
+            templaterPendingFiles.delete(file.path);
+          }
+        },
+      },
+    };
+  }
+  const scheduleTemplaterAutoCreate = (file) => {
+    const autoCreateEnabled = hasLocalTemplaterSetting
+      ? localTemplaterAutoTrigger === true
+      : legacyTemplaterAutoTrigger === true;
+    if (!autoCreateEnabled || !pluginRegistry["templater-obsidian"]) return;
+    setTimeout(() => {
+      void pluginRegistry["templater-obsidian"].templater.overwrite_file_commands(file, false);
+    }, options.templaterAutoDelayMs ?? 15);
+  };
+  const dailyNotesPlugin = options.dailyNotes
+    ? { enabled: true, instance: { options: options.dailyNotes } }
+    : null;
+
+  app = {
+    loadLocalStorage(key) {
+      if (key !== "templater-local-settings" || !hasLocalTemplaterSetting) return null;
+      return { trigger_on_file_creation: localTemplaterAutoTrigger === true };
+    },
+    workspace: {
+      on(name, callback) {
+        const listeners = workspaceListeners.get(name) ?? new Set();
+        listeners.add(callback);
+        workspaceListeners.set(name, listeners);
+        return { name, callback };
+      },
+      offref(ref) {
+        workspaceListeners.get(ref?.name)?.delete(ref?.callback);
+      },
+      trigger: triggerWorkspaceEvent,
+    },
+    plugins: {
+      plugins: pluginRegistry,
+      getPlugin: (id) => pluginRegistry[id] ?? null,
+    },
     metadataCache: { getTags: () => ({}) },
-    internalPlugins: { getPluginById: () => null, plugins: {} },
+    internalPlugins: {
+      getPluginById: (id) => id === "daily-notes" ? dailyNotesPlugin : null,
+      plugins: dailyNotesPlugin ? { "daily-notes": dailyNotesPlugin } : {},
+    },
     vault: {
       configDir: ".obsidian",
       getRoot: () => ({ path: "/" }),
       getAbstractFileByPath: (path) => files.get(normalizePathForFake(path))?.file ?? (folders.has(normalizePathForFake(path)) ? { path: normalizePathForFake(path), children: [] } : null),
       createFolder: async (path) => {
-        folders.add(normalizePathForFake(path));
+        const normalized = normalizePathForFake(path);
+        const parent = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
+        if (parent && !folders.has(parent)) throw new Error(`Missing parent folder: ${parent}`);
+        folders.add(normalized);
       },
       create: async (path, content) => {
         const normalized = normalizePathForFake(path);
         if (files.has(normalized)) throw new Error("File already exists");
-        return createFile(normalized, content);
+        const parent = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
+        if (parent && !folders.has(parent)) throw new Error(`Missing parent folder: ${parent}`);
+        createCount += 1;
+        const file = createFile(normalized, content, Date.now());
+        scheduleTemplaterAutoCreate(file);
+        return file;
       },
       read: async (file) => files.get(file.path)?.content ?? "",
       cachedRead: async (file) => files.get(file.path)?.content ?? "",
@@ -157,7 +261,13 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}) {
       },
       getMarkdownFiles: () => Array.from(files.values()).map((entry) => entry.file),
       adapter: {
-        read: async () => {
+        read: async (path) => {
+          if (
+            normalizePathForFake(path) === ".obsidian/daily-notes.json"
+            && options.persistedDailyNotes
+          ) {
+            return JSON.stringify(options.persistedDailyNotes);
+          }
           throw new Error("No persisted daily-note settings in fake app");
         },
       },
@@ -171,11 +281,20 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}) {
 
   return {
     app,
+    seedExternalCreation(path, content) {
+      const file = createFile(path, content, Date.now());
+      scheduleTemplaterAutoCreate(file);
+      return file;
+    },
     read(path) {
       return files.get(normalizePathForFake(path))?.content ?? null;
     },
     has(path) {
       return files.has(normalizePathForFake(path));
+    },
+    stats: {
+      get createCount() { return createCount; },
+      get templaterRuns() { return templaterRuns; },
     },
   };
 }
@@ -326,6 +445,494 @@ test("NewEventService task mode writes an inline scheduled task to the resolved 
     fake.read("Inbox/Calendar Tasks.md"),
     "---\ntitle: Calendar Tasks\n---\n\nExisting body\n- [ ] Follow Up [scheduled:: 2027-01-03 14:00:00] [timeEstimate:: 30] #deep-work [status:: next]\n",
   );
+});
+
+test("NewEventService delegates missing daily-note task targets to the GCM daily-note API", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const ensuredDates = [];
+  const fake = createFakeCalendarApp(TFile, {}, {
+    gcmEnsureForIsoDate: async (isoDate, app) => {
+      ensuredDates.push(isoDate);
+      await app.vault.createFolder("Inbox");
+      await app.vault.createFolder("Inbox/Daily");
+      return app.vault.create(
+        `Inbox/Daily/${isoDate}.md`,
+        `---\ntitle: Readable ${isoDate}\nkind: dailynote\n---\n\nTemplate body\n`,
+      );
+    },
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createTaskInDailyNote(
+    "Canonical daily task",
+    new Date("2027-01-09T08:00:00"),
+    new Date("2027-01-09T08:30:00"),
+  );
+
+  assert.deepEqual(ensuredDates, ["2027-01-09"]);
+  assert.equal(created?.path, "Inbox/Daily/2027-01-09.md");
+  const content = fake.read(created.path);
+  assert.match(content, /title: Readable 2027-01-09/);
+  assert.match(content, /Template body/);
+  assert.match(content, /- \[ \] Canonical daily task \[scheduled:: 2027-01-09 08:00:00] \[timeEstimate:: 30]/);
+  assert.doesNotMatch(content, /context\/scheduled/);
+});
+
+test("NewEventService asks GCM before reusing a conflicting local Daily Note target", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const localContent = "---\ntitle: Wrong local target\n---\n\nMust remain untouched\n";
+  const canonicalPath = "Inbox/Daily/2027-01-14.md";
+  const ensuredDates = [];
+  const fake = createFakeCalendarApp(TFile, {
+    "2027-01-14.md": localContent,
+    [canonicalPath]: "---\ntitle: Canonical readable title\nkind: dailynote\n---\n\nCanonical body\n",
+  }, {
+    gcmEnsureForIsoDate: async (isoDate, app) => {
+      ensuredDates.push(isoDate);
+      return app.vault.getAbstractFileByPath(canonicalPath);
+    },
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createTaskInDailyNote(
+    "Use the canonical Daily Note",
+    new Date("2027-01-14T08:00:00"),
+    new Date("2027-01-14T08:30:00"),
+  );
+
+  assert.deepEqual(ensuredDates, ["2027-01-14"]);
+  assert.equal(created?.path, canonicalPath);
+  assert.match(fake.read(canonicalPath), /Use the canonical Daily Note/);
+  assert.equal(fake.read("2027-01-14.md"), localContent);
+});
+
+test("NewEventService standalone daily-note fallback copies the configured template and runs Templater", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  let templaterRuns = 0;
+  const fake = createFakeCalendarApp(TFile, {
+    "Templates/Daily.md": [
+      "---",
+      "title: Readable {{date}}",
+      "kind: dailynote",
+      "---",
+      "",
+      "Template section",
+      "<% render-daily-body %>",
+      "",
+    ].join("\n"),
+  }, {
+    dailyNotes: {
+      folder: "Inbox/Daily",
+      format: "YYYY-MM-DD",
+      template: "Templates/Daily",
+    },
+    templaterLocalAutoTrigger: false,
+    templaterLegacyAutoTrigger: true,
+    templaterTransform: (content) => {
+      templaterRuns += 1;
+      return content.replace("<% render-daily-body %>", "Templater section");
+    },
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createTaskInDailyNote(
+    "Standalone daily task",
+    new Date("2027-01-10T13:15:00"),
+    new Date("2027-01-10T14:00:00"),
+  );
+
+  assert.equal(created?.path, "Inbox/Daily/2027-01-10.md");
+  assert.equal(templaterRuns, 1);
+  const content = fake.read(created.path);
+  assert.match(content, /title: Readable 2027-01-10/);
+  assert.match(content, /Template section/);
+  assert.match(content, /Templater section/);
+  assert.doesNotMatch(content, /<% render-daily-body %>/);
+  assert.match(content, /- \[ \] Standalone daily task \[scheduled:: 2027-01-10 13:15:00] \[timeEstimate:: 45]/);
+  assert.doesNotMatch(content, /context\/scheduled/);
+});
+
+test("Calendar waits for the device-local delayed Templater auto-create snapshot before appending a task", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  let fake;
+  let transformFinished = false;
+  fake = createFakeCalendarApp(TFile, {
+    "Templates/Daily.md": [
+      "---",
+      "title: Delayed Daily Note",
+      "kind: dailynote",
+      "---",
+      "",
+      "<% render-delayed-body %>",
+      "",
+    ].join("\n"),
+  }, {
+    dailyNotes: {
+      folder: "Inbox/Daily",
+      format: "YYYY-MM-DD",
+      template: "Templates/Daily",
+    },
+    templaterLocalAutoTrigger: true,
+    templaterLegacyAutoTrigger: false,
+    templaterTransform: async (content, file) => {
+      assert.doesNotMatch(fake.read(file.path), /Delayed calendar task/);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      transformFinished = true;
+      return content.replace("<% render-delayed-body %>", "Delayed body resolved");
+    },
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createTaskInDailyNote(
+    "Delayed calendar task",
+    new Date("2027-01-15T09:00:00"),
+    new Date("2027-01-15T09:30:00"),
+  );
+
+  assert.equal(transformFinished, true);
+  assert.equal(fake.stats.templaterRuns, 1);
+  const content = fake.read(created.path);
+  assert.match(content, /Delayed body resolved/);
+  assert.match(content, /Delayed calendar task/);
+  assert.doesNotMatch(content, /<% render-delayed-body %>/);
+});
+
+test("Calendar also waits for a delayed Templater auto-create snapshot when the template has no commands", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {
+    "Templates/Daily.md": [
+      "---",
+      "title: Plain Daily Note",
+      "kind: dailynote",
+      "---",
+      "",
+      "Plain template body",
+      "",
+    ].join("\n"),
+  }, {
+    dailyNotes: {
+      folder: "Inbox/Daily",
+      format: "YYYY-MM-DD",
+      template: "Templates/Daily",
+    },
+    templaterLocalAutoTrigger: true,
+    templaterLegacyAutoTrigger: false,
+    templaterEventName: "templater:new-note-from-template",
+    templaterTransform: async (snapshot) => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      return snapshot;
+    },
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createTaskInDailyNote(
+    "Plain-template calendar task",
+    new Date("2027-01-19T09:00:00"),
+    new Date("2027-01-19T09:30:00"),
+  );
+
+  assert.equal(fake.stats.templaterRuns, 1);
+  assert.match(fake.read(created.path), /Plain template body/);
+  assert.match(fake.read(created.path), /Plain-template calendar task/);
+});
+
+test("Calendar settles Templater before writing into a new template-less Daily Note", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {}, {
+    dailyNotes: {
+      folder: "Inbox/Daily",
+      format: "YYYY-MM-DD",
+      template: "",
+    },
+    templaterLocalAutoTrigger: true,
+    templaterLegacyAutoTrigger: false,
+    templaterTransform: async (snapshot) => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return snapshot;
+    },
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createTaskInDailyNote(
+    "Template-less calendar task",
+    new Date("2027-01-20T09:00:00"),
+    new Date("2027-01-20T09:30:00"),
+  );
+
+  assert.equal(fake.stats.templaterRuns, 1);
+  assert.match(fake.read(created.path), /context\/scheduled/);
+  assert.match(fake.read(created.path), /Template-less calendar task/);
+});
+
+test("Calendar waits when an exact Daily Note was freshly created by another caller", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {}, {
+    dailyNotes: {
+      folder: "Inbox/Daily",
+      format: "YYYY-MM-DD",
+      template: "Templates/Daily",
+    },
+    templaterLocalAutoTrigger: true,
+    templaterLegacyAutoTrigger: false,
+    templaterTransform: async (snapshot) => {
+      await new Promise((resolve) => setTimeout(resolve, 90));
+      return snapshot.replace("<% external-daily-body %>", "External Daily body resolved");
+    },
+  });
+  fake.seedExternalCreation("Inbox/Daily/2027-01-21.md", [
+    "---",
+    "title: Fresh external Daily Note",
+    "kind: dailynote",
+    "---",
+    "",
+    "<% external-daily-body %>",
+    "",
+  ].join("\n"));
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createTaskInDailyNote(
+    "Task after external creation",
+    new Date("2027-01-21T09:00:00"),
+    new Date("2027-01-21T09:30:00"),
+  );
+
+  assert.equal(fake.stats.createCount, 0);
+  assert.equal(fake.stats.templaterRuns, 1);
+  assert.match(fake.read(created.path), /External Daily body resolved/);
+  assert.match(fake.read(created.path), /Task after external creation/);
+});
+
+test("Calendar fails closed before task append when Templater leaves commands unresolved", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const targetPath = "Inbox/Daily/2027-01-16.md";
+  const fake = createFakeCalendarApp(TFile, {
+    "Templates/Daily.md": [
+      "---",
+      "title: Unresolved Daily Note",
+      "kind: dailynote",
+      "---",
+      "",
+      "<% unresolved-command %>",
+      "",
+    ].join("\n"),
+  }, {
+    dailyNotes: {
+      folder: "Inbox/Daily",
+      format: "YYYY-MM-DD",
+      template: "Templates/Daily",
+    },
+    templaterLocalAutoTrigger: true,
+    templaterLegacyAutoTrigger: false,
+    templaterTransform: async (content) => content,
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  await assert.rejects(
+    () => service.createTaskInDailyNote(
+      "Must not append after unresolved Templater",
+      new Date("2027-01-16T09:00:00"),
+      new Date("2027-01-16T09:30:00"),
+    ),
+    /Templater did not finish processing Daily Note commands/,
+  );
+
+  assert.equal(fake.stats.templaterRuns, 1);
+  assert.match(fake.read(targetPath), /<% unresolved-command %>/);
+  assert.doesNotMatch(fake.read(targetPath), /Must not append after unresolved Templater/);
+});
+
+test("Calendar Daily Note title fallback preserves readable titles case-insensitively", async () => {
+  const { ensureCalendarDailyNoteTitleFallback } = await importNewEventService();
+  const readable = { Title: "Tuesday planning" };
+  assert.equal(
+    ensureCalendarDailyNoteTitleFallback(readable, "title", "2027-01-10"),
+    false,
+  );
+  assert.deepEqual(readable, { Title: "Tuesday planning" });
+
+  const blank = { Title: "   " };
+  assert.equal(
+    ensureCalendarDailyNoteTitleFallback(blank, "title", "2027-01-10"),
+    true,
+  );
+  assert.deepEqual(blank, { Title: "2027-01-10" });
+});
+
+test("Calendar standalone creation is single-flight and creates date-format subfolders", async () => {
+  const previousWindow = globalThis.window;
+  const momentFactory = (value) => {
+    const date = value instanceof Date ? value : new Date(value);
+    const pad = (part) => String(part).padStart(2, "0");
+    return {
+      format(pattern) {
+        return String(pattern)
+          .replace("YYYY", String(date.getFullYear()))
+          .replace("MM", pad(date.getMonth() + 1))
+          .replace("DD", pad(date.getDate()))
+          .replace("HH", pad(date.getHours()))
+          .replace("mm", pad(date.getMinutes()));
+      },
+    };
+  };
+  globalThis.window = { moment: momentFactory, setTimeout };
+  try {
+    const { NewEventService, TFile } = await importNewEventService();
+    const fake = createFakeCalendarApp(TFile, {
+      "Templates/Daily.md": [
+        "---",
+        "title: Daily {{date}}",
+        "kind: dailynote",
+        "---",
+        "",
+        "<% render-daily-body %>",
+      ].join("\n"),
+    }, {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY/MM/DD",
+        template: "Templates/Daily",
+      },
+      templaterLocalSettingsUnavailable: true,
+      templaterLegacyAutoTrigger: true,
+      templaterTransform: (content) => content.replace("<% render-daily-body %>", "Templater body"),
+    });
+    const service = new NewEventService({
+      app: fake.app,
+      startProperty: "note.scheduled",
+      endProperty: "note.timeEstimate",
+      useEndDuration: true,
+      createMode: "task",
+      taskDestination: "daily-note",
+    });
+
+    const start = new Date(2027, 0, 13, 9, 0, 0);
+    const end = new Date(2027, 0, 13, 9, 30, 0);
+    const [first, second] = await Promise.all([
+      service.createTaskInDailyNote("First nested task", start, end),
+      service.createTaskInDailyNote("Second nested task", start, end),
+    ]);
+
+    assert.equal(first?.path, "Inbox/Daily/2027/01/13.md");
+    assert.equal(second?.path, first?.path);
+    assert.equal(fake.stats.createCount, 1);
+    assert.equal(fake.stats.templaterRuns, 1);
+    const content = fake.read(first.path);
+    assert.match(content, /Templater body/);
+    assert.match(content, /First nested task/);
+    assert.match(content, /Second nested task/);
+  } finally {
+    globalThis.window = previousWindow;
+  }
+});
+
+test("NewEventService fails closed when GCM is available but cannot create the daily note", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {}, {
+    gcmEnsureForIsoDate: async () => null,
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  await assert.rejects(
+    () => service.createTaskInDailyNote(
+      "Must not create a competing note",
+      new Date("2027-01-11T13:15:00"),
+      new Date("2027-01-11T14:00:00"),
+    ),
+    /GCM could not create the Daily Note/,
+  );
+  assert.equal(fake.read("2027-01-11.md"), null);
+});
+
+test("NewEventService fails closed when its configured standalone template is unavailable", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {}, {
+    dailyNotes: {
+      folder: "Inbox/Daily",
+      format: "YYYY-MM-DD",
+      template: "Templates/Missing Daily",
+    },
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  await assert.rejects(
+    () => service.createTaskInDailyNote(
+      "Must not bypass a configured template",
+      new Date("2027-01-12T13:15:00"),
+      new Date("2027-01-12T14:00:00"),
+    ),
+    /Configured Daily Notes template was not found/,
+  );
+  assert.equal(fake.read("Inbox/Daily/2027-01-12.md"), null);
 });
 
 test("NewEventService keeps a manually selected task note association in hidden metadata", async () => {

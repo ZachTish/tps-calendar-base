@@ -21,6 +21,7 @@ import { getPluginById } from "../core";
 import { insertLineAfterFrontmatter } from "../utils/frontmatter-insert";
 import { normalizeCalendarTaskTargetPath } from "../utils/task-target-path";
 import { normalizeTaskAssociatedNotePath } from "../utils/task-associated-note";
+import { ensureCalendarDailyNote } from "../utils/daily-note-creation";
 
 export interface NewEventServiceConfig {
   app: App;
@@ -553,53 +554,9 @@ export class NewEventService {
   }
 
   private async ensureDailyNoteFile(date: Date): Promise<TFile> {
-    const target = await this.getDailyNoteTarget(date);
-    const path = target.path;
-    const existing = this.config.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof TFile) return existing;
-    if (target.folder) await this.ensureFolder(target.folder);
-    return await this.config.app.vault.create(path, `---\nscheduled: ${formatDateTimeForFrontmatter(new Date(date.getFullYear(), date.getMonth(), date.getDate()))}\ntags:\n  - context/scheduled\n---\n\n`);
-  }
-
-  private async getDailyNoteTarget(date: Date): Promise<{ path: string; folder: string }> {
-    const { format, folder } = await this.getDailyNoteSettings();
-    const moment = (window as any).moment;
-    const basename = typeof moment === "function"
-      ? moment(date).format(format)
-      : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    return {
-      folder,
-      path: normalizePath(folder ? `${folder}/${basename}.md` : `${basename}.md`),
-    };
-  }
-
-  private async getDailyNoteSettings(): Promise<{ format: string; folder: string }> {
-    let format = this.config.dailyNoteDateFormat?.trim() || "YYYY-MM-DD";
-    let folder = "";
-
-    try {
-      const dailyNotesPlugin = (this.config.app as any).internalPlugins?.getPluginById?.("daily-notes")
-        || (this.config.app as any).internalPlugins?.plugins?.["daily-notes"];
-      const options = dailyNotesPlugin?.instance?.options;
-      if (typeof options?.format === "string" && options.format.trim()) format = options.format.trim();
-      if (typeof options?.folder === "string" && options.folder.trim()) folder = normalizePath(options.folder.trim()).replace(/^\/+|\/+$/g, "");
-    } catch {
-      // Fall through to persisted config/defaults.
-    }
-
-    try {
-      const configDir = (this.config.app.vault as any)?.configDir || ".obsidian";
-      const raw = await this.config.app.vault.adapter.read(normalizePath(`${configDir}/daily-notes.json`));
-      const parsed = JSON.parse(raw);
-      if (typeof parsed?.format === "string" && parsed.format.trim()) format = parsed.format.trim();
-      if (typeof parsed?.folder === "string" && parsed.folder.trim()) {
-        folder = normalizePath(parsed.folder.trim()).replace(/^\/+|\/+$/g, "");
-      }
-    } catch {
-      // Daily Notes may not have a persisted config yet.
-    }
-
-    return { format, folder };
+    return ensureCalendarDailyNote(this.config.app, date, {
+      fallbackDateFormat: this.config.dailyNoteDateFormat,
+    });
   }
 
   private async ensureFolder(folder: string): Promise<void> {

@@ -84,6 +84,10 @@ import {
   buildCalendarNewEventOptions as buildCalendarNewEventOptionsFromFilters,
   type CalendarCreateOptionOverrides,
 } from "./utils/calendar-create-options";
+import {
+  ensureCalendarDailyNote,
+  ensureCalendarDailyNoteTitleFallback,
+} from "./utils/daily-note-creation";
 
 type CalendarEventTitlePromptResult = {
   title: string;
@@ -4188,28 +4192,11 @@ export class CalendarView extends BasesView {
    * Gets or creates the daily note for a given date
    */
   private async getOrCreateDailyNote(date: Date): Promise<TFile> {
-    const path = this.getDailyNotePath(date);
-    let file = this.app.vault.getAbstractFileByPath(path);
-
-    if (!file) {
-      // Create the folder if needed
-      const folderPath = path.substring(0, path.lastIndexOf("/"));
-      if (folderPath) {
-        const folderFile = this.app.vault.getAbstractFileByPath(folderPath);
-        if (!folderFile) {
-          await this.app.vault.createFolder(folderPath);
-        }
-      }
-
-      const content = await this.buildDailyNoteContent(date, path);
-
-      file = await this.app.vault.create(path, content);
-      if (file instanceof TFile) {
-        await this.ensureDailyNoteTitle(file);
-      }
-    }
-
-    return file as TFile;
+    const file = await ensureCalendarDailyNote(this.app, date, {
+      fallbackDateFormat: this.getDailyNoteDateFormat(),
+    });
+    await this.ensureDailyNoteTitle(file);
+    return file;
   }
 
   private async getOrCreateDailyCanvas(date: Date): Promise<TFile> {
@@ -5426,67 +5413,11 @@ export class CalendarView extends BasesView {
     return !!containerEl?.closest?.(".mod-left-split, .mod-right-split");
   }
 
-  private async buildDailyNoteContent(date: Date, path: string): Promise<string> {
-    const title = path.split("/").pop()?.replace(".md", "") || "";
-    let content = `---\ntitle: ${title}\n---\n`;
-
-    const dailyNotesPlugin = (this.app as any).internalPlugins?.getPluginById("daily-notes");
-    if (dailyNotesPlugin && dailyNotesPlugin.enabled) {
-      const templatePath = dailyNotesPlugin.instance?.options?.template;
-      if (templatePath) {
-        const normalizedPath = normalizePath(templatePath);
-        const templateFile =
-          (this.app.vault.getAbstractFileByPath(normalizedPath) ||
-            (normalizedPath.toLowerCase().endsWith(".md")
-              ? null
-              : this.app.vault.getAbstractFileByPath(`${normalizedPath}.md`)));
-
-        if (templateFile instanceof TFile) {
-          try {
-            content = await this.app.vault.read(templateFile);
-            content = this.applyDailyNoteTemplateVariables(content, date, title);
-          } catch (err) {
-            logger.warn("Failed to read daily note template, using default:", err);
-          }
-        }
-      }
-    }
-
-    return content;
-  }
-
-  private applyDailyNoteTemplateVariables(content: string, date: Date, title: string): string {
-    const moment = (window as any).moment;
-    const momentDate = moment(date);
-
-    return content
-      .replace(/\{\{date:([^}]+)\}\}/g, (_match, format) => momentDate.format(format))
-      .replace(/\{\{time:([^}]+)\}\}/g, (_match, format) => momentDate.format(format))
-      .replace(/\{\{date\}\}/g, momentDate.format("YYYY-MM-DD"))
-      .replace(/\{\{time\}\}/g, momentDate.format("HH:mm"))
-      .replace(/\{\{title\}\}/g, title);
-  }
-
   private async ensureDailyNoteTitle(file: TFile): Promise<void> {
     const title = file.basename;
     await this.processGcmFrontmatter(file, (fm) => {
-      const current = fm[this.plugin.settings.titleKey];
-      if (this.isTemplatePlaceholderTitle(current) || !current) {
-        fm[this.plugin.settings.titleKey] = title;
-      }
+      ensureCalendarDailyNoteTitleFallback(fm, this.plugin.settings.titleKey, title);
     });
-  }
-
-  private isTemplatePlaceholderTitle(value: unknown): boolean {
-    if (typeof value !== "string") return true;
-    const normalized = value.trim();
-    if (!normalized) return true;
-    return (
-      normalized.includes("<%") ||
-      normalized.includes("tp.file") ||
-      normalized.includes("{{title}}") ||
-      normalized.toLowerCase() === "daily note template"
-    );
   }
 
 

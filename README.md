@@ -1,5 +1,14 @@
 # TPS Calendar Base
 
+## 0.3.1
+
+- Date-header opens and task-mode event creation now ask GCM for the canonical Daily Note before considering any Calendar-local path. An available GCM result is authoritative, so Periodic Notes and partial Core Daily Notes settings cannot be bypassed by an unrelated same-date file.
+- When GCM is unavailable, Calendar’s standalone fallback merges runtime and persisted Daily Notes/Templates settings, supports extensionless templates and nested date-format folders, expands Core template variables with the current insertion time, and shares concurrent first creation.
+- Templater expressions finish before Calendar normalizes frontmatter or appends an event. Calendar explicitly coordinates the processing even when Templater’s create trigger is enabled, and fails closed if a configured template is missing, unreadable, unavailable to Templater, or still contains unprocessed commands.
+- Template- or user-authored `title`/`Title` remains authoritative; Calendar supplies a filename fallback only when the title is missing or blank.
+- Validation passed all 19 behavioral Daily Note/event-creation regressions, the complete declared suite, TypeScript, and the required production-mode builds. The final runtime loaded with GCM and Controller in reloaded Obsidian 1.12.7 during the combined templated Daily Note verification; no Calendar source, feed, or outbound automation was enabled.
+- This is a backward-compatible patch release with no settings or note-data migration. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.3.0
 
 - Replaced the long settings accordion with a sticky five-destination **Choose what to configure** hub: Rules & creation, Calendar sources, View & navigation, Appearance, and Advanced. Only the selected page is shown, and mobile uses a compact horizontal strip.
@@ -52,6 +61,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 
 ### Event Creation
 - Click a time slot to open `NewEventService`, which creates a new note using a configurable template.
+- Missing Daily Notes created from either a Calendar date header or daily-note task destination use TPS Global Context Menu's `dailyNotes.ensureForIsoDate` contract first. This preserves the configured Core or Periodic Notes path, template, readable title, and Templater processing across both entry points. When GCM is unavailable, Calendar resolves runtime and persisted Daily Notes/Templates settings itself, copies core `{{date}}`/`{{time}}`/`{{title}}` variables, and completes Templater before returning the file. A minimal scheduled Daily Note is used only when no template is configured; a configured template that is missing, unreadable, or cannot finish processing fails closed. Existing Daily Notes are reused without replacing their completed content.
 - `ExternalEventModal` allows manually importing an external event as a vault note.
 - Parent-child links are written to the new note's frontmatter via `parent-child-link.ts`.
 - New event notes use lean frontmatter: Calendar does not synthesize a redundant `folderPath`, and it writes the configured `allDay` field only for true all-day events. Moving, dropping, syncing, or linking a note back to a timed event removes a previously generated true `allDay` value instead of replacing it with false. Explicit Base equality defaults, template fields, caller overrides, identity fields, parent links, physical folder routing, and the template `file_folder` variable remain unchanged; unrelated existing note properties are not removed.

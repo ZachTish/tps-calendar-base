@@ -1,4 +1,4 @@
-import { App, EventRef } from 'obsidian';
+import { App, EventRef, TFile } from 'obsidian';
 import { TPS_EVENTS, TPS_LEGACY_EVENTS } from './tps-contracts';
 import type { ExternalCalendarEvent } from './types';
 
@@ -14,6 +14,10 @@ export interface GcmEventsApi {
 
 export interface GcmApi {
   events?: GcmEventsApi;
+  dailyNotes?: {
+    version?: number;
+    ensureForIsoDate?: (isoDate: string) => TFile | null | Promise<TFile | null>;
+  };
   ui?: {
     shouldForceBaseLinkPreview?: () => boolean;
   };
@@ -56,6 +60,28 @@ export function getGcmApi(app: App): GcmApi | null {
     || plugins?.getPlugin?.('TPS-Global-Context-Menu (Dev)')
     || plugins?.plugins?.['TPS-Global-Context-Menu (Dev)'];
   return plugin?.api || null;
+}
+
+export interface GcmDailyNoteEnsureAttempt {
+  available: boolean;
+  file: TFile | null;
+}
+
+export async function ensureDailyNoteForIsoDate(
+  app: App,
+  isoDate: string,
+): Promise<GcmDailyNoteEnsureAttempt> {
+  const normalized = String(isoDate || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return { available: false, file: null };
+  }
+  const ensure = getGcmApi(app)?.dailyNotes?.ensureForIsoDate;
+  if (typeof ensure !== 'function') return { available: false, file: null };
+  const file = await ensure(normalized);
+  return {
+    available: true,
+    file: file instanceof TFile ? file : null,
+  };
 }
 
 export function emitCalendarSettingsChanged(app: App, sourcePluginId: string): void {

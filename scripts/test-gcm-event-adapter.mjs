@@ -23,6 +23,46 @@ test('Calendar view consumes GCM-owned event helper registrations', () => {
   assert.doesNotMatch(view, /TPS_EVENTS\.GCM_EXPLICIT_ACTION/);
 });
 
+test('Calendar daily-note creation routes use the canonical GCM API with a shared fallback', () => {
+  const adapter = read('src/tps-gcm-api.ts');
+  const service = read('src/services/new-event-service.ts');
+  const view = read('src/calendar-view.tsx');
+  const fallback = read('src/utils/daily-note-creation.ts');
+
+  assert.match(adapter, /dailyNotes\?: \{/);
+  assert.match(adapter, /ensureForIsoDate\?:/);
+  assert.match(adapter, /export async function ensureDailyNoteForIsoDate/);
+  assert.match(adapter, /available: true/);
+  assert.match(adapter, /available: false/);
+  assert.match(fallback, /await ensureDailyNoteForIsoDate\(app, target\.isoDate\)/);
+  assert.match(fallback, /if \(canonicalAttempt\.available\)/);
+  assert.match(fallback, /GCM could not create the Daily Note/);
+  assert.match(fallback, /resolveTemplateFile\(app, target\.template/);
+  assert.match(
+    fallback,
+    /await runTemplaterOnFile\(app, file, \{\s*awaitAutoCreate: true,\s*createStartedAt,\s*\}\)/,
+  );
+  assert.match(fallback, /Configured Daily Notes template was not found/);
+
+  const taskCreationStart = service.indexOf('private async ensureDailyNoteFile');
+  const taskCreationEnd = service.indexOf('private getNoteFieldName', taskCreationStart);
+  assert.notEqual(taskCreationStart, -1);
+  assert.notEqual(taskCreationEnd, -1);
+  const taskCreation = service.slice(taskCreationStart, taskCreationEnd);
+  assert.match(taskCreation, /return ensureCalendarDailyNote\(this\.config\.app, date/);
+  assert.doesNotMatch(taskCreation, /vault\.create\(/);
+
+  const dateCreationStart = view.indexOf('private async getOrCreateDailyNote');
+  const dateCreationEnd = view.indexOf('private async getOrCreateDailyCanvas', dateCreationStart);
+  assert.notEqual(dateCreationStart, -1);
+  assert.notEqual(dateCreationEnd, -1);
+  const dateCreation = view.slice(dateCreationStart, dateCreationEnd);
+  assert.match(dateCreation, /await ensureCalendarDailyNote\(this\.app, date/);
+  assert.doesNotMatch(dateCreation, /vault\.create\(/);
+  assert.match(view, /ensureCalendarDailyNoteTitleFallback\(fm, this\.plugin\.settings\.titleKey, title\)/);
+  assert.doesNotMatch(view, /isTemplatePlaceholderTitle/);
+});
+
 test('Calendar date clicks preview daily targets and double-click opens a tab', () => {
   const reactView = read('src/CalendarReactView.tsx');
   const calendarView = read('src/calendar-view.tsx');
