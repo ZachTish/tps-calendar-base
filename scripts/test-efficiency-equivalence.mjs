@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -196,4 +197,12 @@ test("type-folder options use one snapshot and traversal for representative root
     assert.equal(snapshotCalls, 1);
     assert.equal(traversedFiles, files.length);
   }
+});
+
+test("calendar refresh performs no unused day-context vault scan", () => {
+  const calendarSource = readFileSync(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
+  const reactSource = readFileSync(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
+
+  assert.doesNotMatch(calendarSource, /dayContextByDate|buildDayContextByDate|countOpenDailyNoteTasksByDate/);
+  assert.doesNotMatch(reactSource, /CalendarDayContext|dayContextByDate/);
 });

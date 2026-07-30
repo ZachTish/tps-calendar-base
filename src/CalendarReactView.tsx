@@ -309,13 +309,6 @@ export interface CalendarEntry {
   auxiliaryDateEntries?: CalendarEntry[];
 }
 
-export type CalendarDayContext = {
-  openDailyTasks: number;
-  scheduledTasks: number;
-  scheduledNotes: number;
-  externalEvents: number;
-};
-
 type CalendarDayMarkerOverlay = {
   dateKey: string;
   auxiliary: number;
@@ -399,7 +392,6 @@ interface CalendarReactViewProps {
   eventFontSize?: "small" | "default" | "large";
   /** Status values that should be dimmed as "done". Defaults to ["complete","wont-do"]. */
   doneStatuses?: string[];
-  dayContextByDate?: Record<string, CalendarDayContext>;
 }
 
 const normalizeDisplayTitle = (raw: string): string => {

@@ -50,28 +50,19 @@ test("calendar day marker chips leave the full header width available to the dat
 });
 
 test("calendar headers omit the aggregate task context control and retain numeric dates", () => {
-  assert.match(reactViewSource, /export type CalendarDayContext = \{/);
-  assert.match(reactViewSource, /externalEvents: number;/);
-  assert.match(reactViewSource, /dayContextByDate\?: Record<string, CalendarDayContext>/);
+  assert.doesNotMatch(reactViewSource, /CalendarDayContext|dayContextByDate/);
   assert.doesNotMatch(reactViewSource, /className="tps-calendar-day-marker-chip is-day-context"/);
   assert.doesNotMatch(reactViewSource, /const showDayContextMenu = useCallback/);
   assert.doesNotMatch(reactViewSource, /<CalendarMarkerIcon iconName="list-checks"/);
   assert.match(reactViewSource, /dayHeaderShowDate[\s\S]*\? \{ weekday: dayHeaderFormatSetting, month: "short", day: "numeric" \}/);
 
-  assert.match(calendarViewSource, /private dayContextByDate: Record<string, CalendarDayContext> = \{\};/);
-  assert.match(calendarViewSource, /this\.dayContextByDate = await this\.buildDayContextByDate\(finalEntries\);/);
-  assert.match(calendarViewSource, /private async buildDayContextByDate\(entries: CalendarEntry\[\]\)/);
-  assert.match(calendarViewSource, /private async countOpenDailyNoteTasksByDate\(\)/);
-  assert.match(calendarViewSource, /this\.isDailyNoteFile\(file, cache\)/);
-  assert.match(calendarViewSource, /\(entry\.entry as any\)\?\.inlineTask/);
-  assert.match(calendarViewSource, /dayContextByDate=\{this\.dayContextByDate\}/);
+  assert.doesNotMatch(calendarViewSource, /CalendarDayContext|dayContextByDate|buildDayContextByDate|countOpenDailyNoteTasksByDate/);
 });
 
-test("calendar day context counts unmatched external events once", () => {
+test("calendar still skips external events already represented by local notes", () => {
   assert.match(calendarViewSource, /if \(handledExternalEventKeys\.has\(this\.buildExternalEventIdentityKey\(extEvent\.id, extEvent\.sourceUrl\)\)\) \{/);
-  assert.match(calendarViewSource, /const finalEntries = Array\.from\(uniqueEntries\.values\(\)\);[\s\S]*this\.dayContextByDate = await this\.buildDayContextByDate\(finalEntries\);/);
-  assert.match(calendarViewSource, /if \(entry\.isExternal\) \{[\s\S]*context\.externalEvents \+= 1;[\s\S]*\} else if \(\(entry\.entry as any\)\?\.inlineTask\) \{/);
-  assert.match(calendarViewSource, /context\.externalEvents > 0/);
+  assert.match(calendarViewSource, /skippedHandledExternal \+= 1;[\s\S]*continue;/);
+  assert.match(calendarViewSource, /const finalEntries = Array\.from\(uniqueEntries\.values\(\)\);/);
 });
 
 test("embedded calendars render the configured slot range instead of cutting to scroll time", () => {

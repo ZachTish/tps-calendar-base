@@ -22,7 +22,7 @@ import {
 } from "obsidian";
 import { StrictMode } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { CalendarReactView, CalendarDayContext, CalendarEntry } from "./CalendarReactView";
+import { CalendarReactView, CalendarEntry } from "./CalendarReactView";
 import { AppContext } from "./context";
 import { NewEventService } from "./services/new-event-service";
 import { CalendarPluginBridge } from "./plugin-interface";
@@ -267,8 +267,6 @@ export class CalendarView extends BasesView {
   private statusField: BasesPropertyId | null = null;
   private noteEventVisibility: NoteEventVisibility = "all";
   private condenseLevel: number = DEFAULT_CONDENSE_LEVEL;
-  private dayContextByDate: Record<string, CalendarDayContext> = {};
-
   private getDailyNoteDateFormat(): string | undefined {
     const configured = (this.plugin as any)?.settings?.dailyNoteDateFormat;
     if (typeof configured === "string" && configured.trim()) {
@@ -2107,7 +2105,6 @@ export class CalendarView extends BasesView {
     }
 
     const finalEntries = Array.from(uniqueEntries.values());
-    this.dayContextByDate = await this.buildDayContextByDate(finalEntries);
 
     if (finalEntries.length > 0) {
       const first = finalEntries[0];
@@ -2146,55 +2143,6 @@ export class CalendarView extends BasesView {
    */
   private getEffectiveFilterRangeEntries(entries: CalendarEntry[]): CalendarEntry[] {
     return entries.filter((entry) => !entry.isExternal && !entry.isGhost && !entry.isAuxiliaryDate);
-  }
-
-  private async buildDayContextByDate(entries: CalendarEntry[]): Promise<Record<string, CalendarDayContext>> {
-    const byDate = new Map<string, CalendarDayContext>();
-    const ensure = (dateKey: string): CalendarDayContext => {
-      const existing = byDate.get(dateKey);
-      if (existing) return existing;
-      const created = { openDailyTasks: 0, scheduledTasks: 0, scheduledNotes: 0, externalEvents: 0 };
-      byDate.set(dateKey, created);
-      return created;
-    };
-
-    for (const [dateKey, count] of await this.countOpenDailyNoteTasksByDate()) {
-      if (count > 0) ensure(dateKey).openDailyTasks = count;
-    }
-
-    for (const entry of entries) {
-      if (!entry.startDate || !Number.isFinite(entry.startDate.getTime())) continue;
-      if (entry.isGhost || entry.isAuxiliaryDate || entry.isArchivedExternalPlaceholder) continue;
-      const context = ensure(this.formatYmd(entry.startDate));
-      if (entry.isExternal) {
-        context.externalEvents += 1;
-      } else if ((entry.entry as any)?.inlineTask) {
-        context.scheduledTasks += 1;
-      } else {
-        context.scheduledNotes += 1;
-      }
-    }
-
-    return Object.fromEntries(Array.from(byDate.entries()).filter(([, context]) => (
-      context.openDailyTasks > 0 || context.scheduledTasks > 0 || context.scheduledNotes > 0 || context.externalEvents > 0
-    )));
-  }
-
-  private async countOpenDailyNoteTasksByDate(): Promise<Map<string, number>> {
-    const counts = new Map<string, number>();
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const cache = this.app.metadataCache.getFileCache(file);
-      if (!this.isDailyNoteFile(file, cache)) continue;
-      const dateKey = this.parseFilenameComponents(file.basename).dateSuffix;
-      if (!dateKey) continue;
-      const content = await this.app.vault.cachedRead(file);
-      const openTasks = content
-        .split(/\r?\n/)
-        .filter((line) => /^\s*[-*]\s+\[(?!x\])[\s\S]\]\s+\S/i.test(line))
-        .length;
-      if (openTasks > 0) counts.set(dateKey, openTasks);
-    }
-    return counts;
   }
 
   private getCalendarFilterSources(extraSources: unknown[] = []): unknown[] {
@@ -5556,7 +5504,6 @@ export class CalendarView extends BasesView {
             pastEventOpacity={this.plugin.settings.pastEventOpacity}
             eventFontSize={this.plugin.settings.eventFontSize}
             doneStatuses={this.buildNonActiveStatuses()}
-            dayContextByDate={this.dayContextByDate}
           />
         </AppContext.Provider>
       </StrictMode>,
