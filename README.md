@@ -1,5 +1,14 @@
 # TPS Calendar Base
 
+## 0.3.4
+
+- Calendar-day inputs are now timezone-safe. Bare `YYYY-MM-DD` values from Base filters, saved view state, and the public navigation API are interpreted as local calendar days instead of UTC instants, so users west of UTC no longer land on the prior date.
+- Filter-based views now preserve the actual Boolean filter tree: AND ranges intersect, OR branches span their union, equality is one day, strict upper bounds exclude their boundary, and one-sided ranges use matching-entry dates for the missing side. Non-range conditions such as `scheduled is not empty`, NOT complements, unresolved expressions, and contradictory bounds no longer create a false one-day navigation lock.
+- Relative whole days, weeks, and months now use local calendar arithmetic across daylight-saving transitions; month arithmetic clamps safely at month-end. Hours, minutes, and fractional calendar units retain elapsed-time behavior.
+- The visible `tps_viewMode` Base option is authoritative over legacy aliases. Responsive time-grid layouts and display-setting remounts recalculate their rendered start from the latest semantic anchor without replaying stale parent or jump props, and the date picker now moves FullCalendar immediately.
+- **Start on host note day** is once again host-scoped: an unrelated active Markdown note can no longer overwrite the embedded calendar after its delayed initial render. Explicit API/date-picker navigation remains authoritative, followed by the host note and then saved state.
+- Newly persisted view dates use a timezone-stable local `YYYY-MM-DD` key; existing ISO timestamps remain readable. This backward-compatible patch has no settings or note-data migration and keeps minimum supported Obsidian at 1.10.0.
+
 ## 0.3.3
 
 - Removed the orphaned day-context producer that remained after the aggregate checklist badge was intentionally removed in 0.2.3. Date headers, auxiliary-date and archived-external markers, event deduplication, and every released Calendar behavior remain unchanged.
@@ -44,13 +53,14 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 
 - 2026-07-16 isolation validation: all 68 declared tests and the required final `npm run build` passed; both production-mode builds reported `[runtime-deploy] target=test ... unchanged`. Obsidian 1.12.7 loaded the plugin in the registered test vault, where the synthetic Calendar Base view rendered. No live promotion occurred, and production runtime checksums remained unchanged.
 - 2026-07-30 (0.3.3) optimization validation: the exact released implementation was measured before removal, and the permanent regression now prevents the orphaned day-context scan from returning. Focused preservation coverage kept numeric date headers, auxiliary/archived markers, external-event deduplication, and embedded slot behavior intact. All 95 release-declared tests, three separate containment checks, and TypeScript passed; the separate final production-mode build, reloaded test-vault UI, artifact hashes, and fresh BRAT-download verification are recorded in the 0.3.3 GitHub release. Production was not accessed.
+- 2026-07-30 (0.3.4) displayed-day validation: timezone-isolated parsing, daylight-saving arithmetic, nested AND/OR/NOT range logic, equality/strict/one-sided bounds, responsive anchor, stale-prop protection, view-mode precedence, host-scope, public-navigation, and date-picker regressions passed with the complete declared suite and TypeScript. After test deployment and `Reload app without saving`, the permanent three-day fixture restored July 16–18, Previous/Next moved exactly one day, Today centered July 30 in July 29–31, and synthetic filter views verified strict, OR, one-sided, and zero-result additive future-date windows. The synthetic files were moved to `_archive`; the permanent fixture state was restored, no outbound automation was enabled, and production was not accessed.
 - 2026-07-28 (0.3.2) source-alignment validation: all five focused view/efficiency regressions and all 94 release-declared tests passed with TypeScript. The versioned runtime kept the exact `0.3.1` `main.js` bytes, changed only `manifest.json`, and preserved the absent `data.json` state. After `Reload app without saving`, Obsidian 1.12.7 rendered `Inbox/TishOS Phone Calendar QA.base` as its three-day Calendar with four results; no settings, notes, feeds, or outbound automation were changed. The required final build reported the test runtime unchanged, and production was not accessed.
 
 ## Install with BRAT
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.3.3` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.3.4` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 

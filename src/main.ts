@@ -15,6 +15,7 @@ import { getPluginById } from "./core";
 import { getTPSControllerApi } from "./tps-controller-api";
 import { TPS_EVENTS } from "./tps-events";
 import { emitCalendarSettingsChanged } from "./tps-gcm-api";
+import { parseCalendarDateInput } from "./utils/filter-date-utils";
 
 
 
@@ -325,7 +326,10 @@ export default class ObsidianCalendarPlugin
     (child as any).navigatePrevious = () => child.view?.navigateEmbeddedCalendar(-1);
     (child as any).navigateToday = () => child.view?.navigateEmbeddedCalendar(0);
     (child as any).navigateNext = () => child.view?.navigateEmbeddedCalendar(1);
-    (child as any).navigateToDate = (date: Date | string | number) => child.view?.jumpToDateTime(new Date(date));
+    (child as any).navigateToDate = (date: Date | string | number) => {
+      const parsed = parseCalendarDateInput(date);
+      if (parsed) child.view?.jumpToDateTime(parsed);
+    };
     (child as any).scrollToNow = () => child.view?.scrollToNow();
     return child;
   }
@@ -549,8 +553,8 @@ export default class ObsidianCalendarPlugin
 
   private async jumpCalendarLeafToDate(leaf: WorkspaceLeaf, targetDate: Date | string | number | null, path: string): Promise<void> {
     if (targetDate == null) return;
-    const date = new Date(targetDate);
-    if (Number.isNaN(date.getTime())) return;
+    const date = parseCalendarDateInput(targetDate);
+    if (!date) return;
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const calendarViews = this.findCalendarViewInstancesForLeaf(leaf, path);
       const leafView = leaf.view as unknown as { jumpToDateTime?: (date: Date) => void };

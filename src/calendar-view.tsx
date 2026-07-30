@@ -67,11 +67,17 @@ import { HeaderSelectionModal } from "./modals/header-selection-modal";
 import {
   isLowerBoundOperator,
   isUpperBoundOperator,
+  isPositiveEqualityOperator,
+  normalizeFilterUpperBound,
+  parseCalendarDateInput,
+  formatLocalCalendarDateKey,
   stripOuterQuotes,
   normalizeFilterValue,
-  parseRelativeDurationMs,
-  resolveFilterDateAtom,
   resolveFilterDateExpression,
+  createEmptyFilterDateBounds,
+  evaluateFilterDateBoundsTree,
+  intersectFilterDateBounds,
+  type FilterDateBounds,
   getAutoRangeViewDayCount,
   getInclusiveCalendarDayCount,
 } from "./utils/filter-date-utils";
@@ -484,7 +490,7 @@ export class CalendarView extends BasesView {
   private saveDateTimeout: ReturnType<typeof setTimeout> | null = null; // Debounce timer for date persistence
   private explicitViewModePinned = false;
 
-  // Context-aware date detection / active note following.
+  // Context-aware initial date detection.
   private contextDateEnabled: boolean = false;
 
   private contextDateDetected: Date | null = null; // The detected date from parent note
@@ -494,8 +500,6 @@ export class CalendarView extends BasesView {
   private contextDateLastAppliedKey: string | null = null;
   private contextDateLastAppliedParentPath: string | null = null;
   private loggedMissingContextParent = false;
-  private activeNoteFollowTimer: number | null = null;
-  private activeNoteFollowLastAppliedKey: string | null = null;
   private lastLoggedFilterRangeKey: string | null = null;
   private pendingFastRefreshLogCount = 0;
   private fastRefreshLogTimer: number | null = null;
@@ -558,12 +562,6 @@ export class CalendarView extends BasesView {
       cls: "bases-calendar-container is-loading",
       attr: { tabIndex: 0 },
     });
-    this.registerDomEvent(this.containerEl, "pointerdown", () => {
-      this.cancelPendingActiveNoteFollow();
-    }, { capture: true });
-    this.registerDomEvent(this.containerEl, "keydown", () => {
-      this.cancelPendingActiveNoteFollow();
-    }, { capture: true });
     this.lastAutoCreateCheck = 0;
     this.newEventService = new NewEventService({ app: this.app });
     this.externalCalendarService = new ExternalCalendarService();
@@ -886,10 +884,6 @@ export class CalendarView extends BasesView {
       window.clearTimeout(this.datePreviewTimeout);
       this.datePreviewTimeout = null;
     }
-    if (this.activeNoteFollowTimer !== null) {
-      window.clearTimeout(this.activeNoteFollowTimer);
-      this.activeNoteFollowTimer = null;
-    }
     if (this.pendingDataRetryId !== null) {
       window.clearTimeout(this.pendingDataRetryId);
       this.pendingDataRetryId = null;
@@ -1199,10 +1193,8 @@ export class CalendarView extends BasesView {
     const savedCurrentDate = this.config.get("tps_currentDate") as string | undefined;
 
     if (savedCurrentDate && !this.currentDate) {
-      const parsed = new Date(savedCurrentDate);
-      if (!isNaN(parsed.getTime())) {
-        this.currentDate = parsed;
-      }
+      const parsed = parseCalendarDateInput(savedCurrentDate);
+      if (parsed) this.currentDate = parsed;
     }
 
     // Only use saved viewmode when NOT in filter-based mode
@@ -1247,7 +1239,6 @@ export class CalendarView extends BasesView {
     // If context date detection is enabled, detect the date from parent note
     if (this.contextDateEnabled) {
       this.detectContextDate();
-      this.scheduleFollowActiveNoteDay();
     }
 
     // Event creation (type-folder first, template support is legacy fallback)
@@ -2165,47 +2156,84 @@ export class CalendarView extends BasesView {
     return sources.filter((value, index, arr) => value != null && arr.indexOf(value) === index);
   }
 
-  private getFilterRangeBoundsFromConfig(): { start: Date | null; end: Date | null; hasDateFilter: boolean } {
+  private getFilterRangeBoundsForCondition(
+    condition: { property: string; operator: string; value: unknown },
+    contextFile: TFile | null,
+    propertyAliases: Set<string>,
+  ): FilterDateBounds {
+    if (!this.matchesStartDateFilterProperty(condition.property, propertyAliases)) {
+      return createEmptyFilterDateBounds();
+    }
+
+    const boundaryDate = this.resolveFilterDateExpressionWithContext(condition.value, contextFile);
+    if (!boundaryDate) {
+      return createEmptyFilterDateBounds(true);
+    }
+    if (isPositiveEqualityOperator(condition.operator)) {
+      return {
+        start: new Date(boundaryDate),
+        end: new Date(boundaryDate),
+        hasDateFilter: true,
+        isImpossible: false,
+      };
+    }
+    if (isLowerBoundOperator(condition.operator)) {
+      return {
+        start: new Date(boundaryDate),
+        end: null,
+        hasDateFilter: true,
+        isImpossible: false,
+      };
+    }
+    if (isUpperBoundOperator(condition.operator)) {
+      return {
+        start: null,
+        end: normalizeFilterUpperBound(boundaryDate, condition.operator),
+        hasDateFilter: true,
+        isImpossible: false,
+      };
+    }
+
+    // Conditions such as `scheduled is not empty` reference the date field but
+    // do not define a contiguous navigation window.
+    return createEmptyFilterDateBounds(true);
+  }
+
+  private getFilterRangeBoundsFromNode(
+    source: unknown,
+    contextFile: TFile | null,
+    propertyAliases: Set<string>,
+  ): FilterDateBounds {
+    return evaluateFilterDateBoundsTree(source, {
+      parseStringCondition: (expression) => this.parseEntryFilterExpression(expression),
+      extractObjectCondition: (record) => this.extractEntryFilterCondition(record),
+      resolveCondition: (condition) =>
+        this.getFilterRangeBoundsForCondition(
+          condition,
+          contextFile,
+          propertyAliases,
+        ),
+    });
+  }
+
+  private getFilterRangeBoundsFromConfig(): FilterDateBounds {
     const filterSources = this.getCalendarFilterSources();
     const contextFile = this.getFilterExpressionContextFile();
-
     const propertyAliases = this.getStartDatePropertyAliases();
-    let lowerBound: Date | null = null;
-    let upperBound: Date | null = null;
-    let hasDateFilter = false;
+    const sourceBounds: FilterDateBounds[] = [];
 
     for (const source of filterSources) {
-      let conditions: Array<{ property: string; operator: string; value: unknown }> = [];
       try {
-        conditions = this.collectFilterConditions(source);
+        sourceBounds.push(
+          this.getFilterRangeBoundsFromNode(source, contextFile, propertyAliases),
+        );
       } catch (error) {
         logger.warn("[CalendarView] Failed to parse filter source for auto-range:", error);
-        continue;
-      }
-      for (const condition of conditions) {
-        if (!this.matchesStartDateFilterProperty(condition.property, propertyAliases)) {
-          continue;
-        }
-
-        // Any condition referencing the start date property means a date filter exists
-        hasDateFilter = true;
-
-        const boundaryDate = this.resolveFilterDateExpressionWithContext(condition.value, contextFile);
-        if (!boundaryDate) continue;
-
-        if (isLowerBoundOperator(condition.operator)) {
-          if (!lowerBound || boundaryDate.getTime() > lowerBound.getTime()) {
-            lowerBound = boundaryDate;
-          }
-        } else if (isUpperBoundOperator(condition.operator)) {
-          if (!upperBound || boundaryDate.getTime() < upperBound.getTime()) {
-            upperBound = boundaryDate;
-          }
-        }
       }
     }
 
-    return { start: lowerBound, end: upperBound, hasDateFilter };
+    // Separate sources (active-view, all-view/base, runtime) are additive.
+    return intersectFilterDateBounds(sourceBounds);
   }
 
   private getFilterExpressionContextFile(): TFile | null {
@@ -2360,24 +2388,27 @@ export class CalendarView extends BasesView {
     let maxDate: Date | null = entryMaxDate ? new Date(entryMaxDate) : null;
 
     const filterBounds = this.getFilterRangeBoundsFromConfig();
-    // Lock navigation when any date filter condition exists (even if the value
-    // is a dynamic expression like `date(this.file.name)` that can't be resolved).
-    const hasExplicitBounds = filterBounds.hasDateFilter;
+    // Only resolved contiguous endpoints may constrain navigation. Filters such
+    // as `scheduled is not empty`, NOT ranges, or unresolved expressions still
+    // use the matching entry span.
+    const hasExplicitBounds = Boolean(filterBounds.start || filterBounds.end);
     this.navigationBoundsStart = filterBounds.start ? new Date(filterBounds.start) : null;
     this.navigationBoundsEnd = filterBounds.end ? new Date(filterBounds.end) : null;
 
-    // When explicit date filters exist, they must define the auto-range window.
-    // Do not widen from entry-derived min/max (which may include far-future items).
+    // Resolved endpoints own their respective side. A missing side comes from
+    // matching entries, so `scheduled < Friday` can show the complete matching
+    // span instead of collapsing to Thursday alone.
     if (hasExplicitBounds) {
-      minDate = filterBounds.start ? new Date(filterBounds.start) : null;
-      maxDate = filterBounds.end ? new Date(filterBounds.end) : null;
-    }
-
-    if (filterBounds.start) {
-      minDate = new Date(filterBounds.start);
-    }
-    if (filterBounds.end) {
-      maxDate = new Date(filterBounds.end);
+      minDate = filterBounds.start
+        ? new Date(filterBounds.start)
+        : entryMinDate
+          ? new Date(entryMinDate)
+          : null;
+      maxDate = filterBounds.end
+        ? new Date(filterBounds.end)
+        : entryMaxDate
+          ? new Date(entryMaxDate)
+          : null;
     }
 
     if (!minDate && maxDate) {
@@ -2385,17 +2416,6 @@ export class CalendarView extends BasesView {
     }
     if (!maxDate && minDate) {
       maxDate = new Date(minDate);
-    }
-
-    // Explicit date filter exists but couldn't resolve either bound:
-    // constrain to today's day instead of falling back to all entry dates.
-    if (hasExplicitBounds && !minDate && !maxDate) {
-      const anchor = this.currentDate ? new Date(this.currentDate) : new Date();
-      anchor.setHours(0, 0, 0, 0);
-      minDate = new Date(anchor);
-      maxDate = new Date(anchor);
-      this.navigationBoundsStart = new Date(anchor);
-      this.navigationBoundsEnd = new Date(anchor);
     }
 
     if (minDate && maxDate && minDate.getTime() > maxDate.getTime()) {
@@ -2626,86 +2646,6 @@ export class CalendarView extends BasesView {
         logger.log(`[CalendarView] No scheduled context date for "${parentNote}", defaulting calendar to today`);
       }
     }
-  }
-
-  private scheduleFollowActiveNoteDay(file?: TFile | null, delay = 80): void {
-    if (!this.contextDateEnabled) return;
-    const hasExplicitFile = file !== undefined;
-    if (this.activeNoteFollowTimer !== null) {
-      window.clearTimeout(this.activeNoteFollowTimer);
-    }
-    this.activeNoteFollowTimer = window.setTimeout(() => {
-      this.activeNoteFollowTimer = null;
-      this.followActiveNoteDay(hasExplicitFile ? file : this.getActiveMarkdownFile());
-    }, delay);
-  }
-
-  private cancelPendingActiveNoteFollow(): void {
-    if (this.activeNoteFollowTimer !== null) {
-      window.clearTimeout(this.activeNoteFollowTimer);
-      this.activeNoteFollowTimer = null;
-    }
-  }
-
-  private getActiveMarkdownFile(): TFile | null {
-    const activeLeaf = this.app.workspace.activeLeaf;
-    if (activeLeaf?.view instanceof MarkdownView) {
-      const file = activeLeaf.view.file;
-      return file instanceof TFile && file.extension.toLowerCase() === "md" ? file : null;
-    }
-    const file = this.app.workspace.getActiveFile();
-    return file instanceof TFile && file.extension.toLowerCase() === "md" ? file : null;
-  }
-
-  private followActiveNoteDay(file: TFile | null | undefined): void {
-    if (!this.contextDateEnabled) return;
-    if (!(file instanceof TFile) || file.extension.toLowerCase() !== "md") {
-      this.activeNoteFollowLastAppliedKey = null;
-      return;
-    }
-
-    const detectedDate = this.resolveFocusedNoteDate(file);
-    if (!detectedDate) {
-      this.activeNoteFollowLastAppliedKey = null;
-      return;
-    }
-
-    detectedDate.setHours(0, 0, 0, 0);
-    const dateKey = this.formatLocalDateKey(detectedDate);
-    const followKey = `${file.path}::${dateKey}`;
-    if (this.activeNoteFollowLastAppliedKey === followKey) return;
-    this.activeNoteFollowLastAppliedKey = followKey;
-
-    if (this.currentDate && this.isSameLocalDay(this.currentDate, detectedDate)) {
-      return;
-    }
-
-    this.currentDate = new Date(detectedDate);
-    this.jumpTargetDate = new Date(detectedDate);
-    this.persistCurrentDate(detectedDate);
-    this.renderReactCalendar();
-  }
-
-  private resolveFocusedNoteDate(file: TFile): Date | null {
-    const frontmatterDate = this.extractContextDateFromFrontmatter(file.path);
-    if (frontmatterDate) return frontmatterDate;
-    return this.extractDateFromPath(file.path);
-  }
-
-  private formatLocalDateKey(date: Date): string {
-    return [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, "0"),
-      String(date.getDate()).padStart(2, "0"),
-    ].join("-");
-  }
-
-  private isSameLocalDay(a: Date, b: Date): boolean {
-    return (
-      a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() &&
-      a.getDate() === b.getDate()
-    );
   }
 
   /**
@@ -5455,7 +5395,6 @@ export class CalendarView extends BasesView {
               this.jumpTargetDate = null;
             }}
             onDateChange={(date) => {
-              this.cancelPendingActiveNoteFollow();
               this.currentDate = date;
               this.persistCurrentDate(date);
               // NOTE: do NOT call renderReactCalendar() here.
@@ -7685,23 +7624,7 @@ export class CalendarView extends BasesView {
 
   private computeInitialDate(): Date {
     const baseDate = this.currentDate ?? new Date();
-    const effectiveDayCount =
-      this.viewMode === "day" ? 1 :
-        this.viewMode === "3d" ? 3 :
-          this.viewMode === "4d" ? 4 :
-          this.viewMode === "5d" ? 5 :
-            this.viewMode === "7d" ? 7 :
-              this.viewMode === "week" ? 7 :
-                30;
-    if (effectiveDayCount >= 30 || this.viewMode === "week") {
-      return baseDate;
-    }
-    const normalizedDays = Math.max(1, effectiveDayCount);
-    const offset = Math.floor((normalizedDays - 1) / 2);
-    const start = new Date(baseDate);
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - offset);
-    return start;
+    return new Date(baseDate);
   }
 
   private parseNumberConfig(value: unknown, fallback: number): number {
@@ -7848,23 +7771,21 @@ export class CalendarView extends BasesView {
 
   private resolveViewConfigMode(): CalendarViewMode | undefined {
     return (
-      this.normalizeCalendarViewMode(this.config.get("viewMode"), undefined)
+      this.normalizeCalendarViewMode(this.config.get("tps_viewMode"), undefined)
+      ?? this.normalizeCalendarViewMode(this.config.get("viewMode"), undefined)
       ?? this.normalizeCalendarViewMode(this.config.get("viewmode"), undefined)
     );
   }
 
   private resolveStoredViewMode(): CalendarViewMode | undefined {
-    const viewMode =
-      this.normalizeCalendarViewMode(this.config.get("viewMode"), undefined)
-      ?? this.normalizeCalendarViewMode(this.config.get("viewmode"), undefined);
     const tpsViewMode = this.normalizeCalendarViewMode(this.config.get("tps_viewMode"), undefined);
-    if (viewMode && viewMode !== "filter-based") {
-      return viewMode;
-    }
     if (tpsViewMode) {
       return tpsViewMode;
     }
-    return viewMode;
+    return (
+      this.normalizeCalendarViewMode(this.config.get("viewMode"), undefined)
+      ?? this.normalizeCalendarViewMode(this.config.get("viewmode"), undefined)
+    );
   }
 
   private parseExternalCalendarUrls(raw: string): string[] {
@@ -7897,8 +7818,7 @@ export class CalendarView extends BasesView {
       clearTimeout(this.saveDateTimeout);
     }
     this.saveDateTimeout = setTimeout(() => {
-      const iso = date.toISOString();
-      this.config.set("tps_currentDate", iso);
+      this.config.set("tps_currentDate", formatLocalCalendarDateKey(date));
       this.saveDateTimeout = null;
     }, 1000);
   }
@@ -9166,22 +9086,6 @@ export class CalendarView extends BasesView {
     // Use metadataCache for faster and more accurate updates on frontmatter changes
     this.registerEvent(
       this.app.metadataCache.on("changed", this.handleTrackedFileChange),
-    );
-    this.registerEvent(
-      this.app.workspace.on("active-leaf-change", (leaf) => {
-        if (!this.contextDateEnabled) return;
-        if (leaf?.view instanceof MarkdownView) {
-          this.scheduleFollowActiveNoteDay(leaf.view.file);
-        } else {
-          this.scheduleFollowActiveNoteDay(null);
-        }
-      }),
-    );
-    this.registerEvent(
-      this.app.workspace.on("file-open", (file) => {
-        if (!this.contextDateEnabled) return;
-        this.scheduleFollowActiveNoteDay(file instanceof TFile ? file : null);
-      }),
     );
     this.registerEvent(
       this.app.workspace.on("editor-change", () => {

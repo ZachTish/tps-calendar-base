@@ -20,3 +20,22 @@ export function getAdaptiveTimeGridDayCount(
 
   return Math.max(1, Math.min(configuredDayCount, fittingDayCount));
 }
+
+export function getCalendarStartForAnchor(
+  anchor: Date,
+  viewMode: string,
+  displayedDayCount: number,
+): Date {
+  const start = new Date(anchor);
+  if (Number.isNaN(start.getTime())) return start;
+  if (viewMode === "month" || viewMode === "week" || viewMode === "continuous") {
+    return start;
+  }
+
+  const dayCount = Number.isFinite(displayedDayCount)
+    ? Math.max(1, Math.round(displayedDayCount))
+    : 1;
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - Math.floor((dayCount - 1) / 2));
+  return start;
+}

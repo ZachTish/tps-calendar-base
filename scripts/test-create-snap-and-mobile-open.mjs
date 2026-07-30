@@ -1571,19 +1571,11 @@ test("task target paths fall back to settings and normalize link-shaped values",
   assert.equal(normalizeCalendarTaskTargetPath(""), null);
 });
 
-test("follow-active-note jumps only when a focused markdown file changes", () => {
-  assert.match(calendarViewSource, /this\.app\.workspace\.on\("active-leaf-change"/);
-  assert.match(calendarViewSource, /this\.app\.workspace\.on\("file-open"/);
-  assert.match(calendarViewSource, /this\.registerDomEvent\(this\.containerEl, "pointerdown"/);
-  assert.match(calendarViewSource, /private cancelPendingActiveNoteFollow\(\): void/);
-  assert.match(calendarViewSource, /window\.clearTimeout\(this\.activeNoteFollowTimer\);/);
-  assert.match(calendarViewSource, /private scheduleFollowActiveNoteDay\(file\?: TFile \| null/);
-  assert.match(calendarViewSource, /private followActiveNoteDay\(file: TFile \| null \| undefined\)/);
-  assert.match(calendarViewSource, /const followKey = `\$\{file\.path\}::\$\{dateKey\}`;/);
-  assert.match(calendarViewSource, /if \(this\.activeNoteFollowLastAppliedKey === followKey\) return;/);
-  assert.match(calendarViewSource, /this\.jumpTargetDate = new Date\(detectedDate\);/);
-  assert.match(calendarViewSource, /private resolveFocusedNoteDate\(file: TFile\): Date \| null/);
-  assert.match(calendarViewSource, /this\.extractContextDateFromFrontmatter\(file\.path\)/);
-  assert.match(calendarViewSource, /this\.extractDateFromPath\(file\.path\)/);
-  assert.match(calendarViewSource, /onDateChange=\{\(date\) => \{[\s\S]*this\.cancelPendingActiveNoteFollow\(\);[\s\S]*this\.currentDate = date;[\s\S]*this\.persistCurrentDate\(date\);/);
+test("host-note start mode anchors once without following unrelated active notes", () => {
+  assert.match(calendarViewSource, /const parentNote = this\.findParentNotePath\(\);/);
+  assert.match(calendarViewSource, /this\.extractContextDateFromFrontmatter\(parentNote\)/);
+  assert.match(calendarViewSource, /if \(this\.contextDateEnabled\) \{[\s\S]*this\.detectContextDate\(\);[\s\S]*\}/);
+  assert.match(calendarViewSource, /onDateChange=\{\(date\) => \{[\s\S]*this\.currentDate = date;[\s\S]*this\.persistCurrentDate\(date\);/);
+  assert.doesNotMatch(calendarViewSource, /scheduleFollowActiveNoteDay/);
+  assert.doesNotMatch(calendarViewSource, /activeNoteFollowTimer/);
 });
