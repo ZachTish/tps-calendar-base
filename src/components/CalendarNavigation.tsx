@@ -14,7 +14,7 @@ interface CalendarNavigationProps {
   onDateChange?: (date: Date) => void;
   onPrevClick: () => void;
   onNextClick: () => void;
-  onTodayCentered: () => void;
+  onToday: () => void;
   mobileNavHidden: boolean;
   floatingNavStyle: React.CSSProperties;
   mode?: "embedded" | "dedicated";
@@ -50,7 +50,7 @@ export const CalendarNavigation: React.FC<CalendarNavigationProps> = ({
   onDateChange,
   onPrevClick,
   onNextClick,
-  onTodayCentered,
+  onToday,
   mobileNavHidden,
   floatingNavStyle,
   mode = "embedded",
@@ -206,7 +206,7 @@ export const CalendarNavigation: React.FC<CalendarNavigationProps> = ({
           </button>
           <button
             className="bases-calendar-nav-button"
-            onClick={onTodayCentered}
+            onClick={onToday}
             disabled={todayDisabled}
             style={{
               fontSize: "0.8rem",

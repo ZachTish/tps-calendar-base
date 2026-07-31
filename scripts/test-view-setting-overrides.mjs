@@ -27,7 +27,10 @@ test("calendar now-indicator view setting overrides or inherits the global setti
 });
 
 test("delayed date persistence remains scoped to the view that scheduled it", async () => {
-  const { isCalendarViewPersistenceTargetCurrent } = await importViewConfigUtility();
+  const {
+    isCalendarViewPersistenceTargetCurrent,
+    snapshotCalendarDateKey,
+  } = await importViewConfigUtility();
   const firstView = { name: "First" };
   const replacementWithSameName = { name: "First" };
 
@@ -46,6 +49,16 @@ test("delayed date persistence remains scoped to the view that scheduled it", as
     false,
     "a reused wrapper cannot receive a write scheduled for its prior view name",
   );
+
+  const mutableDate = new Date(2026, 6, 31, 15, 30);
+  const scheduledDateKey = snapshotCalendarDateKey(mutableDate);
+  mutableDate.setDate(1);
+  mutableDate.setMonth(8);
+  assert.equal(
+    scheduledDateKey,
+    "2026-07-31",
+    "the delayed write keeps the call-time calendar day even if the caller mutates its Date",
+  );
 });
 
 test("calendar renderer resolves the per-view now-indicator setting", () => {
@@ -57,5 +70,6 @@ test("calendar renderer resolves the per-view now-indicator setting", () => {
   assert.match(source, /if \(viewChanged\) \{[\s\S]*?clearTimeout\(this\.saveDateTimeout\)/);
   assert.match(source, /const targetConfig = this\.config;/);
   assert.match(source, /isCalendarViewPersistenceTargetCurrent\([\s\S]*?targetConfig,[\s\S]*?targetViewName,[\s\S]*?this\.config/);
-  assert.match(source, /targetConfig\.set\("tps_currentDate"/);
+  assert.match(source, /const dateKey = snapshotCalendarDateKey\(date\);/);
+  assert.match(source, /targetConfig\.set\("tps_currentDate", dateKey\)/);
 });

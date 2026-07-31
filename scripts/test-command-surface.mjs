@@ -66,10 +66,13 @@ test("calendar exposes direct Base embed rendering for rendered plugin views", (
   assert.match(mainSource, /\(child as any\)\.navigateNext = \(\) => child\.view\?\.navigateEmbeddedCalendar\(1\)/);
   assert.match(mainSource, /\(child as any\)\.scrollToNow = \(\) => child\.view\?\.scrollToNow\(\)/);
   assert.match(calendarViewSource, /public navigateEmbeddedCalendar\(direction: -1 \| 0 \| 1\): void/);
+  assert.match(calendarViewSource, /const step = this\.viewMode === "week"\s*\? 7/);
   assert.match(calendarViewSource, /public scrollToNow\(\): void/);
   assert.match(calendarViewSource, /preserveEmbeddedDayCount=\{this\.preserveEmbeddedDayCount\}/);
   assert.match(calendarViewSource, /private scrollRenderedCalendarToTime\(date: Date\): boolean/);
   assert.match(calendarViewSource, /\.fc-timegrid-now-indicator-line/);
+  assert.match(calendarViewSource, /private isRenderedCalendarDay\(date: Date\): boolean/);
+  assert.match(calendarViewSource, /querySelectorAll<HTMLElement>\("\[data-date\]"\)/);
   assert.match(mainSource, /containerEl\.addClass\("tps-calendar-base-embed"\)/);
   assert.match(embedRendererSource, /this\.workspace = app\?\.workspace \?\? null/);
   assert.match(embedRendererSource, /getOrder\(\): any\[\]/);

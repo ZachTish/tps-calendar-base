@@ -70,7 +70,6 @@ import {
   isPositiveEqualityOperator,
   normalizeFilterUpperBound,
   parseCalendarDateInput,
-  formatLocalCalendarDateKey,
   stripOuterQuotes,
   normalizeFilterValue,
   resolveFilterDateExpression,
@@ -78,12 +77,15 @@ import {
   evaluateFilterDateBoundsTree,
   intersectFilterDateBounds,
   type FilterDateBounds,
-  getAutoRangeViewDayCount,
   getAutoRangeViewMode,
   getInclusiveCalendarDayCount,
 } from "./utils/filter-date-utils";
 import { getInclusiveCalendarDisplayBounds } from "./utils/calendar-display-interval";
 import { isCalendarEntryDisplayedAllDay } from "./utils/calendar-entry-all-day";
+import {
+  clampCalendarNavigationDate,
+  shiftCalendarMonthStart,
+} from "./utils/calendar-day-count";
 import {
   extractCalendarCreationModeFromFilters,
   extractCalendarTaskLineDefaultsFromFilters,
@@ -100,6 +102,7 @@ import {
 import {
   isCalendarViewPersistenceTargetCurrent,
   resolveShowNowIndicator,
+  snapshotCalendarDateKey,
 } from "./utils/view-config";
 
 type CalendarEventTitlePromptResult = {
@@ -486,6 +489,7 @@ export class CalendarView extends BasesView {
   private filterRangeStart: Date | null = null; // Computed min date from entries
   private filterRangeEnd: Date | null = null; // Computed max date from entries
   private filterRangeDays: number = 0; // Number of days in the filtered range
+  private hasExplicitFilterRange = false;
   private navigationLockedByAutoRange = false;
   private navigationBoundsStart: Date | null = null; // Explicit filter lower bound for navigation
   private navigationBoundsEnd: Date | null = null; // Explicit filter upper bound for navigation
@@ -1109,6 +1113,7 @@ export class CalendarView extends BasesView {
       this.filterRangeStart = null;
       this.filterRangeEnd = null;
       this.filterRangeDays = 0;
+      this.hasExplicitFilterRange = false;
       this.navigationBoundsStart = null;
       this.navigationBoundsEnd = null;
       this.entryBoundsMin = null;
@@ -2408,6 +2413,7 @@ export class CalendarView extends BasesView {
     // as `scheduled is not empty`, NOT ranges, or unresolved expressions still
     // use the matching entry span.
     const hasExplicitBounds = Boolean(filterBounds.start || filterBounds.end);
+    this.hasExplicitFilterRange = hasExplicitBounds;
     this.navigationBoundsStart = filterBounds.start ? new Date(filterBounds.start) : null;
     this.navigationBoundsEnd = filterBounds.end ? new Date(filterBounds.end) : null;
 
@@ -2448,6 +2454,7 @@ export class CalendarView extends BasesView {
       this.entryBoundsMin = null;
       this.entryBoundsMax = null;
       this.filterRangeDays = 0;
+      this.hasExplicitFilterRange = false;
       this.navigationLockedByAutoRange = false;
       // Only reset to today on first load, not on subsequent refreshes
       if (!this.autoRangeInitialized) {
@@ -2486,7 +2493,10 @@ export class CalendarView extends BasesView {
 
     // Build a key from the date range to detect significant changes.
     // Only auto-switch viewMode/currentDate on first load or when the range actually changes.
-    const rangeKey = `${startOfMinDay.getTime()}-${startOfMaxDay.getTime()}`;
+    // Explicitness is part of the range contract even when its dates happen to
+    // equal the occupied entry span. Entering or leaving explicit bounds must
+    // still re-anchor/clamp navigation and switch responsive preservation.
+    const rangeKey = `${hasExplicitBounds ? "explicit" : "entries"}-${startOfMinDay.getTime()}-${startOfMaxDay.getTime()}`;
     const rangeChanged = this.lastAutoRangeKey !== rangeKey;
     this.lastAutoRangeKey = rangeKey;
     const shouldApplyAutoRangeDate = !this.autoRangeInitialized || rangeChanged || !this.currentDate;
@@ -2532,10 +2542,7 @@ export class CalendarView extends BasesView {
 
       if (shouldApplyAutoRangeDate) {
         if (nextViewMode !== "month") {
-          const targetDayCount = getAutoRangeViewDayCount(diffDays);
-          const centerOffset = Math.max(0, Math.floor((targetDayCount - 1) / 2));
           this.currentDate = new Date(startOfMinDay);
-          this.currentDate.setDate(this.currentDate.getDate() + centerOffset);
           this.currentDate.setHours(0, 0, 0, 0);
         } else {
           this.currentDate = new Date(minDate.getFullYear(), minDate.getMonth(), 1);
@@ -2556,17 +2563,18 @@ export class CalendarView extends BasesView {
       return;
     }
 
-    // Only auto-override viewMode/currentDate when:
-    //   (a) the range is explicitly locked by a filter (hasExplicitBounds), or
-    //   (b) it's the very first load AND there is no saved user preference.
-    // For data-derived (unlocked) ranges we must respect what the user last chose,
-    // and default the visible date to *today* rather than the earliest entry date.
-    if (this.filterRangeAuto && (!this.autoRangeInitialized || (rangeChanged && hasExplicitBounds))) {
+    // Data-derived automatic ranges must update their concrete day count when
+    // matching entries change. A concrete per-view mode never reaches this
+    // branch because it disables filterRangeAuto in loadConfig(). Keep the
+    // selected first day stable after initialization instead of jumping to the
+    // earliest matching entry.
+    if (this.filterRangeAuto && (!this.autoRangeInitialized || rangeChanged)) {
       const previousViewMode = this.viewMode;
 
-      if (!this.autoRangeInitialized) {
-        // Data-derived range (not locked), first load only.
-        // Use saved viewMode if the user already has a preference; otherwise auto-select.
+      if (!this.autoRangeInitialized || rangeChanged) {
+        // Data-derived range (not locked). A changed entry span selects its new
+        // exact automatic mode; first load still honors a concrete saved mode
+        // defensively, although loadConfig() normally pins it before this path.
         const savedViewMode = this.resolveStoredViewMode();
         const concreteSavedViewMode =
           savedViewMode && savedViewMode !== "filter-based" ? savedViewMode : undefined;
@@ -5428,6 +5436,7 @@ export class CalendarView extends BasesView {
             showNavButtons={this.showNavButtons}
             navigationLocked={this.navigationLockedByAutoRange}
             filterRangeAuto={this.filterRangeAuto}
+            hasExplicitFilterRange={this.hasExplicitFilterRange}
             entryBoundsStart={this.filterRangeAuto && this.filterRangeStart ? this.filterRangeStart : undefined}
             entryBoundsEnd={this.filterRangeAuto && this.filterRangeEnd ? this.filterRangeEnd : undefined}
             navigationBoundsStart={this.navigationBoundsStart ?? undefined}
@@ -7851,6 +7860,7 @@ export class CalendarView extends BasesView {
     if (this.saveDateTimeout) {
       clearTimeout(this.saveDateTimeout);
     }
+    const dateKey = snapshotCalendarDateKey(date);
     const targetConfig = this.config;
     const targetViewName = String(targetConfig.name || "");
     const timeout = setTimeout(() => {
@@ -7864,13 +7874,17 @@ export class CalendarView extends BasesView {
       )) {
         return;
       }
-      targetConfig.set("tps_currentDate", formatLocalCalendarDateKey(date));
+      targetConfig.set("tps_currentDate", dateKey);
     }, 1000);
     this.saveDateTimeout = timeout;
   }
 
   public jumpToDateTime(date: Date): void {
-    const next = new Date(date);
+    const next = clampCalendarNavigationDate(
+      new Date(date),
+      this.navigationBoundsStart ?? undefined,
+      this.navigationBoundsEnd ?? undefined,
+    );
     if (Number.isNaN(next.getTime())) return;
     this.currentDate = next;
     this.jumpTargetDate = new Date(next);
@@ -7885,12 +7899,25 @@ export class CalendarView extends BasesView {
     }
     const next = this.currentDate ? new Date(this.currentDate) : new Date();
     if (this.viewMode === "month") {
-      next.setMonth(next.getMonth() + direction);
+      this.jumpToDateTime(clampCalendarNavigationDate(
+        shiftCalendarMonthStart(next, direction),
+        this.navigationBoundsStart ?? undefined,
+        this.navigationBoundsEnd ?? undefined,
+      ));
+      return;
     } else {
-      const step = Number.isFinite(this.navStep) && this.navStep > 0 ? Math.round(this.navStep) : 1;
+      const step = this.viewMode === "week"
+        ? 7
+        : Number.isFinite(this.navStep) && this.navStep > 0
+          ? Math.round(this.navStep)
+          : 1;
       next.setDate(next.getDate() + direction * step);
     }
-    this.jumpToDateTime(next);
+    this.jumpToDateTime(clampCalendarNavigationDate(
+      next,
+      this.navigationBoundsStart ?? undefined,
+      this.navigationBoundsEnd ?? undefined,
+    ));
   }
 
   public scrollToNow(): void {
@@ -7907,7 +7934,7 @@ export class CalendarView extends BasesView {
     if (Number.isNaN(date.getTime())) return false;
 
     const nowLine = this.containerEl.querySelector<HTMLElement>(".fc-timegrid-now-indicator-line");
-    if (!nowLine && !this.isCurrentCalendarDay(date)) return false;
+    if (!nowLine && !this.isRenderedCalendarDay(date)) return false;
 
     const scroller =
       nowLine?.closest<HTMLElement>(".fc-scroller")
@@ -7963,11 +7990,11 @@ export class CalendarView extends BasesView {
     return Math.max(0, hours * 60 + minutes);
   }
 
-  private isCurrentCalendarDay(date: Date): boolean {
-    const current = this.currentDate ?? this.computeInitialDate();
-    return current.getFullYear() === date.getFullYear()
-      && current.getMonth() === date.getMonth()
-      && current.getDate() === date.getDate();
+  private isRenderedCalendarDay(date: Date): boolean {
+    const targetDateKey = this.formatYmd(date);
+    return Array.from(
+      this.containerEl.querySelectorAll<HTMLElement>("[data-date]"),
+    ).some((element) => element.dataset.date === targetDateKey);
   }
 
   public isDefaultCalendarBasePath(path: string): boolean {

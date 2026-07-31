@@ -47,6 +47,7 @@ import {
   type CalendarExternalDropPayload,
 } from "./utils/calendar-external-drop";
 import {
+  clampCalendarNavigationDate,
   getCalendarAnchorForStart,
   getAdaptiveTimeGridDayCount,
   getCalendarStartForAnchor,
@@ -379,6 +380,7 @@ interface CalendarReactViewProps {
   showNavButtons?: boolean;
   navigationLocked?: boolean;
   filterRangeAuto?: boolean;
+  hasExplicitFilterRange?: boolean;
   entryBoundsStart?: Date;
   entryBoundsEnd?: Date;
   navigationBoundsStart?: Date;
@@ -594,6 +596,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   showNavButtons,
   navigationLocked = false,
   filterRangeAuto = false,
+  hasExplicitFilterRange = false,
   entryBoundsStart,
   entryBoundsEnd,
   navigationBoundsStart,
@@ -845,12 +848,11 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, [viewMode, derivedFilterRangeDays]);
 
   const configuredDayCount = getConfiguredTimeGridDayCount(resolvedFilterViewMode);
-  // A filter-based range promises the exact occupied/bounded days. Reducing
-  // only its rendered column count would reuse the range's centered anchor and
-  // start a narrow embed in the middle of the requested span. Keep all of the
-  // derived days together; manual multi-day views retain responsive reduction.
+  // An explicitly bounded filter range promises its exact days. Keep all of
+  // those days together; entry-derived and manual multi-day views retain
+  // responsive reduction.
   const preserveFilterRangeDayCount =
-    filterRangeAuto
+    hasExplicitFilterRange
     && derivedFilterRangeDays !== null
     && derivedFilterRangeDays >= 1
     && derivedFilterRangeDays <= 7;
@@ -879,14 +881,14 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   const resolvedNavDays =
     isWeekView
-      ? targetDayCount
+      ? 7
       : Number.isFinite(navStepValue) && navStepValue > 0
         ? Math.round(navStepValue)
         : 1;
 
-  // Keep the semantic anchor separate from FullCalendar's rendered start.
+  // Keep the selected first day separate from FullCalendar's rendered start.
   // Responsive embeds can change their displayed day count after measuring;
-  // recomputing from the anchor prevents that resize from drifting a day.
+  // recomputing from the selected day prevents that resize from drifting.
   const initialAnchorRef = useRef<Date | null>(null);
   const lastViewModeRef = useRef<ViewMode | null>(null);
   const lastAppliedViewNameRef = useRef<string | null>(null);
@@ -907,12 +909,20 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       initialAnchorRef.current!,
       resolvedFilterViewMode,
       targetDayCount,
+      safeWeekStartDay,
     ),
-    [resolvedFilterViewMode, targetDayCount],
+    [resolvedFilterViewMode, targetDayCount, safeWeekStartDay],
   );
   const displayedAnchorRef = useRef<Date>(new Date(initialAnchorRef.current));
   const lastObservedCurrentDatePropRef = useRef<Date | undefined>(currentDate);
   const lastAppliedJumpTargetRef = useRef<Date | undefined>(undefined);
+
+  // Adopt a new host date during render so a FullCalendar remount in this same
+  // commit cannot fire datesSet with the prior semantic day. The effect below
+  // still performs the imperative gotoDate for an already-mounted instance.
+  if (currentDate && lastObservedCurrentDatePropRef.current !== currentDate) {
+    displayedAnchorRef.current = new Date(currentDate);
+  }
 
   const estimatedVisibleDateRange = useMemo((): { start: Date; end: Date } | null => {
     if (resolvedFilterViewMode === "continuous") return null;
@@ -930,18 +940,15 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     }
 
     if (resolvedFilterViewMode === "week") {
-      const day = start.getDay();
-      const offset = (day - weekStartDay + 7) % 7;
-      start.setDate(start.getDate() - offset);
       const end = new Date(start);
-      end.setDate(end.getDate() + 7);
+      end.setDate(end.getDate() + targetDayCount);
       return { start, end };
     }
 
     const end = new Date(start);
     end.setDate(end.getDate() + targetDayCount);
     return { start, end };
-  }, [resolvedFilterViewMode, safeInitialDate, targetDayCount, weekStartDay]);
+  }, [resolvedFilterViewMode, safeInitialDate, targetDayCount, safeWeekStartDay]);
 
   const eventRenderDateRange = visibleDateRange ?? estimatedVisibleDateRange;
   const resolvedShowFullDay =
@@ -1824,16 +1831,17 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
     const api = calendarRef.current?.getApi();
     if (!api) return;
-    displayedAnchorRef.current = new Date(currentDate);
     const calendarStart = getCalendarStartForAnchor(
       currentDate,
       resolvedFilterViewMode,
       targetDayCount,
+      safeWeekStartDay,
     );
+    displayedAnchorRef.current = new Date(currentDate);
     if (!isSameCalendarDay(api.getDate(), calendarStart)) {
       api.gotoDate(calendarStart);
     }
-  }, [currentDate, resolvedFilterViewMode, targetDayCount, isSameCalendarDay]);
+  }, [currentDate, resolvedFilterViewMode, targetDayCount, safeWeekStartDay, isSameCalendarDay]);
 
   useEffect(() => {
     if (!jumpTargetDate) {
@@ -1845,12 +1853,14 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     if (!calendarRef.current) return;
     const api = calendarRef.current.getApi();
     const target = new Date(jumpTargetDate);
-    displayedAnchorRef.current = new Date(target);
-    api.gotoDate(getCalendarStartForAnchor(
+    const calendarStart = getCalendarStartForAnchor(
       target,
       resolvedFilterViewMode,
       targetDayCount,
-    ));
+      safeWeekStartDay,
+    );
+    displayedAnchorRef.current = new Date(target);
+    api.gotoDate(calendarStart);
 
     if (onDateChange) onDateChange(target);
     onJumpTargetApplied?.();
@@ -1866,7 +1876,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         }, delayMs);
       });
     }
-  }, [jumpTargetDate, resolvedFilterViewMode, targetDayCount, onDateChange, onJumpTargetApplied]);
+  }, [jumpTargetDate, resolvedFilterViewMode, targetDayCount, safeWeekStartDay, onDateChange, onJumpTargetApplied]);
 
   // FullCalendar treats `initialView` as one-time setup. When filter-based logic
   // derives a different concrete mode after mount, force the calendar API to
@@ -1883,6 +1893,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       targetAnchor,
       resolvedFilterViewMode,
       targetDayCount,
+      safeWeekStartDay,
     );
 
     logger.log(
@@ -1890,7 +1901,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     );
     api.changeView(viewName, targetDate);
     lastAppliedViewNameRef.current = viewName;
-  }, [viewName, currentDate, resolvedFilterViewMode, targetDayCount]);
+  }, [viewName, currentDate, resolvedFilterViewMode, targetDayCount, safeWeekStartDay]);
 
   // --- Event handlers ---
   const showAuxiliaryDateMenu = useCallback((sourceEntry: CalendarEntry, mouseEvent: MouseEvent) => {
@@ -3204,7 +3215,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     }
   }, [eventsWithExternalDropPreview]);
 
-  const fullCalendarInstanceKey = `calendar-${resolvedFilterViewMode}-${resolvedShowFullDay}-${slotDurationMinutes}-${snapDurationMinutes}-${snapCreateSelections}-${createSnapDurationMinutes}-${dayHeaderFormatSetting}-${dayHeaderShowDate}-${timeFormatSetting}-${defaultScrollTimeSetting}-${showNowIndicator}`;
+  const fullCalendarInstanceKey = `calendar-${resolvedFilterViewMode}-${safeWeekStartDay}-${resolvedShowFullDay}-${slotDurationMinutes}-${snapDurationMinutes}-${snapCreateSelections}-${createSnapDurationMinutes}-${dayHeaderFormatSetting}-${dayHeaderShowDate}-${timeFormatSetting}-${defaultScrollTimeSetting}-${showNowIndicator}`;
   // Several display settings intentionally remount FullCalendar through the
   // key above. Initialize that fresh instance from the day the user is
   // currently viewing, not from the component's original mount day.
@@ -3212,6 +3223,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     displayedAnchorRef.current,
     resolvedFilterViewMode,
     targetDayCount,
+    safeWeekStartDay,
   );
 
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
@@ -3233,17 +3245,23 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       window.setTimeout(() => scrollToNow(), 50);
     }
 
-    // Track the semantic anchor separately from FullCalendar's rendered start.
+    // Track the selected day separately from FullCalendar's internal date.
     if (arg.view) {
-      let currentApiDate = arg.view.calendar.getDate();
+      let currentApiDate = resolvedFilterViewMode === "week"
+        ? new Date(displayedAnchorRef.current)
+        : arg.view.calendar.getDate();
 
-      // FullCalendar reports the rendered start. Convert it back to the
-      // semantic anchor used by custom day ranges without shifting week/month.
-      currentApiDate = getCalendarAnchorForStart(
-        currentApiDate,
-        resolvedFilterViewMode,
-        targetDayCount,
-      );
+      // Full weeks keep the selected day even though FullCalendar renders from
+      // firstDay. Responsive partial weeks and ordinary custom ranges persist
+      // their first rendered day, so a width transition cannot hide the target.
+      if (resolvedFilterViewMode !== "week") {
+        currentApiDate = getCalendarAnchorForStart(
+          currentApiDate,
+          resolvedFilterViewMode,
+          targetDayCount,
+          safeWeekStartDay,
+        );
+      }
 
       const timeSource = jumpTargetDate ?? currentDate;
       if (timeSource && isSameCalendarDay(currentApiDate, timeSource)) {
@@ -3262,7 +3280,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         onDateChange(currentApiDate);
       }
     }
-  }, [onDateChange, currentDate, jumpTargetDate, resolvedFilterViewMode, targetDayCount, isFollowingNow, scrollToNow, viewName, isSameCalendarDay]);
+  }, [onDateChange, currentDate, jumpTargetDate, resolvedFilterViewMode, targetDayCount, safeWeekStartDay, isFollowingNow, scrollToNow, viewName, isSameCalendarDay]);
 
   const handleHiddenTimeToggle = useCallback(() => {
     if (hiddenTimeVisible) return;
@@ -3289,17 +3307,13 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, [onToggleFullDay]);
 
   // --- Navigation handlers ---
-  const handleTodayCentered = useCallback(() => {
+  const handleToday = useCallback(() => {
     const api = calendarRef.current?.getApi();
     if (!api) return;
     if (navigationLocked || !canNavigateToday) return;
-    if (resolvedFilterViewMode === "month" || resolvedFilterViewMode === "week") {
+    if (resolvedFilterViewMode === "month") {
       api.today();
       if (onDateChange) onDateChange(api.getDate());
-      if (resolvedFilterViewMode === "week") {
-        setIsFollowingNow(true);
-        setTimeout(() => scrollToNow(), 50);
-      }
       return;
     }
     const today = new Date();
@@ -3307,26 +3321,29 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       today,
       resolvedFilterViewMode,
       targetDayCount,
+      safeWeekStartDay,
     );
-    api.gotoDate(calendarStart);
     displayedAnchorRef.current = new Date(today);
+    api.gotoDate(calendarStart);
     if (onDateChange) onDateChange(today);
     setIsFollowingNow(true);
     setTimeout(() => scrollToNow(), 50);
-  }, [targetDayCount, resolvedFilterViewMode, onDateChange, scrollToNow, navigationLocked, canNavigateToday]);
+  }, [targetDayCount, resolvedFilterViewMode, safeWeekStartDay, onDateChange, scrollToNow, navigationLocked, canNavigateToday]);
 
   const handleDatePickerChange = useCallback((date: Date) => {
     const api = calendarRef.current?.getApi();
     if (!api || navigationLocked) return;
-    const anchor = new Date(date);
-    displayedAnchorRef.current = new Date(anchor);
-    api.gotoDate(getCalendarStartForAnchor(
-      anchor,
+    const selectedDate = new Date(date);
+    const calendarStart = getCalendarStartForAnchor(
+      selectedDate,
       resolvedFilterViewMode,
       targetDayCount,
-    ));
-    if (onDateChange) onDateChange(anchor);
-  }, [navigationLocked, onDateChange, resolvedFilterViewMode, targetDayCount]);
+      safeWeekStartDay,
+    );
+    displayedAnchorRef.current = new Date(selectedDate);
+    api.gotoDate(calendarStart);
+    if (onDateChange) onDateChange(selectedDate);
+  }, [navigationLocked, onDateChange, resolvedFilterViewMode, targetDayCount, safeWeekStartDay]);
 
   const handlePrevClick = useCallback(() => {
     if (navigationLocked || !canNavigatePrev) return;
@@ -3347,18 +3364,22 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       if (onDateChange) onDateChange(api.getDate());
       return;
     }
-    const apiDate = api.getDate();
-    const newStartDate = new Date(apiDate);
-    newStartDate.setDate(newStartDate.getDate() - resolvedNavDays);
-    api.gotoDate(newStartDate);
-    const nextAnchor = getCalendarAnchorForStart(
-      newStartDate,
+    const nextAnchor = new Date(displayedAnchorRef.current);
+    nextAnchor.setDate(nextAnchor.getDate() - resolvedNavDays);
+    const boundedAnchor = clampCalendarNavigationDate(
+      nextAnchor,
+      navigationBoundsStart,
+      navigationBoundsEnd,
+    );
+    displayedAnchorRef.current = new Date(boundedAnchor);
+    api.gotoDate(getCalendarStartForAnchor(
+      boundedAnchor,
       resolvedFilterViewMode,
       targetDayCount,
-    );
-    displayedAnchorRef.current = new Date(nextAnchor);
-    if (onDateChange) onDateChange(nextAnchor);
-  }, [resolvedNavDays, resolvedFilterViewMode, onDateChange, targetDayCount, navigationLocked, canNavigatePrev]);
+      safeWeekStartDay,
+    ));
+    if (onDateChange) onDateChange(boundedAnchor);
+  }, [resolvedNavDays, resolvedFilterViewMode, onDateChange, targetDayCount, safeWeekStartDay, navigationLocked, canNavigatePrev, navigationBoundsStart, navigationBoundsEnd]);
 
   const handleNextClick = useCallback(() => {
     if (navigationLocked || !canNavigateNext) return;
@@ -3377,18 +3398,22 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       if (onDateChange) onDateChange(api.getDate());
       return;
     }
-    const apiDate = api.getDate();
-    const newStartDate = new Date(apiDate);
-    newStartDate.setDate(newStartDate.getDate() + resolvedNavDays);
-    api.gotoDate(newStartDate);
-    const nextAnchor = getCalendarAnchorForStart(
-      newStartDate,
+    const nextAnchor = new Date(displayedAnchorRef.current);
+    nextAnchor.setDate(nextAnchor.getDate() + resolvedNavDays);
+    const boundedAnchor = clampCalendarNavigationDate(
+      nextAnchor,
+      navigationBoundsStart,
+      navigationBoundsEnd,
+    );
+    displayedAnchorRef.current = new Date(boundedAnchor);
+    api.gotoDate(getCalendarStartForAnchor(
+      boundedAnchor,
       resolvedFilterViewMode,
       targetDayCount,
-    );
-    displayedAnchorRef.current = new Date(nextAnchor);
-    if (onDateChange) onDateChange(nextAnchor);
-  }, [resolvedNavDays, resolvedFilterViewMode, onDateChange, targetDayCount, navigationLocked, canNavigateNext]);
+      safeWeekStartDay,
+    ));
+    if (onDateChange) onDateChange(boundedAnchor);
+  }, [resolvedNavDays, resolvedFilterViewMode, onDateChange, targetDayCount, safeWeekStartDay, navigationLocked, canNavigateNext, navigationBoundsStart, navigationBoundsEnd]);
 
   const setMobileUiHiddenClass = useCallback((className: string, hidden: boolean) => {
     if (!isMobile) return;
@@ -3766,7 +3791,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
           onDateChange={handleDatePickerChange}
           onPrevClick={handlePrevClick}
           onNextClick={handleNextClick}
-          onTodayCentered={handleTodayCentered}
+          onToday={handleToday}
           mobileNavHidden={mobileNavHidden}
           floatingNavStyle={floatingNavStyle}
           mode="embedded"

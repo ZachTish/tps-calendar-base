@@ -183,6 +183,116 @@ function createBareView() {
   return view;
 }
 
+function calendarRangeEntry(year, monthIndex, day) {
+  return {
+    entry: { file: { path: `Inbox/${year}-${monthIndex + 1}-${day}.md` } },
+    startDate: new Date(year, monthIndex, day, 9),
+  };
+}
+
+test("filter-based entry spans refresh from 2d to 6d to month without moving the selected day", () => {
+  const view = createBareView();
+  const selectedDay = new Date(2026, 6, 30);
+  const persistedDays = [];
+  let explicitBounds = { start: null, end: null };
+
+  Object.assign(view, {
+    allDayProperty: null,
+    defaultEventDuration: 30,
+    filterRangeAuto: true,
+    autoRangeInitialized: false,
+    lastAutoRangeKey: null,
+    lastLoggedFilterRangeKey: null,
+    currentDate: new Date(selectedDay),
+    viewMode: "week",
+    dayPickerAction: null,
+    config: { set() {} },
+    getFilterRangeBoundsFromConfig: () => explicitBounds,
+    resolveStoredViewMode: () => "filter-based",
+    persistCurrentDate: (date) => persistedDays.push(new Date(date)),
+  });
+
+  const compute = (lastDay) => view.computeFilterDateRange([
+    calendarRangeEntry(2026, 6, 30),
+    calendarRangeEntry(2026, lastDay.month, lastDay.day),
+  ]);
+
+  compute({ month: 6, day: 31 });
+  assert.equal(view.viewMode, "2d");
+  assert.equal(view.currentDate.getTime(), selectedDay.getTime());
+  assert.equal(view.hasExplicitFilterRange, false);
+
+  compute({ month: 7, day: 4 });
+  assert.equal(view.viewMode, "6d");
+  assert.equal(view.currentDate.getTime(), selectedDay.getTime());
+  assert.equal(view.hasExplicitFilterRange, false);
+
+  compute({ month: 7, day: 6 });
+  assert.equal(view.viewMode, "month");
+  assert.equal(view.currentDate.getTime(), selectedDay.getTime());
+  assert.equal(view.hasExplicitFilterRange, false);
+
+  explicitBounds = {
+    start: new Date(2026, 7, 10),
+    end: new Date(2026, 7, 12, 23, 59, 59, 999),
+  };
+  compute({ month: 7, day: 12 });
+  assert.equal(view.viewMode, "3d");
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 10).getTime());
+  assert.equal(view.hasExplicitFilterRange, true);
+
+  explicitBounds = { start: null, end: null };
+  compute({ month: 6, day: 31 });
+  assert.equal(view.viewMode, "2d");
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 10).getTime());
+  assert.equal(view.hasExplicitFilterRange, false);
+  assert.ok(persistedDays.length >= 5);
+});
+
+test("adding explicit bounds re-anchors even when their dates equal the entry span", () => {
+  const view = createBareView();
+  let explicitBounds = { start: null, end: null };
+  const spanEntries = [
+    calendarRangeEntry(2026, 6, 30),
+    calendarRangeEntry(2026, 6, 31),
+  ];
+
+  Object.assign(view, {
+    allDayProperty: null,
+    defaultEventDuration: 30,
+    filterRangeAuto: true,
+    autoRangeInitialized: false,
+    lastAutoRangeKey: null,
+    lastLoggedFilterRangeKey: null,
+    currentDate: new Date(2026, 6, 20),
+    viewMode: "week",
+    dayPickerAction: null,
+    config: { set() {} },
+    getFilterRangeBoundsFromConfig: () => explicitBounds,
+    resolveStoredViewMode: () => "filter-based",
+    persistCurrentDate() {},
+  });
+
+  view.computeFilterDateRange(spanEntries);
+  assert.equal(view.viewMode, "2d");
+  assert.equal(view.currentDate.getTime(), new Date(2026, 6, 20).getTime());
+  assert.equal(view.hasExplicitFilterRange, false);
+
+  explicitBounds = {
+    start: new Date(2026, 6, 30),
+    end: new Date(2026, 6, 31, 23, 59, 59, 999),
+  };
+  view.computeFilterDateRange(spanEntries);
+  assert.equal(view.viewMode, "2d");
+  assert.equal(view.currentDate.getTime(), new Date(2026, 6, 30).getTime());
+  assert.equal(view.hasExplicitFilterRange, true);
+
+  explicitBounds = { start: null, end: null };
+  view.computeFilterDateRange(spanEntries);
+  assert.equal(view.currentDate.getTime(), new Date(2026, 6, 30).getTime());
+  assert.equal(view.hasExplicitFilterRange, false);
+});
+
 function createLocalMatchView(frontmatter, events) {
   const view = createBareView();
   const file = { path: "Inbox/Local.md", basename: "Local" };

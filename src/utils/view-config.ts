@@ -1,3 +1,5 @@
+import { formatLocalCalendarDateKey } from "./filter-date-utils";
+
 export function resolveShowNowIndicator(
   viewValue: unknown,
   globalValue: boolean | undefined,
@@ -13,6 +15,10 @@ export function resolveShowNowIndicator(
 
 export interface CalendarViewPersistenceConfig {
   name?: string | null;
+}
+
+export function snapshotCalendarDateKey(date: Date): string {
+  return formatLocalCalendarDateKey(new Date(date));
 }
 
 /**

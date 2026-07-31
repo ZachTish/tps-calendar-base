@@ -27,39 +27,80 @@ export function getAdaptiveTimeGridDayCount(
   return Math.max(1, Math.min(configuredDayCount, fittingDayCount));
 }
 
+/**
+ * Resolves the first rendered calendar day from the user's selected day.
+ * Custom multi-day ranges are forward-looking. A full seven-day week snaps to
+ * its configured first day; a responsive partial week begins on the selected
+ * day so Today and date-picker targets remain visible.
+ */
 export function getCalendarStartForAnchor(
   anchor: Date,
   viewMode: string,
   displayedDayCount: number,
+  weekStartDay = 1,
 ): Date {
   const start = new Date(anchor);
   if (Number.isNaN(start.getTime())) return start;
-  if (viewMode === "month" || viewMode === "week" || viewMode === "continuous") {
+  if (viewMode === "month" || viewMode === "continuous") {
     return start;
   }
 
-  const dayCount = Number.isFinite(displayedDayCount)
+  start.setHours(0, 0, 0, 0);
+  const safeDisplayedDayCount = Number.isFinite(displayedDayCount)
     ? Math.max(1, Math.round(displayedDayCount))
     : 1;
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - Math.floor((dayCount - 1) / 2));
+  if (viewMode === "week" && safeDisplayedDayCount >= 7) {
+    const safeWeekStartDay = Number.isFinite(weekStartDay)
+      ? Math.max(0, Math.min(6, Math.round(weekStartDay)))
+      : 1;
+    const offset = (start.getDay() - safeWeekStartDay + 7) % 7;
+    start.setDate(start.getDate() - offset);
+  }
   return start;
 }
 
+/** Normalizes FullCalendar's current start back to the persisted first day. */
 export function getCalendarAnchorForStart(
   startDate: Date,
   viewMode: string,
   displayedDayCount: number,
+  weekStartDay = 1,
 ): Date {
-  const anchor = new Date(startDate);
-  if (Number.isNaN(anchor.getTime())) return anchor;
-  if (viewMode === "month" || viewMode === "week" || viewMode === "continuous") {
-    return anchor;
-  }
+  return getCalendarStartForAnchor(startDate, viewMode, displayedDayCount, weekStartDay);
+}
 
-  const dayCount = Number.isFinite(displayedDayCount)
-    ? Math.max(1, Math.round(displayedDayCount))
-    : 1;
-  anchor.setDate(anchor.getDate() + Math.floor((dayCount - 1) / 2));
-  return anchor;
+export function clampCalendarNavigationDate(
+  date: Date,
+  minimum?: Date,
+  maximum?: Date,
+): Date {
+  const next = new Date(date);
+  if (Number.isNaN(next.getTime())) return next;
+  const candidateDay = new Date(next);
+  candidateDay.setHours(0, 0, 0, 0);
+
+  if (minimum) {
+    const lower = new Date(minimum);
+    lower.setHours(0, 0, 0, 0);
+    if (Number.isFinite(lower.getTime()) && candidateDay.getTime() < lower.getTime()) {
+      return lower;
+    }
+  }
+  if (maximum) {
+    const upper = new Date(maximum);
+    upper.setHours(0, 0, 0, 0);
+    if (Number.isFinite(upper.getTime()) && candidateDay.getTime() > upper.getTime()) {
+      return upper;
+    }
+  }
+  return next;
+}
+
+export function shiftCalendarMonthStart(date: Date, direction: number): Date {
+  const next = new Date(date);
+  if (Number.isNaN(next.getTime())) return next;
+  const months = Number.isFinite(direction) ? Math.trunc(direction) : 0;
+  next.setDate(1);
+  next.setMonth(next.getMonth() + months);
+  return next;
 }

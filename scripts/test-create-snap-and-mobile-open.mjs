@@ -1009,10 +1009,6 @@ test("exact filter ranges do not shift into their midpoint in constrained embeds
   const rangeStart = new Date(2026, 6, 31);
 
   for (let configuredDays = 2; configuredDays <= 7; configuredDays += 1) {
-    const centeredAnchor = new Date(rangeStart);
-    centeredAnchor.setDate(
-      centeredAnchor.getDate() + Math.floor((configuredDays - 1) / 2),
-    );
     const renderedDays = getAdaptiveTimeGridDayCount(
       configuredDays,
       400,
@@ -1021,7 +1017,7 @@ test("exact filter ranges do not shift into their midpoint in constrained embeds
       true,
     );
     const renderedStart = getCalendarStartForAnchor(
-      centeredAnchor,
+      rangeStart,
       `${configuredDays}d`,
       renderedDays,
     );
@@ -1034,7 +1030,9 @@ test("exact filter ranges do not shift into their midpoint in constrained embeds
 
   assert.equal(getAdaptiveTimeGridDayCount(3, 400, true, false, false), 1);
   assert.match(calendarViewSource, /filterRangeAuto=\{this\.filterRangeAuto\}/);
+  assert.match(calendarViewSource, /hasExplicitFilterRange=\{this\.hasExplicitFilterRange\}/);
   assert.match(reactViewSource, /filterRangeAuto = false/);
+  assert.match(reactViewSource, /hasExplicitFilterRange = false/);
   assert.match(
     reactViewSource,
     /const derivedFilterRangeDays = useMemo\(\(\) => \{[\s\S]*?if \(!filterRangeAuto\) return null;/,
@@ -1042,7 +1040,7 @@ test("exact filter ranges do not shift into their midpoint in constrained embeds
   assert.match(reactViewSource, /const preserveFilterRangeDayCount =/);
   assert.match(
     reactViewSource,
-    /const preserveFilterRangeDayCount =\s*filterRangeAuto\s*&& derivedFilterRangeDays !== null/,
+    /const preserveFilterRangeDayCount =\s*hasExplicitFilterRange\s*&& derivedFilterRangeDays !== null/,
   );
   assert.match(
     reactViewSource,
