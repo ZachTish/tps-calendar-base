@@ -98,6 +98,20 @@ test('counts inclusive calendar days across DST instead of elapsed hours', () =>
   assert.equal(getInclusiveCalendarDayCount(start, end), 3);
 });
 
+test('filter auto-range preserves every exact one-to-seven-day span', async () => {
+  const { getAutoRangeViewDayCount, getAutoRangeViewMode } =
+    await importUtility('../src/utils/filter-date-utils.ts');
+
+  const expectedModes = ['day', '2d', '3d', '4d', '5d', '6d', '7d'];
+  for (let days = 1; days <= 7; days += 1) {
+    assert.equal(getAutoRangeViewDayCount(days), days);
+    assert.equal(getAutoRangeViewMode(days), expectedModes[days - 1]);
+  }
+  assert.equal(getAutoRangeViewDayCount(8), 30);
+  assert.equal(getAutoRangeViewMode(8), 'month');
+  assert.equal(getAutoRangeViewMode(Number.NaN), 'month');
+});
+
 test('date-only filter literals stay on their local calendar day west of UTC', async () => {
   const bundled = await bundleUtility('../src/utils/filter-date-utils.ts');
   const encoded = Buffer.from(bundled).toString('base64');
@@ -433,15 +447,26 @@ test('calendar date arithmetic preserves local days across DST and clamps months
 });
 
 test('responsive time-grid starts are recalculated from the semantic anchor', async () => {
-  const { getCalendarStartForAnchor } =
+  const { getCalendarAnchorForStart, getCalendarStartForAnchor } =
     await importUtility('../src/utils/calendar-day-count.ts');
   const anchor = new Date(2026, 6, 30, 14, 30);
 
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '2d', 2)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 3)), '2026-07-29');
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '6d', 6)), '2026-07-28');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 1)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 7)), '2026-07-27');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 2)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7)), '2026-07-30');
+
+  const twoDayStart = getCalendarStartForAnchor(anchor, '2d', 2);
+  const sixDayStart = getCalendarStartForAnchor(anchor, '6d', 6);
+  assert.equal(formatLocalDate(getCalendarAnchorForStart(twoDayStart, '2d', 2)), '2026-07-30');
+  assert.equal(formatLocalDate(getCalendarAnchorForStart(sixDayStart, '6d', 6)), '2026-07-30');
+  assert.equal(
+    formatLocalDate(getCalendarAnchorForStart(new Date(2026, 6, 27), 'week', 3)),
+    '2026-07-27',
+  );
 });
 
 function formatLocalDate(date) {
@@ -469,11 +494,15 @@ test('calendar day-count paths use shared calendar-day helper', () => {
   assert.match(hostSource, /const hasExplicitBounds = Boolean\(filterBounds\.start \|\| filterBounds\.end\)/);
   assert.match(hostSource, /: entryMinDate\s*\?\s*new Date\(entryMinDate\)/);
   assert.match(hostSource, /: entryMaxDate\s*\?\s*new Date\(entryMaxDate\)/);
-  assert.match(hostSource, /this\.config\.set\("tps_currentDate", formatLocalCalendarDateKey\(date\)\)/);
+  assert.match(hostSource, /targetConfig\.set\("tps_currentDate", formatLocalCalendarDateKey\(date\)\)/);
   assert.match(mainSource, /parseCalendarDateInput\(date\)/);
   assert.match(mainSource, /parseCalendarDateInput\(targetDate\)/);
   assert.match(reactSource, /onDateChange=\{handleDatePickerChange\}/);
   assert.match(reactSource, /getCalendarStartForAnchor\(/);
+  assert.match(reactSource, /getCalendarAnchorForStart\(/);
+  assert.match(reactSource, /"timeGridRange-2": \{ type: "timeGrid", duration: \{ days: 2 \}/);
+  assert.match(reactSource, /"timeGridRange-6": \{ type: "timeGrid", duration: \{ days: 6 \}/);
+  assert.match(hostSource, /getAutoRangeViewMode\(diffDays\)/);
   assert.match(reactSource, /lastObservedCurrentDatePropRef\.current === currentDate/);
   assert.match(reactSource, /lastAppliedJumpTargetRef\.current === jumpTargetDate/);
   assert.match(reactSource, /displayedAnchorRef\.current \?\? initialAnchorRef\.current \?\? api\.getDate\(\)/);

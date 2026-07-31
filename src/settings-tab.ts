@@ -470,9 +470,11 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       .addDropdown((dropdown) =>
         dropdown
           .addOption("day", "Day")
+          .addOption("2d", "2 Days")
           .addOption("3d", "3 Days")
           .addOption("4d", "4 Days")
           .addOption("5d", "5 Days")
+          .addOption("6d", "6 Days")
           .addOption("7d", "7 Days")
           .addOption("week", "Week")
           .addOption("month", "Month")

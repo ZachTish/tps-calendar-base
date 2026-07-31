@@ -1,5 +1,14 @@
 # TPS Calendar Base
 
+## 0.3.8
+
+- Filter-based calendars now preserve the exact inclusive span from one through seven days. Two-day and six-day results render as two and six columns instead of being rounded up to three or seven; `2d` and `6d` are also available as explicit per-view modes.
+- Every Base view now restores and recalculates its own date state when selected. A one-day view no longer inherits a prior six-day grid or later persists the previous view's centered date after the switch.
+- Automatic range derivation uses the same all-day decision and half-open interval as rendering and visible counts. Midnight ends stay on the occupied prior day, configured note/task/formula all-day properties agree across all paths, and duration-backed all-day spans remain whole local days over daylight-saving transitions.
+- Responsive week navigation keeps its start-anchored semantics when a constrained embed reduces the visible column count. Dedicated week views remain aligned to the configured week and advance by whole weeks.
+- This is a backward-compatible correctness patch with no settings or note-data migration. Minimum supported Obsidian remains 1.10.0.
+- Validation passed all 130 release-declared tests, three containment checks, TypeScript, and reloaded Obsidian 1.12.7 test-vault QA. Exact two-day, six-day, one-day midnight-boundary, cross-view transition, delayed-save isolation, dedicated week navigation, and constrained two-column week-embed flows were inspected without changing production.
+
 ## 0.3.7
 
 - Day, three-day, and other FullCalendar-backed navigable views now show a Calendar-owned count for the events that overlap the exact visible date range. The count follows navigation and data refreshes, includes local-note, inline-task, and external events, and excludes auxiliary-date and archived-warning markers that are not rendered as event cards.
@@ -79,12 +88,13 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 - 2026-07-30 (0.3.4) displayed-day validation: timezone-isolated parsing, daylight-saving arithmetic, nested AND/OR/NOT range logic, equality/strict/one-sided bounds, responsive anchor, stale-prop protection, view-mode precedence, host-scope, public-navigation, and date-picker regressions passed with the complete declared suite and TypeScript. After test deployment and `Reload app without saving`, the permanent three-day fixture restored July 16–18, Previous/Next moved exactly one day, Today centered July 30 in July 29–31, and synthetic filter views verified strict, OR, one-sided, and zero-result additive future-date windows. The synthetic files were moved to `_archive`; the permanent fixture state was restored, no outbound automation was enabled, and production was not accessed.
 - 2026-07-28 (0.3.2) source-alignment validation: all five focused view/efficiency regressions and all 94 release-declared tests passed with TypeScript. The versioned runtime kept the exact `0.3.1` `main.js` bytes, changed only `manifest.json`, and preserved the absent `data.json` state. After `Reload app without saving`, Obsidian 1.12.7 rendered `Inbox/TishOS Phone Calendar QA.base` as its three-day Calendar with four results; no settings, notes, feeds, or outbound automation were changed. The required final build reported the test runtime unchanged, and production was not accessed.
 - 2026-07-31 (0.3.7) visible-count validation: all 121 release-declared tests, three separate containment checks, and TypeScript passed. After test deployment and `Reload app without saving`, `Inbox/TishOS Phone Calendar QA.base` kept its three native Base-query results while Calendar reported zero visible events for July 30–August 1 and three for July 16–18. Today restored the original July 31 state; no notes, settings, feeds, or outbound automation changed, and production was not accessed.
+- 2026-07-31 (0.3.8) exact displayed-day validation: all 130 release-declared tests, three containment checks, and TypeScript passed. After test deployment and `Reload app without saving`, a synthetic Base rendered exactly July 31–August 1 for two days and July 31–August 5 for six days; both all-day and timed midnight-boundary views rendered only July 31. Switching six days to one day remained on July 31 after follow-up refreshes, stale delayed saves were scoped to their originating view, a dedicated week advanced Monday–Sunday, and a constrained embed rendered two readable week columns. Synthetic QA was archived, no outbound automation was enabled, and production was not accessed.
 
 ## Install with BRAT
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.3.7` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.3.8` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 
@@ -213,7 +223,8 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 
 ### Filter-Based View Mode
 - New view mode option that automatically adjusts the calendar display based on your filtered data range.
-- When selected, the calendar analyzes the date range of visible events and chooses the optimal view (day, 3d, 4d, 5d, 7d, week, or month).
+- When selected, the calendar analyzes the occupied local calendar days of visible events and preserves every exact one-through-seven-day span (`day`, `2d`, `3d`, `4d`, `5d`, `6d`, or `7d`); longer spans use month.
+- Filter-based views recalculate independently when the active Base view changes. All-day and timed intervals are half-open, so an event ending exactly at midnight does not add the next day.
 - Unlike the legacy "Auto view mode from visible local events" toggle, filter-based mode doesn't persist manual view changes — it always recalculates the best view based on current data.
 - Particularly useful for filtered views where you want the calendar to adapt to the time span of your query results.
 

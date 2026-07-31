@@ -79,8 +79,11 @@ import {
   intersectFilterDateBounds,
   type FilterDateBounds,
   getAutoRangeViewDayCount,
+  getAutoRangeViewMode,
   getInclusiveCalendarDayCount,
 } from "./utils/filter-date-utils";
+import { getInclusiveCalendarDisplayBounds } from "./utils/calendar-display-interval";
+import { isCalendarEntryDisplayedAllDay } from "./utils/calendar-entry-all-day";
 import {
   extractCalendarCreationModeFromFilters,
   extractCalendarTaskLineDefaultsFromFilters,
@@ -94,7 +97,10 @@ import {
   ensureCalendarDailyNote,
   ensureCalendarDailyNoteTitleFallback,
 } from "./utils/daily-note-creation";
-import { resolveShowNowIndicator } from "./utils/view-config";
+import {
+  isCalendarViewPersistenceTargetCurrent,
+  resolveShowNowIndicator,
+} from "./utils/view-config";
 
 type CalendarEventTitlePromptResult = {
   title: string;
@@ -487,6 +493,7 @@ export class CalendarView extends BasesView {
   private entryBoundsMax: Date | null = null; // Pure entry max date (before filter config override)
   private autoRangeInitialized = false; // Whether the initial auto-range has been applied
   private lastAutoRangeKey: string | null = null; // Tracks last range to detect significant changes
+  private lastLoadedViewName: string | null = null; // Prevents one Base view from inheriting another view's range
   private saveDateTimeout: ReturnType<typeof setTimeout> | null = null; // Debounce timer for date persistence
   private explicitViewModePinned = false;
 
@@ -1087,6 +1094,29 @@ export class CalendarView extends BasesView {
       // console.log("[DEBUG-CALENDAR-V2] loadConfig: Config is null or undefined");
       return;
     }
+    const activeViewName = String(this.config.name || "");
+    const viewChanged = this.lastLoadedViewName !== null
+      && this.lastLoadedViewName !== activeViewName;
+    this.lastLoadedViewName = activeViewName;
+    if (viewChanged) {
+      if (this.saveDateTimeout) {
+        clearTimeout(this.saveDateTimeout);
+        this.saveDateTimeout = null;
+      }
+      this.autoRangeInitialized = false;
+      this.lastAutoRangeKey = null;
+      this.lastLoggedFilterRangeKey = null;
+      this.filterRangeStart = null;
+      this.filterRangeEnd = null;
+      this.filterRangeDays = 0;
+      this.navigationBoundsStart = null;
+      this.navigationBoundsEnd = null;
+      this.entryBoundsMin = null;
+      this.entryBoundsMax = null;
+      this.navigationLockedByAutoRange = false;
+      this.currentDate = null;
+      this.jumpTargetDate = null;
+    }
     // console.log("[DEBUG-CALENDAR-V2] loadConfig: Loading configuration...");
     // Date properties
     // IMPORTANT: BasesPropertyId is a string (e.g. "note.date"). Do not use object fallbacks here;
@@ -1179,7 +1209,7 @@ export class CalendarView extends BasesView {
 
     // Toggle Day Picker Action visibility
     if (this.dayPickerAction) {
-      const allowedModes = ['day', '3d', '4d', '5d', '7d', 'week'];
+      const allowedModes = ['day', '2d', '3d', '4d', '5d', '6d', '7d', 'week'];
       if (allowedModes.includes(this.viewMode)) {
         this.dayPickerAction.style.display = '';
       } else {
@@ -2335,7 +2365,7 @@ export class CalendarView extends BasesView {
   /**
    * Computes the date range from explicit date filters when available,
    * otherwise from visible local (non-external, non-virtual) entries.
-   * If entries span 7 days or less → day-range views (1d/3d/4d/5d/7d)
+   * If entries span 7 days or less → an exact 1d–7d day-range view
    * If entries span more than 7 days → month view
    * Applies the initial/current filter date only on first load or when the
    * effective range changes, so mutation refreshes do not jump the calendar.
@@ -2345,8 +2375,14 @@ export class CalendarView extends BasesView {
     let entryMaxDate: Date | null = null;
 
     for (const entry of entries) {
-      const startDate = entry.startDate;
-      const endDate = entry.endDate || startDate;
+      const occupiedBounds = getInclusiveCalendarDisplayBounds({
+        startDate: entry.startDate,
+        endDate: entry.endDate,
+        isAllDay: isCalendarEntryDisplayedAllDay(entry, this.allDayProperty),
+        defaultEventDurationMinutes: this.defaultEventDuration,
+      });
+      if (!occupiedBounds) continue;
+      const { start: startDate, end: endDate } = occupiedBounds;
 
       if (!entryMinDate || startDate < entryMinDate) {
         entryMinDate = new Date(startDate);
@@ -2420,7 +2456,7 @@ export class CalendarView extends BasesView {
         this.currentDate = today;
         // In filter-based mode, data/filters can arrive after initial render.
         // Keep initialization open so the next pass can still auto-select
-        // day/3d/4d/5d/7d/month from the resolved range instead of staying on
+        // the exact 1d–7d range or month from the resolved span instead of staying on
         // the temporary week placeholder.
         if (!this.filterRangeAuto) {
           this.autoRangeInitialized = true;
@@ -2487,20 +2523,11 @@ export class CalendarView extends BasesView {
       }
     }
 
-    const deriveAutoViewMode = (days: number): CalendarViewMode => {
-      if (days <= 1) return "day";
-      if (days <= 3) return "3d";
-      if (days <= 4) return "4d";
-      if (days <= 5) return "5d";
-      if (days <= 7) return "7d";
-      return "month";
-    };
-
     // In filter-based mode with explicit date bounds, always apply the derived mode.
     // This avoids stale "week" state when bounds resolve after initial context-date pass.
     if (this.filterRangeAuto && hasExplicitBounds) {
       const previousViewMode = this.viewMode;
-      const nextViewMode = deriveAutoViewMode(diffDays);
+      const nextViewMode = getAutoRangeViewMode(diffDays) as CalendarViewMode;
       this.viewMode = nextViewMode;
 
       if (shouldApplyAutoRangeDate) {
@@ -2523,7 +2550,7 @@ export class CalendarView extends BasesView {
       }
       this.autoRangeInitialized = true;
       if (this.dayPickerAction) {
-        const allowedModes = ['day', '3d', '4d', '5d', '7d', 'week'];
+        const allowedModes = ['day', '2d', '3d', '4d', '5d', '6d', '7d', 'week'];
         this.dayPickerAction.style.display = allowedModes.includes(this.viewMode) ? '' : 'none';
       }
       return;
@@ -2544,7 +2571,7 @@ export class CalendarView extends BasesView {
         const concreteSavedViewMode =
           savedViewMode && savedViewMode !== "filter-based" ? savedViewMode : undefined;
         if (!concreteSavedViewMode) {
-          this.viewMode = deriveAutoViewMode(diffDays);
+          this.viewMode = getAutoRangeViewMode(diffDays) as CalendarViewMode;
         }
 
         // Default visible date to today when there is no saved/restored date.
@@ -2572,7 +2599,7 @@ export class CalendarView extends BasesView {
       this.autoRangeInitialized = true;
     }
     if (this.dayPickerAction) {
-      const allowedModes = ['day', '3d', '4d', '5d', '7d', 'week'];
+      const allowedModes = ['day', '2d', '3d', '4d', '5d', '6d', '7d', 'week'];
       this.dayPickerAction.style.display = allowedModes.includes(this.viewMode) ? '' : 'none';
     }
   }
@@ -5309,6 +5336,7 @@ export class CalendarView extends BasesView {
       <StrictMode>
         <AppContext.Provider value={this.app}>
           <CalendarReactView
+            key={`calendar-view-${this.config.name}`}
             entries={[...this.entries]}
             weekStartDay={this.weekStartDay}
             viewMode={this.viewMode}
@@ -7745,9 +7773,11 @@ export class CalendarView extends BasesView {
     const raw = String(value ?? "").trim().toLowerCase();
     const validModes: CalendarViewMode[] = [
       "day",
+      "2d",
       "3d",
       "4d",
       "5d",
+      "6d",
       "7d",
       "week",
       "month",
@@ -7820,10 +7850,22 @@ export class CalendarView extends BasesView {
     if (this.saveDateTimeout) {
       clearTimeout(this.saveDateTimeout);
     }
-    this.saveDateTimeout = setTimeout(() => {
-      this.config.set("tps_currentDate", formatLocalCalendarDateKey(date));
-      this.saveDateTimeout = null;
+    const targetConfig = this.config;
+    const targetViewName = String(targetConfig.name || "");
+    const timeout = setTimeout(() => {
+      if (this.saveDateTimeout === timeout) {
+        this.saveDateTimeout = null;
+      }
+      if (!isCalendarViewPersistenceTargetCurrent(
+        targetConfig,
+        targetViewName,
+        this.config,
+      )) {
+        return;
+      }
+      targetConfig.set("tps_currentDate", formatLocalCalendarDateKey(date));
     }, 1000);
+    this.saveDateTimeout = timeout;
   }
 
   public jumpToDateTime(date: Date): void {
@@ -9270,9 +9312,11 @@ export class CalendarView extends BasesView {
             default: plugin?.settings?.viewMode || "week",
             options: {
               day: "Day",
+              "2d": "2 Day",
               "3d": "3 Day",
               "4d": "4 Day",
               "5d": "5 Day",
+              "6d": "6 Day",
               "7d": "7 Day",
               week: "Week",
               month: "Month",

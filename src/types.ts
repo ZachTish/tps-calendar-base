@@ -2,9 +2,11 @@ export type CalendarStyleMatch = "all" | "any";
 export type CalendarField = "status" | "priority" | string;
 export type CalendarViewMode =
     | "day"
+    | "2d"
     | "3d"
     | "4d"
     | "5d"
+    | "6d"
     | "7d"
     | "week"
     | "month"

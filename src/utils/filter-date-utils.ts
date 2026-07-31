@@ -574,13 +574,19 @@ function splitTopLevelArithmetic(
   return null;
 }
 
+export type AutoRangeViewMode = "day" | "2d" | "3d" | "4d" | "5d" | "6d" | "7d" | "month";
+
 export function getAutoRangeViewDayCount(diffDays: number): number {
-  if (diffDays <= 1) return 1;
-  if (diffDays <= 3) return 3;
-  if (diffDays <= 4) return 4;
-  if (diffDays <= 5) return 5;
-  if (diffDays <= 7) return 7;
-  return 30;
+  if (!Number.isFinite(diffDays)) return 30;
+  const wholeDays = Math.max(1, Math.round(diffDays));
+  return wholeDays <= 7 ? wholeDays : 30;
+}
+
+export function getAutoRangeViewMode(diffDays: number): AutoRangeViewMode {
+  const dayCount = getAutoRangeViewDayCount(diffDays);
+  if (dayCount > 7) return "month";
+  if (dayCount === 1) return "day";
+  return `${dayCount}d` as AutoRangeViewMode;
 }
 
 export function getInclusiveCalendarDayCount(startDate: Date, endDate: Date): number {

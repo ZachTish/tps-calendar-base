@@ -102,7 +102,7 @@ export function migrateSettings(stored: any): CalendarPluginSettings {
         return identity.has(key.toLowerCase()) ? fallback : key;
     };
 
-    const viewMode = ["day", "3d", "4d", "5d", "7d", "week", "month", "continuous", "filter-based"].includes(stored?.viewMode)
+    const viewMode = ["day", "2d", "3d", "4d", "5d", "6d", "7d", "week", "month", "continuous", "filter-based"].includes(stored?.viewMode)
         ? stored.viewMode
         : "week";
     const weekStartDay = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes(stored?.weekStartDay)

@@ -215,6 +215,17 @@ test("saved empty style rules and supported color targets survive settings migra
   assert.doesNotMatch(settingsTabSource, /const debouncedSave = debounce/);
 });
 
+test("two-day and six-day calendar modes survive migration and remain configurable", async () => {
+  const { migrateSettings } = await importSettingsMigration();
+
+  assert.equal(migrateSettings({ viewMode: "2d" }).viewMode, "2d");
+  assert.equal(migrateSettings({ viewMode: "6d" }).viewMode, "6d");
+  assert.match(settingsTabSource, /\.addOption\("2d", "2 Days"\)/);
+  assert.match(settingsTabSource, /\.addOption\("6d", "6 Days"\)/);
+  assert.match(viewOptionsSource, /"2d": "2 Day"/);
+  assert.match(viewOptionsSource, /"6d": "6 Day"/);
+});
+
 test("calendar settings persistence merges local keys into latest data and preserves unknown fields", async () => {
   const { CalendarSettingsPersistence } = await importSettingsPersistence();
   const { migrateSettings } = await importSettingsMigration();
@@ -924,6 +935,7 @@ test("reading-mode embedded calendars stay compact and preserve Bases chrome by 
   assert.match(reactViewSource, /return candidates\.length \? Math\.min\(\.\.\.candidates\) : layoutWidth/);
   assert.match(reactViewSource, /getAdaptiveTimeGridDayCount\(\s*configuredDayCount,\s*containerWidth,\s*isEmbedMode \|\| isCanvasEmbed,\s*isCanvasEmbed,/);
   assert.match(reactViewSource, /"timeGridRange-2": \{ type: "timeGrid", duration: \{ days: 2 \}, buttonText: "2d" \}/);
+  assert.match(reactViewSource, /"timeGridRange-6": \{ type: "timeGrid", duration: \{ days: 6 \}, buttonText: "6d" \}/);
   assert.match(embedCalendarCss, /\.canvas-node-content \.bases-calendar-scroll--canvas-embedded/);
   assert.match(embedCalendarCss, /\.canvas-node-content \.bases-calendar-wrapper\.bases-calendar-canvas-embedded/);
   assert.match(embedCalendarCss, /\.bases-calendar-wrapper\.bases-calendar-canvas-embedded \.fc \.fc-timegrid-body/);

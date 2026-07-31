@@ -39,3 +39,21 @@ export function getCalendarStartForAnchor(
   start.setDate(start.getDate() - Math.floor((dayCount - 1) / 2));
   return start;
 }
+
+export function getCalendarAnchorForStart(
+  startDate: Date,
+  viewMode: string,
+  displayedDayCount: number,
+): Date {
+  const anchor = new Date(startDate);
+  if (Number.isNaN(anchor.getTime())) return anchor;
+  if (viewMode === "month" || viewMode === "week" || viewMode === "continuous") {
+    return anchor;
+  }
+
+  const dayCount = Number.isFinite(displayedDayCount)
+    ? Math.max(1, Math.round(displayedDayCount))
+    : 1;
+  anchor.setDate(anchor.getDate() + Math.floor((dayCount - 1) / 2));
+  return anchor;
+}

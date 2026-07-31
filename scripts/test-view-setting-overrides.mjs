@@ -26,10 +26,36 @@ test("calendar now-indicator view setting overrides or inherits the global setti
   assert.equal(resolveShowNowIndicator(undefined, false), false, "an absent view value inherits global Hide");
 });
 
+test("delayed date persistence remains scoped to the view that scheduled it", async () => {
+  const { isCalendarViewPersistenceTargetCurrent } = await importViewConfigUtility();
+  const firstView = { name: "First" };
+  const replacementWithSameName = { name: "First" };
+
+  assert.equal(
+    isCalendarViewPersistenceTargetCurrent(firstView, "First", firstView),
+    true,
+  );
+  assert.equal(
+    isCalendarViewPersistenceTargetCurrent(firstView, "First", replacementWithSameName),
+    false,
+    "a different config object cannot receive the delayed write",
+  );
+  firstView.name = "Second";
+  assert.equal(
+    isCalendarViewPersistenceTargetCurrent(firstView, "First", firstView),
+    false,
+    "a reused wrapper cannot receive a write scheduled for its prior view name",
+  );
+});
+
 test("calendar renderer resolves the per-view now-indicator setting", () => {
   const source = readFileSync(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
 
   assert.match(source, /showNowIndicator=\{resolveShowNowIndicator\(/);
   assert.match(source, /this\.config\.get\("showNowIndicator"\)/);
   assert.match(source, /this\.plugin\.settings\.showNowIndicator/);
+  assert.match(source, /if \(viewChanged\) \{[\s\S]*?clearTimeout\(this\.saveDateTimeout\)/);
+  assert.match(source, /const targetConfig = this\.config;/);
+  assert.match(source, /isCalendarViewPersistenceTargetCurrent\([\s\S]*?targetConfig,[\s\S]*?targetViewName,[\s\S]*?this\.config/);
+  assert.match(source, /targetConfig\.set\("tps_currentDate"/);
 });

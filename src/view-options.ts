@@ -86,9 +86,11 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
           default: plugin?.settings?.viewMode || "week",
           options: {
             day: "Day",
+            "2d": "2 Day",
             "3d": "3 Day",
             "4d": "4 Day",
             "5d": "5 Day",
+            "6d": "6 Day",
             "7d": "7 Day",
             week: "Week",
             month: "Month",

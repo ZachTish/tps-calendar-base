@@ -1,71 +1,23 @@
 import { useMemo } from "react";
-import { BasesEntry, BasesPropertyId, Value } from "obsidian";
+import { BasesEntry, BasesPropertyId } from "obsidian";
 import type { CalendarEntry } from "../CalendarReactView";
+import {
+  isCalendarEntryDisplayedAllDay,
+  isDateValue,
+  normalizeValue,
+  tryGetValue,
+} from "../utils/calendar-entry-all-day";
 import {
   doesCalendarDisplayIntervalOverlapRange,
   normalizeCalendarDisplayInterval,
 } from "../utils/calendar-display-interval";
 import { countVisibleCalendarDisplayIntervals } from "../utils/calendar-visible-count";
 
-const normalizeValue = (value: unknown): string => {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "object") {
-    if ("data" in (value as object)) {
-      return normalizeValue((value as { data: unknown }).data);
-    }
-    if (Array.isArray(value)) {
-      return value.map((item) => normalizeValue(item)).filter(Boolean).join(", ");
-    }
-    if (isDateValue(value)) {
-      return value.date ? value.date.toISOString() : "";
-    }
-  }
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  if (typeof value === "boolean") return value ? "true" : "false";
-  return String(value);
-};
-
-const isDateValue = (value: unknown): value is { date: Date; time?: boolean } => {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "date" in value &&
-    (value as any).date instanceof Date
-  );
-};
-
-const tryGetValue = (
-  entry: BasesEntry,
-  propId: BasesPropertyId,
-): Value | null => {
-  try {
-    return entry.getValue(propId);
-  } catch {
-    return null;
-  }
-};
-
 const formatAllDayDateKey = (date: Date): string => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-};
-
-export const isCalendarEntryDisplayedAllDay = (
-  calEntry: CalendarEntry,
-  allDayProperty?: BasesPropertyId | null,
-): boolean => {
-  if (calEntry.isAuxiliaryDate) return calEntry.forceAllDay === true;
-  if (calEntry.isExternal) return !!calEntry.externalEvent?.isAllDay;
-
-  const allDaySource = allDayProperty
-    ? tryGetValue(calEntry.entry, allDayProperty)
-    : null;
-  const normalizedAllDaySource = normalizeValue(allDaySource).trim().toLowerCase();
-  return calEntry.forceAllDay === true
-    || ["true", "yes", "y", "1"].includes(normalizedAllDaySource);
 };
 
 interface UseCalendarEventsOptions {
@@ -258,4 +210,4 @@ function normalizeCssColorValue(rawValue: string): string {
 }
 
 // Re-export helpers used by other modules in CalendarReactView
-export { normalizeValue, isDateValue, tryGetValue };
+export { isCalendarEntryDisplayedAllDay, normalizeValue, isDateValue, tryGetValue };

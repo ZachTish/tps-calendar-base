@@ -24,8 +24,10 @@ async function importUtility(relativePath) {
 
 const { countVisibleCalendarDisplayIntervals, countVisibleCalendarEntries } =
   await importUtility('../src/utils/calendar-visible-count.ts');
-const { normalizeCalendarDisplayInterval } =
+const { getInclusiveCalendarDisplayBounds, normalizeCalendarDisplayInterval } =
   await importUtility('../src/utils/calendar-display-interval.ts');
+const { isCalendarEntryDisplayedAllDay } =
+  await importUtility('../src/utils/calendar-entry-all-day.ts');
 const { formatVisibleEventCountLabel, shouldRenderCalendarNavigation } =
   await importUtility('../src/components/CalendarNavigation.tsx');
 
@@ -167,6 +169,64 @@ test('all-day display snapping excludes a non-midnight raw tail from day two', (
   assert.equal(interval.end.getTime(), new Date(2026, 6, 11).getTime());
 });
 
+test('entry-derived day bounds exclude half-open midnight end boundaries', () => {
+  const allDay = getInclusiveCalendarDisplayBounds({
+    startDate: new Date(2026, 6, 31),
+    endDate: new Date(2026, 7, 1),
+    isAllDay: true,
+    defaultEventDurationMinutes: 60,
+  });
+  const timed = getInclusiveCalendarDisplayBounds({
+    startDate: new Date(2026, 6, 31, 23),
+    endDate: new Date(2026, 7, 1),
+    isAllDay: false,
+    defaultEventDurationMinutes: 60,
+  });
+  const crossing = getInclusiveCalendarDisplayBounds({
+    startDate: new Date(2026, 6, 31, 23),
+    endDate: new Date(2026, 7, 1, 1),
+    isAllDay: false,
+    defaultEventDurationMinutes: 60,
+  });
+
+  assert.ok(allDay);
+  assert.ok(timed);
+  assert.ok(crossing);
+  assert.equal(allDay.end.getDate(), 31);
+  assert.equal(timed.end.getDate(), 31);
+  assert.equal(crossing.end.getDate(), 1);
+});
+
+test('configured Bases all-day values drive the shared display and range predicate', () => {
+  const values = new Map([
+    ['note.allDay', { data: 'yes' }],
+    ['formula.allDay', { data: true }],
+    ['task.allDay', { data: ['1'] }],
+    ['note.notAllDay', { data: 'no' }],
+  ]);
+  const entry = {
+    getValue(property) {
+      if (!values.has(property)) throw new Error(`Missing property: ${property}`);
+      return values.get(property);
+    },
+  };
+  const calendarEntry = {
+    entry,
+    startDate: new Date(2026, 6, 31, 15),
+  };
+
+  assert.equal(isCalendarEntryDisplayedAllDay(calendarEntry, 'note.allDay'), true);
+  assert.equal(isCalendarEntryDisplayedAllDay(calendarEntry, 'formula.allDay'), true);
+  assert.equal(isCalendarEntryDisplayedAllDay(calendarEntry, 'task.allDay'), true);
+  assert.equal(isCalendarEntryDisplayedAllDay(calendarEntry, 'note.notAllDay'), false);
+  assert.equal(isCalendarEntryDisplayedAllDay(calendarEntry, 'missing.property'), false);
+  assert.equal(isCalendarEntryDisplayedAllDay({ ...calendarEntry, forceAllDay: true }, null), true);
+  assert.equal(
+    isCalendarEntryDisplayedAllDay({ ...calendarEntry, isExternal: true, externalEvent: { isAllDay: true } }, null),
+    true,
+  );
+});
+
 test('configured missing-end duration is identical for rendering and counting', () => {
   const entry = { startDate: new Date(2026, 6, 9, 23, 30) };
   const range = {
@@ -278,6 +338,53 @@ test('date-only and all-day-like ranges stay exact across DST transitions', asyn
   });
 });
 
+test('duration-backed multi-day all-day spans remain whole days across DST', async () => {
+  const bundled = await bundleUtility('../src/utils/calendar-display-interval.ts');
+  const encoded = Buffer.from(bundled).toString('base64');
+  const probe = `
+    const { getInclusiveCalendarDisplayBounds, normalizeCalendarDisplayInterval } =
+      await import("data:text/javascript;base64,${encoded}");
+    const summarize = (start) => {
+      const sourceEnd = new Date(start.getTime() + 2 * 24 * 60 * 60 * 1000);
+      const input = {
+        startDate: start,
+        endDate: sourceEnd,
+        isAllDay: true,
+        defaultEventDurationMinutes: 60,
+      };
+      const interval = normalizeCalendarDisplayInterval(input);
+      const bounds = getInclusiveCalendarDisplayBounds(input);
+      return {
+        rawEndHour: sourceEnd.getHours(),
+        renderedEnd: interval && [interval.end.getFullYear(), interval.end.getMonth() + 1, interval.end.getDate()],
+        occupiedEnd: bounds && [bounds.end.getFullYear(), bounds.end.getMonth() + 1, bounds.end.getDate()],
+      };
+    };
+    console.log(JSON.stringify({
+      spring: summarize(new Date(2026, 2, 8)),
+      fall: summarize(new Date(2026, 10, 1)),
+    }));
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
+    env: { ...process.env, TZ: 'America/Chicago' },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout.trim()), {
+    spring: {
+      rawEndHour: 1,
+      renderedEnd: [2026, 3, 10],
+      occupiedEnd: [2026, 3, 9],
+    },
+    fall: {
+      rawEndHour: 23,
+      renderedEnd: [2026, 11, 3],
+      occupiedEnd: [2026, 11, 2],
+    },
+  });
+});
+
 test('invalid ranges and event intervals fail closed', () => {
   const validRange = {
     start: new Date(2026, 6, 10),
@@ -330,6 +437,10 @@ test('Calendar owns its visible count without mutating Obsidian result-count DOM
     new URL('../src/hooks/useCalendarEvents.ts', import.meta.url),
     'utf8',
   );
+  const allDaySource = fs.readFileSync(
+    new URL('../src/utils/calendar-entry-all-day.ts', import.meta.url),
+    'utf8',
+  );
   const countSource = fs.readFileSync(
     new URL('../src/utils/calendar-visible-count.ts', import.meta.url),
     'utf8',
@@ -349,11 +460,18 @@ test('Calendar owns its visible count without mutating Obsidian result-count DOM
   assert.match(reactViewSource, /const \{ basesEntryMap, events, visibleEventCount \} = useCalendarEvents\(\{/);
   assert.match(reactViewSource, /visibleEventCount=\{visibleEventCount\}/);
   assert.match(eventsHookSource, /normalizeCalendarDisplayInterval\(\{/);
+  assert.match(eventsHookSource, /isCalendarEntryDisplayedAllDay\(calEntry, allDayProperty\)/);
   assert.match(eventsHookSource, /defaultEventDurationMinutes: defaultEventDuration/);
   assert.match(eventsHookSource, /countVisibleCalendarDisplayIntervals\(normalizedEntries, visibleDateRange\)/);
   assert.match(eventsHookSource, /doesCalendarDisplayIntervalOverlapRange\(interval/);
   assert.doesNotMatch(eventsHookSource, /startDate\.getTime\(\) \+ 60 \* 60 \* 1000/);
   assert.match(countSource, /normalizeCalendarDisplayInterval\(\{/);
+  assert.match(calendarViewSource, /getInclusiveCalendarDisplayBounds\(\{/);
+  assert.match(calendarViewSource, /isAllDay: isCalendarEntryDisplayedAllDay\(entry, this\.allDayProperty\)/);
+  assert.match(calendarViewSource, /const viewChanged = this\.lastLoadedViewName !== null/);
+  assert.match(calendarViewSource, /if \(viewChanged\) \{[\s\S]*?this\.autoRangeInitialized = false;[\s\S]*?this\.currentDate = null;/);
+  assert.match(calendarViewSource, /key=\{`calendar-view-\$\{this\.config\.name\}`\}/);
+  assert.match(allDaySource, /tryGetValue\(calEntry\.entry, allDayProperty\)/);
   assert.match(countSource, /doesCalendarDisplayIntervalOverlapRange\(interval, range\)/);
   assert.match(navigationSource, /className="bases-calendar-visible-event-count"/);
   assert.match(navigationSource, /shouldRenderCalendarNavigation\(showNavButtons, visibleEventCount, mobileNavHidden\)/);

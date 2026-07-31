@@ -47,10 +47,14 @@ import {
   type CalendarExternalDropPayload,
 } from "./utils/calendar-external-drop";
 import {
+  getCalendarAnchorForStart,
   getAdaptiveTimeGridDayCount,
   getCalendarStartForAnchor,
 } from "./utils/calendar-day-count";
-import { getInclusiveCalendarDayCount } from "./utils/filter-date-utils";
+import {
+  getAutoRangeViewMode,
+  getInclusiveCalendarDayCount,
+} from "./utils/filter-date-utils";
 
 const DEFAULT_SLOT_MIN_TIME = "00:00:00";
 const DEFAULT_SLOT_MAX_TIME = "24:00:00";
@@ -98,7 +102,7 @@ const CALENDAR_EVENT_DENSITY_CSS = `
   padding-right: 3px !important;
 }
 `;
-type ViewMode = "day" | "3d" | "4d" | "5d" | "7d" | "week" | "month" | "continuous" | "filter-based";
+type ViewMode = "day" | "2d" | "3d" | "4d" | "5d" | "6d" | "7d" | "week" | "month" | "continuous" | "filter-based";
 type ScrollSnapshotKind = "timegrid" | "continuous" | "surface";
 const HOURS_TOGGLE_EDGE_THRESHOLD_PX = 24;
 const IDLE_RETURN_TO_NOW_MS = 30_000;
@@ -109,9 +113,11 @@ const MOBILE_SWIPE_HIDE_TIMEOUT_MS = 260;
 
 function getConfiguredTimeGridDayCount(viewMode: ViewMode): number {
   if (viewMode === "day") return 1;
+  if (viewMode === "2d") return 2;
   if (viewMode === "3d") return 3;
   if (viewMode === "4d") return 4;
   if (viewMode === "5d") return 5;
+  if (viewMode === "6d") return 6;
   if (viewMode === "7d" || viewMode === "week") return 7;
   return 7;
 }
@@ -833,12 +839,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     if (viewMode !== "filter-based") return viewMode;
     const span = derivedFilterRangeDays;
     if (!span) return "week";
-    if (span <= 1) return "day";
-    if (span <= 3) return "3d";
-    if (span <= 4) return "4d";
-    if (span <= 5) return "5d";
-    if (span <= 7) return "7d";
-    return "month";
+    return getAutoRangeViewMode(span);
   }, [viewMode, derivedFilterRangeDays]);
 
   const configuredDayCount = getConfiguredTimeGridDayCount(resolvedFilterViewMode);
@@ -3224,14 +3225,13 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     if (arg.view) {
       let currentApiDate = arg.view.calendar.getDate();
 
-      // If in a centered view mode (3d, 5d, 7d), we need to shift the date back to center
-      // because the parent expects the center date, but FullCalendar reports the start date.
-      if (resolvedFilterViewMode !== "month" && resolvedFilterViewMode !== "week" && resolvedFilterViewMode !== "continuous") {
-        const offset = Math.floor((targetDayCount - 1) / 2);
-        const centered = new Date(currentApiDate);
-        centered.setDate(centered.getDate() + offset);
-        currentApiDate = centered;
-      }
+      // FullCalendar reports the rendered start. Convert it back to the
+      // semantic anchor used by custom day ranges without shifting week/month.
+      currentApiDate = getCalendarAnchorForStart(
+        currentApiDate,
+        resolvedFilterViewMode,
+        targetDayCount,
+      );
 
       const timeSource = jumpTargetDate ?? currentDate;
       if (timeSource && isSameCalendarDay(currentApiDate, timeSource)) {
@@ -3339,10 +3339,13 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     const newStartDate = new Date(apiDate);
     newStartDate.setDate(newStartDate.getDate() - resolvedNavDays);
     api.gotoDate(newStartDate);
-    const offset = Math.floor((targetDayCount - 1) / 2);
-    const centerDate = new Date(newStartDate);
-    centerDate.setDate(centerDate.getDate() + offset);
-    if (onDateChange) onDateChange(centerDate);
+    const nextAnchor = getCalendarAnchorForStart(
+      newStartDate,
+      resolvedFilterViewMode,
+      targetDayCount,
+    );
+    displayedAnchorRef.current = new Date(nextAnchor);
+    if (onDateChange) onDateChange(nextAnchor);
   }, [resolvedNavDays, resolvedFilterViewMode, onDateChange, targetDayCount, navigationLocked, canNavigatePrev]);
 
   const handleNextClick = useCallback(() => {
@@ -3366,10 +3369,13 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     const newStartDate = new Date(apiDate);
     newStartDate.setDate(newStartDate.getDate() + resolvedNavDays);
     api.gotoDate(newStartDate);
-    const offset = Math.floor((targetDayCount - 1) / 2);
-    const centerDate = new Date(newStartDate);
-    centerDate.setDate(centerDate.getDate() + offset);
-    if (onDateChange) onDateChange(centerDate);
+    const nextAnchor = getCalendarAnchorForStart(
+      newStartDate,
+      resolvedFilterViewMode,
+      targetDayCount,
+    );
+    displayedAnchorRef.current = new Date(nextAnchor);
+    if (onDateChange) onDateChange(nextAnchor);
   }, [resolvedNavDays, resolvedFilterViewMode, onDateChange, targetDayCount, navigationLocked, canNavigateNext]);
 
   const setMobileUiHiddenClass = useCallback((className: string, hidden: boolean) => {
@@ -3616,6 +3622,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     "timeGridRange-3": { type: "timeGrid", duration: { days: 3 }, buttonText: "3d" },
     "timeGridRange-4": { type: "timeGrid", duration: { days: 4 }, buttonText: "4d" },
     "timeGridRange-5": { type: "timeGrid", duration: { days: 5 }, buttonText: "5d" },
+    "timeGridRange-6": { type: "timeGrid", duration: { days: 6 }, buttonText: "6d" },
     "timeGridRange-7": { type: "timeGrid", duration: { days: 7 }, buttonText: "7d" },
     timeGridWeek: { buttonText: "Week" },
     dayGridMonth: { buttonText: "Month" },

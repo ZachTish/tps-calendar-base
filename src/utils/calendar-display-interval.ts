@@ -75,8 +75,15 @@ export function normalizeCalendarDisplayInterval({
   if (isLocalMidnight(sourceEnd) && sourceEnd.getTime() > start.getTime()) {
     end = new Date(sourceEnd);
   } else {
+    // Duration-backed all-day records may end an hour away from midnight when
+    // a nominal 24-hour day crosses DST. Preserve their intended whole-day
+    // span using tolerant elapsed-day rounding, then advance by local days.
+    const elapsedDays = (sourceEnd.getTime() - sourceStart.getTime()) / 86_400_000;
+    const spanDays = Number.isFinite(elapsedDays) && elapsedDays > 0
+      ? Math.max(1, Math.round(elapsedDays))
+      : 1;
     end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    end.setDate(end.getDate() + spanDays);
   }
 
   return { sourceStart, sourceEnd, start, end };
@@ -102,4 +109,25 @@ export function doesCalendarDisplayIntervalOverlapRange(
     return false;
   }
   return intervalEnd > rangeStart && intervalStart < rangeEnd;
+}
+
+/**
+ * Returns the first and last occupied instants for calendar-day range
+ * derivation. Display intervals are half-open, so their end boundary must not
+ * create a second day when it lands exactly at midnight.
+ */
+export function getInclusiveCalendarDisplayBounds(
+  input: CalendarDisplayIntervalInput,
+): CalendarDateRange | null {
+  const interval = normalizeCalendarDisplayInterval(input);
+  if (!interval) return null;
+
+  const inclusiveEnd = new Date(interval.end.getTime() - 1);
+  if (!Number.isFinite(inclusiveEnd.getTime()) || inclusiveEnd < interval.start) {
+    return null;
+  }
+  return {
+    start: new Date(interval.start),
+    end: inclusiveEnd,
+  };
 }
