@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.3.13
+
+- Manual multi-day calendars once again treat the saved, selected, Today, or date-picker date as the focal day. A three-day view on Friday renders Thursday through Saturday instead of Friday through Sunday.
+- Two-through-seven-day ranges use the established left-biased center for even counts, responsive partial-week layouts keep the focal date in view, and rendered-start persistence round-trips the same selected day across reloads and FullCalendar remounts.
+- Filter-based ranges with explicit date bounds remain start-anchored to their exact lower bound. Complete seven-day weeks still align to the configured first weekday, and manual views with scheduled filters no longer inherit bounds that clip their leading centered columns.
+- This is a backward-compatible correctness patch with no settings, Base-schema, command, plugin-API, or note-data migration. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.3.12
 
 - Manual two-through-seven-day views once again begin on the saved or selected date. A three-day view on Friday therefore renders Friday through Sunday instead of Thursday through Saturday.

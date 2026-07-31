@@ -5,10 +5,10 @@ const TIMEGRID_SIDE_CHROME_PX = 70;
 export type CalendarRangeAnchor = "center" | "start";
 
 export function resolveCalendarRangeAnchor(
-  _filterRangeAuto: boolean,
-  _hasExplicitFilterRange: boolean,
+  filterRangeAuto: boolean,
+  hasExplicitFilterRange: boolean,
 ): CalendarRangeAnchor {
-  return "start";
+  return filterRangeAuto && hasExplicitFilterRange ? "start" : "center";
 }
 
 export function getAdaptiveTimeGridDayCount(
@@ -38,16 +38,16 @@ export function getAdaptiveTimeGridDayCount(
 
 /**
  * Resolves the first rendered calendar day from the user's selected day.
- * Manual multi-day and exact filter ranges begin on the selected day so Today,
- * date-picker jumps, and saved dates remain visible as the first column. A full
- * seven-day week always snaps to its configured first day.
+ * Manual multi-day ranges keep the selected day as their focal day. Exact
+ * filter-derived ranges begin on their lower bound, and a full seven-day week
+ * always snaps to its configured first day.
  */
 export function getCalendarStartForAnchor(
   anchor: Date,
   viewMode: string,
   displayedDayCount: number,
   weekStartDay = 1,
-  rangeAnchor: CalendarRangeAnchor = "start",
+  rangeAnchor: CalendarRangeAnchor = "center",
 ): Date {
   const start = new Date(anchor);
   if (Number.isNaN(start.getTime())) return start;
@@ -77,7 +77,7 @@ export function getCalendarAnchorForStart(
   viewMode: string,
   displayedDayCount: number,
   weekStartDay = 1,
-  rangeAnchor: CalendarRangeAnchor = "start",
+  rangeAnchor: CalendarRangeAnchor = "center",
 ): Date {
   const anchor = new Date(startDate);
   if (Number.isNaN(anchor.getTime())) return anchor;
