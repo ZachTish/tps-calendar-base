@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.3.5
+
+- Calendar refresh now reads one Obsidian metadata snapshot per local note and reuses it for title, start-date fallback, all-day state, status, and priority. Ordinary scheduled notes with configured status and priority use `1` cache read instead of `3`; filename-derived all-day notes use `1` instead of `4`.
+- Reusing one snapshot also prevents a single rendered entry from mixing fields from different cache versions. Status remains case-insensitive, priority remains exact-key, filename/all-day fallback remains supported, and metadata-event fast refresh remains independent and unchanged.
+- The exact public 0.3.4 implementation and the candidate produced identical outputs across 5,005 actual-class differential executions while metadata reads fell from 16,016 to 5,005 (68.75%). The versioned bundle is smaller, and a permanent regression requires every local-entry consumer to keep using the one snapshot.
+- This backward-compatible performance and reliability patch changes no settings, commands, API, schema, note data, external automation, or supported fallback behavior. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.3.4
 
 - Calendar-day inputs are now timezone-safe. Bare `YYYY-MM-DD` values from Base filters, saved view state, and the public navigation API are interpreted as local calendar days instead of UTC instants, so users west of UTC no longer land on the prior date.
@@ -60,7 +67,7 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.3.4` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.3.5` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 

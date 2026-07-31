@@ -206,3 +206,49 @@ test("calendar refresh performs no unused day-context vault scan", () => {
   assert.doesNotMatch(calendarSource, /dayContextByDate|buildDayContextByDate|countOpenDailyNoteTasksByDate/);
   assert.doesNotMatch(reactSource, /CalendarDayContext|dayContextByDate/);
 });
+
+test("local calendar entries reuse one metadata snapshot", () => {
+  const calendarSource = readFileSync(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
+  const loopStart = calendarSource.indexOf("for (const entry of queryData.data)");
+  const loopEnd = calendarSource.indexOf("// 3. Add remaining external events", loopStart);
+  const resolverStart = calendarSource.indexOf("private resolveEntryStartDate(");
+  const resolverEnd = calendarSource.indexOf("\n  private hasNoteLevelStartDate(", resolverStart);
+
+  assert.notEqual(loopStart, -1, "local-entry loop must remain identifiable");
+  assert.notEqual(loopEnd, -1, "local-entry loop end must remain identifiable");
+  assert.notEqual(resolverStart, -1, "start-date resolver must remain identifiable");
+  assert.notEqual(resolverEnd, -1, "start-date resolver end must remain identifiable");
+
+  const localEntryLoop = calendarSource.slice(loopStart, loopEnd);
+  const startDateResolver = calendarSource.slice(resolverStart, resolverEnd);
+  assert.equal(
+    localEntryLoop.match(/metadataCache\.getFileCache\(entryFile\)/g)?.length ?? 0,
+    1,
+    "each local entry should read one metadata snapshot",
+  );
+  assert.match(
+    localEntryLoop,
+    /resolveEntryStartDate\(entry,\s*entryFrontmatter\)/,
+    "start-date resolution should consume the entry snapshot",
+  );
+  assert.match(
+    localEntryLoop,
+    /getFrontmatterValueCaseInsensitive\(entryFrontmatter,\s*fieldName\)/,
+    "status resolution should consume the entry snapshot",
+  );
+  assert.match(
+    localEntryLoop,
+    /priorityValue\s*=\s*entryFrontmatter\?\.\[fieldName\]/,
+    "priority resolution should preserve exact-key snapshot lookup",
+  );
+  assert.doesNotMatch(
+    startDateResolver,
+    /metadataCache|getFileCache/,
+    "start-date resolution should not reload metadata",
+  );
+  assert.match(
+    startDateResolver,
+    /getFrontmatterValueCaseInsensitive\(frontmatter,\s*allDayFieldName\)/,
+    "filename all-day fallback should consume the supplied snapshot",
+  );
+});

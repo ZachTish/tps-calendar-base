@@ -1589,7 +1589,7 @@ export class CalendarView extends BasesView {
         }
       }
 
-      const startResolution = this.resolveEntryStartDate(entry);
+      const startResolution = this.resolveEntryStartDate(entry, entryFrontmatter);
       if (startResolution) {
         if (entryFile && !this.hasNoteLevelStartDate(entryFile, entryFrontmatter, startResolution)) {
           continue;
@@ -1604,8 +1604,7 @@ export class CalendarView extends BasesView {
           // If it's a note property, read from cache
           const fieldName = this.getNoteField(this.statusField);
           if (fieldName && entryFile) {
-            const cache = this.app.metadataCache.getFileCache(entryFile);
-            statusValue = this.getFrontmatterValueCaseInsensitive(cache?.frontmatter as Record<string, any> | undefined, fieldName);
+            statusValue = this.getFrontmatterValueCaseInsensitive(entryFrontmatter, fieldName);
             if (statusValue) {
               // console.log(`[CalendarView] Status update for ${entryFile.path}: field=${fieldName}, value=${statusValue}`);
             }
@@ -1617,8 +1616,7 @@ export class CalendarView extends BasesView {
         if (this.priorityField) {
           const fieldName = this.getNoteField(this.priorityField);
           if (fieldName && entryFile) {
-            const cache = this.app.metadataCache.getFileCache(entryFile);
-            priorityValue = cache?.frontmatter?.[fieldName];
+            priorityValue = entryFrontmatter?.[fieldName];
           } else {
             priorityValue = this.tryGetValue(entry, this.priorityField);
           }
@@ -6573,7 +6571,10 @@ export class CalendarView extends BasesView {
     return fields;
   }
 
-  private resolveEntryStartDate(entry: BasesEntry): ResolvedEntryStartDate | null {
+  private resolveEntryStartDate(
+    entry: BasesEntry,
+    frontmatter: Record<string, any> | undefined,
+  ): ResolvedEntryStartDate | null {
     const dailyFormat = this.getDailyNoteDateFormat();
     if (this.startDateProp) {
       const rawValue = this.tryGetEntryValue(entry, this.startDateProp);
@@ -6584,9 +6585,8 @@ export class CalendarView extends BasesView {
     const entryFile = entry.file;
     const allDayFieldName = this.getNoteField(this.allDayProperty);
     if (entryFile instanceof TFile && allDayFieldName) {
-      const cache = this.app.metadataCache.getFileCache(entryFile);
       const isAllDay = this.parseBooleanLike(
-        this.getFrontmatterValueCaseInsensitive(cache?.frontmatter as Record<string, any> | undefined, allDayFieldName),
+        this.getFrontmatterValueCaseInsensitive(frontmatter, allDayFieldName),
         false,
       );
       if (isAllDay) {
