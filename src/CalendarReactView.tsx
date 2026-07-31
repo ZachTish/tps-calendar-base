@@ -3259,8 +3259,8 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         : arg.view.calendar.getDate();
 
       // Full weeks keep the selected day even though FullCalendar renders from
-      // firstDay. Other ranges recover the selected day from their rendered
-      // start according to the active centered-or-exact anchor policy.
+      // firstDay. Other ranges persist their rendered first day so the saved,
+      // Today, and date-picker targets remain the first visible column.
       if (resolvedFilterViewMode !== "week") {
         currentApiDate = getCalendarAnchorForStart(
           currentApiDate,

@@ -446,7 +446,7 @@ test('calendar date arithmetic preserves local days across DST and clamps months
   });
 });
 
-test('manual multi-day selections stay centered while exact ranges stay start-anchored', async () => {
+test('manual multi-day selections start on the selected day while full weeks align', async () => {
   const {
     clampCalendarNavigationDate,
     getCalendarAnchorForStart,
@@ -458,10 +458,10 @@ test('manual multi-day selections stay centered while exact ranges stay start-an
   const anchor = new Date(2026, 6, 30, 14, 30);
 
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '2d', 2)), '2026-07-30');
-  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 3)), '2026-07-29');
-  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '6d', 6)), '2026-07-28');
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 3)), '2026-07-30');
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '6d', 6)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 1)), '2026-07-30');
-  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 7)), '2026-07-27');
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 7)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 2)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7, 1)), '2026-07-27');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 2, 0)), '2026-07-30');
@@ -480,7 +480,7 @@ test('manual multi-day selections stay centered while exact ranges stay start-an
   assert.equal(formatLocalDate(getCalendarAnchorForStart(twoDayStart, '2d', 2)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarAnchorForStart(sixDayStart, '6d', 6)), '2026-07-30');
   assert.equal(
-    formatLocalDate(getCalendarAnchorForStart(new Date(2026, 6, 29), 'week', 3, 1)),
+    formatLocalDate(getCalendarAnchorForStart(new Date(2026, 6, 30), 'week', 3, 1)),
     '2026-07-30',
   );
   assert.equal(
@@ -488,68 +488,50 @@ test('manual multi-day selections stay centered while exact ranges stay start-an
     '2026-07-27',
   );
 
-  const expectedCenteredStarts = [
-    '2026-07-30',
-    '2026-07-29',
-    '2026-07-29',
-    '2026-07-28',
-    '2026-07-28',
-    '2026-07-27',
-  ];
   for (let dayCount = 2; dayCount <= 7; dayCount += 1) {
     const viewMode = `${dayCount}d`;
-    const exactStart = getCalendarStartForAnchor(anchor, viewMode, dayCount, 1, 'start');
-    assert.equal(formatLocalDate(exactStart), '2026-07-30');
+    const renderedStart = getCalendarStartForAnchor(anchor, viewMode, dayCount);
+    assert.equal(formatLocalDate(renderedStart), '2026-07-30');
     assert.equal(
-      formatLocalDate(getCalendarAnchorForStart(exactStart, viewMode, dayCount, 1, 'start')),
+      formatLocalDate(getCalendarAnchorForStart(renderedStart, viewMode, dayCount)),
       '2026-07-30',
-    );
-
-    const centeredStart = getCalendarStartForAnchor(anchor, viewMode, dayCount, 1, 'center');
-    assert.equal(
-      formatLocalDate(centeredStart),
-      expectedCenteredStarts[dayCount - 2],
-      `${dayCount}d must keep the selected day in the historical left-biased center position`,
-    );
-    assert.equal(
-      formatLocalDate(getCalendarAnchorForStart(centeredStart, viewMode, dayCount, 1, 'center')),
-      '2026-07-30',
+      `${dayCount}d must persist the same selected first day`,
     );
   }
 
-  assert.equal(resolveCalendarRangeAnchor(false, false), 'center', 'manual range without bounds');
-  assert.equal(resolveCalendarRangeAnchor(false, true), 'center', 'manual range with date bounds');
-  assert.equal(resolveCalendarRangeAnchor(true, false), 'center', 'entry-derived automatic range');
+  assert.equal(resolveCalendarRangeAnchor(false, false), 'start', 'manual range without bounds');
+  assert.equal(resolveCalendarRangeAnchor(false, true), 'start', 'manual range with date bounds');
+  assert.equal(resolveCalendarRangeAnchor(true, false), 'start', 'entry-derived automatic range');
   assert.equal(resolveCalendarRangeAnchor(true, true), 'start', 'explicit filter-based range');
 
   const expectedResponsiveWeekStarts = [
     '2026-07-30',
     '2026-07-30',
-    '2026-07-29',
-    '2026-07-29',
-    '2026-07-28',
-    '2026-07-28',
+    '2026-07-30',
+    '2026-07-30',
+    '2026-07-30',
+    '2026-07-30',
     '2026-07-27',
   ];
   for (let dayCount = 1; dayCount <= 7; dayCount += 1) {
     assert.equal(
-      formatLocalDate(getCalendarStartForAnchor(anchor, 'week', dayCount, 1, 'center')),
+      formatLocalDate(getCalendarStartForAnchor(anchor, 'week', dayCount, 1)),
       expectedResponsiveWeekStarts[dayCount - 1],
       `responsive week ${dayCount}d start`,
     );
   }
   assert.equal(formatLocalDate(anchor), '2026-07-30', 'responsive transitions must not mutate the selected day');
   assert.equal(
-    formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7, 0, 'center')),
+    formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7, 0)),
     '2026-07-26',
     'full Sunday-first week',
   );
 
   const savedThreeDay = new Date(2026, 6, 31);
-  const restoredStart = getCalendarStartForAnchor(savedThreeDay, '3d', 3, 1, 'center');
-  assert.equal(formatLocalDate(restoredStart), '2026-07-30');
+  const restoredStart = getCalendarStartForAnchor(savedThreeDay, '3d', 3);
+  assert.equal(formatLocalDate(restoredStart), '2026-07-31');
   assert.equal(
-    formatLocalDate(getCalendarAnchorForStart(restoredStart, '3d', 3, 1, 'center')),
+    formatLocalDate(getCalendarAnchorForStart(restoredStart, '3d', 3)),
     '2026-07-31',
     'datesSet must round-trip to the same saved selected day',
   );
@@ -581,6 +563,89 @@ test('manual multi-day selections stay centered while exact ranges stay start-an
   assert.equal(formatLocalDate(shiftCalendarMonthStart(new Date(2026, 0, 31), 1)), '2026-02-01');
   assert.equal(formatLocalDate(shiftCalendarMonthStart(new Date(2026, 2, 31), -1)), '2026-02-01');
   assert.equal(formatLocalDate(shiftCalendarMonthStart(new Date(2028, 0, 31), 1)), '2028-02-01');
+});
+
+test('selected-first headers survive restore, navigation, picker, and responsive changes', async () => {
+  const {
+    getCalendarAnchorForStart,
+    getCalendarStartForAnchor,
+    resolveCalendarRangeAnchor,
+  } = await importUtility('../src/utils/calendar-day-count.ts');
+
+  const visibleDays = (anchor, viewMode, dayCount, weekStartDay = 1, filterRangeAuto = false, hasExplicitBounds = false) => {
+    const rangeAnchor = resolveCalendarRangeAnchor(filterRangeAuto, hasExplicitBounds);
+    const start = getCalendarStartForAnchor(anchor, viewMode, dayCount, weekStartDay, rangeAnchor);
+    return Array.from({ length: dayCount }, (_unused, index) => {
+      const day = new Date(start);
+      day.setDate(day.getDate() + index);
+      return formatLocalDate(day);
+    });
+  };
+
+  const savedDate = new Date(2026, 6, 31, 14, 30);
+  assert.deepEqual(visibleDays(savedDate, '3d', 3), [
+    '2026-07-31',
+    '2026-08-01',
+    '2026-08-02',
+  ]);
+
+  const restoredStart = getCalendarStartForAnchor(savedDate, '3d', 3);
+  assert.equal(
+    formatLocalDate(getCalendarAnchorForStart(restoredStart, '3d', 3)),
+    '2026-07-31',
+    'FullCalendar datesSet must persist the same selected first day',
+  );
+
+  const next = new Date(savedDate);
+  next.setDate(next.getDate() + 1);
+  assert.deepEqual(visibleDays(next, '3d', 3), [
+    '2026-08-01',
+    '2026-08-02',
+    '2026-08-03',
+  ]);
+  next.setDate(next.getDate() - 1);
+  assert.deepEqual(visibleDays(next, '3d', 3), [
+    '2026-07-31',
+    '2026-08-01',
+    '2026-08-02',
+  ]);
+
+  const pickerDate = new Date(2026, 7, 10, 9, 15);
+  assert.deepEqual(visibleDays(pickerDate, '3d', 3), [
+    '2026-08-10',
+    '2026-08-11',
+    '2026-08-12',
+  ]);
+  assert.deepEqual(
+    visibleDays(savedDate, 'week', 2),
+    ['2026-07-31', '2026-08-01'],
+    'a constrained partial week must keep the selected day visible first',
+  );
+  assert.deepEqual(
+    visibleDays(savedDate, 'week', 7),
+    [
+      '2026-07-27',
+      '2026-07-28',
+      '2026-07-29',
+      '2026-07-30',
+      '2026-07-31',
+      '2026-08-01',
+      '2026-08-02',
+    ],
+    'a complete week must still align to Monday',
+  );
+  assert.deepEqual(
+    visibleDays(savedDate, '6d', 6, 1, true, true),
+    [
+      '2026-07-31',
+      '2026-08-01',
+      '2026-08-02',
+      '2026-08-03',
+      '2026-08-04',
+      '2026-08-05',
+    ],
+    'an exact six-day filter must retain its lower bound as the first day',
+  );
 });
 
 test('centered, exact, and week anchors retain local days across DST', async () => {
@@ -671,7 +736,7 @@ test('calendar day-count paths use shared calendar-day helper', () => {
   assert.match(
     hostSource,
     /resolveCalendarRangeAnchor\(this\.filterRangeAuto, hasExplicitBounds\) === "start"/,
-    'manual views must not inherit exact-filter navigation bounds that clip their centered columns',
+    'resolved date bounds must constrain selected-first navigation without hiding earlier columns',
   );
   assert.match(hostSource, /this\.navigationBoundsStart = shouldConstrainNavigation && filterBounds\.start/);
   assert.match(hostSource, /this\.navigationBoundsEnd = shouldConstrainNavigation && filterBounds\.end/);
