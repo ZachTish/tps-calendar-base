@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.3.6
+
+- External-event fallback scans now normalize each stored calendar source URL once per nonempty scan instead of once for every candidate event. This covers local-note event-ID, UID, and title matching; vault-wide UID/title suppression; and inline-task UID matching.
+- The matching hierarchy, raw-source guard, first-match ordering, `webcal://` compatibility, recurring-event tolerance, archived/canceled suppression, and every legacy identity fallback remain unchanged. Empty candidate lists still perform no source normalization, and no persistent cache, monkeypatch, or compatibility shim was added.
+- Exact public 0.3.5 and 0.3.6 actual-method gates select the same event objects across all six branches. A 100,000-case randomized differential preserves exact identity/order, while a representative 500-record × 1,000-event scan reduces stored/candidate URL normalizations from 1,000,000 to 500,500 per round and cut the isolated interleaved median from 58.059 ms to 13.908 ms (76.0%).
+- This backward-compatible performance patch changes no settings, commands, API, schema, note data, or outbound automation. Minimum supported Obsidian remains 1.10.0.
+- Exact public 0.3.5 passed 104 release-declared tests and reproduced all four published artifacts byte-for-byte. The isolated owned 0.3.6 candidate passed 111/111 tests, TypeScript, a separate production-mode build, isolated runtime deployment, reload, and a read-only four-result Calendar Base inspection.
+
 ## 0.3.5
 
 - Calendar refresh now reads one Obsidian metadata snapshot per local note and reuses it for title, start-date fallback, all-day state, status, and priority. Ordinary scheduled notes with configured status and priority use `1` cache read instead of `3`; filename-derived all-day notes use `1` instead of `4`.
@@ -67,7 +75,7 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.3.5` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.3.6` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 
@@ -112,7 +120,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Recurring or repeated task items remain separate checkbox instances. Each occurrence can carry its own hidden associated-note path; Calendar does not infer or retarget an association from the task title.
 - Notes that only contain scheduled task lines are not promoted to note-level calendar events unless the note itself has the configured start/scheduled frontmatter field. This keeps storage notes such as calendar task inboxes from appearing as a single scheduled note while preserving their individual task events.
 - If a storage note also has note-level calendar frontmatter that matches an inline scheduled task in the same file and time slot, Calendar suppresses the duplicate note-level event so clicks keep the task-line navigation target.
-- Uses Obsidian's metadata cache for a fast pre-filter (only files with checkbox list items are read).
+- Reads Markdown through Obsidian's cached-read API before parsing supported checkbox task lines; Calendar does not trust a possibly stale metadata-cache negative to hide a task-bearing file.
 - `initialCreateMode` controls whether calendar range creates:
   - note events (default behavior), or
   - task items.

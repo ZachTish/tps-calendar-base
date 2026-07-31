@@ -1680,10 +1680,14 @@ export class CalendarView extends BasesView {
             const noteUid = this.extractUidFromCompositeEventId(eventIdForMatch) || eventIdForMatch;
             const noteSuffix = eventIdForMatch.includes('-') ? eventIdForMatch.substring(eventIdForMatch.lastIndexOf('-') + 1) : null;
             const noteSuffixTs = noteSuffix ? parseInt(noteSuffix) : NaN;
+            const normalizedSourceUrlForScan = this.normalizeSourceForExternalEventScan(
+              sourceUrlForMatch,
+              allExternalEvents.length,
+            );
 
             // Iterate through external events
             for (const extEvent of allExternalEvents) {
-              if (sourceUrlForMatch && normalizeCalendarUrl(extEvent.sourceUrl || "") !== normalizeCalendarUrl(sourceUrlForMatch)) continue;
+              if (sourceUrlForMatch && normalizeCalendarUrl(extEvent.sourceUrl || "") !== normalizedSourceUrlForScan) continue;
               // Check UID first
               if (extEvent.uid !== noteUid) continue;
 
@@ -1723,9 +1727,13 @@ export class CalendarView extends BasesView {
         }
 
         if (!externalMatch && uidForMatch) {
+          const normalizedSourceUrlForScan = this.normalizeSourceForExternalEventScan(
+            sourceUrlForMatch,
+            allExternalEvents.length,
+          );
           for (const extEvent of allExternalEvents) {
             if (handledExternalEventKeys.has(this.buildExternalEventIdentityKey(extEvent.id, extEvent.sourceUrl))) continue;
-            if (sourceUrlForMatch && normalizeCalendarUrl(extEvent.sourceUrl || "") !== normalizeCalendarUrl(sourceUrlForMatch)) continue;
+            if (sourceUrlForMatch && normalizeCalendarUrl(extEvent.sourceUrl || "") !== normalizedSourceUrlForScan) continue;
             const extUid = this.normalizeIdentityValue(extEvent.uid || this.extractUidFromCompositeEventId(extEvent.id));
             if (extUid !== uidForMatch) continue;
             if (this.areDatesLikelySameSlot(startDate, extEvent.startDate)) {
@@ -1738,9 +1746,13 @@ export class CalendarView extends BasesView {
         if (!externalMatch) {
           // No event ID/UID match, try fuzzy match by Title + Start Time.
           // This handles cases where the user created a note manually for an event but didn't link identity keys.
+          const normalizedSourceUrlForScan = this.normalizeSourceForExternalEventScan(
+            sourceUrlForMatch,
+            allExternalEvents.length,
+          );
           for (const extEvent of allExternalEvents) {
             if (handledExternalEventKeys.has(this.buildExternalEventIdentityKey(extEvent.id, extEvent.sourceUrl))) continue;
-            if (sourceUrlForMatch && normalizeCalendarUrl(extEvent.sourceUrl || "") !== normalizeCalendarUrl(sourceUrlForMatch)) continue;
+            if (sourceUrlForMatch && normalizeCalendarUrl(extEvent.sourceUrl || "") !== normalizedSourceUrlForScan) continue;
 
             // Match Title (case insensitive, trimmed)
             const titleMatch = (baseTitle || "").trim().toLowerCase() === extEvent.title.trim().toLowerCase();
@@ -7123,6 +7135,15 @@ export class CalendarView extends BasesView {
     return `${normalizeCalendarUrl(sourceUrl || "")}::${uid}`;
   }
 
+  private normalizeSourceForExternalEventScan(
+    sourceUrl: string | null | undefined,
+    candidateCount: number,
+  ): string {
+    return sourceUrl && candidateCount > 0
+      ? normalizeCalendarUrl(sourceUrl)
+      : "";
+  }
+
   private collectVaultExternalEventSuppressions(
     externalEvents: ExternalCalendarEvent[],
   ): {
@@ -7189,16 +7210,24 @@ export class CalendarView extends BasesView {
       }
 
       if (!externalMatch && uid && startDate) {
+        const normalizedSourceUrlForScan = this.normalizeSourceForExternalEventScan(
+          sourceUrl,
+          externalEvents.length,
+        );
         externalMatch = externalEvents.find((event) => {
-          if (sourceUrl && normalizeCalendarUrl(event.sourceUrl || "") !== normalizeCalendarUrl(sourceUrl)) return false;
+          if (sourceUrl && normalizeCalendarUrl(event.sourceUrl || "") !== normalizedSourceUrlForScan) return false;
           const eventUid = this.normalizeIdentityValue(event.uid || this.extractUidFromCompositeEventId(event.id));
           return eventUid === uid && this.areDatesLikelySameSlot(startDate, event.startDate);
         });
       }
 
       if (!externalMatch && normalizedTitle && startDate) {
+        const normalizedSourceUrlForScan = this.normalizeSourceForExternalEventScan(
+          sourceUrl,
+          externalEvents.length,
+        );
         externalMatch = externalEvents.find((event) => {
-          if (sourceUrl && normalizeCalendarUrl(event.sourceUrl || "") !== normalizeCalendarUrl(sourceUrl)) return false;
+          if (sourceUrl && normalizeCalendarUrl(event.sourceUrl || "") !== normalizedSourceUrlForScan) return false;
           return this.normalizeExternalMatchTitle(event.title) === normalizedTitle
             && this.areDatesLikelySameSlot(startDate, event.startDate);
         });
@@ -7394,8 +7423,12 @@ export class CalendarView extends BasesView {
     }
 
     if (uid && startDate) {
+      const normalizedSourceUrlForScan = this.normalizeSourceForExternalEventScan(
+        sourceUrl,
+        externalEvents.length,
+      );
       return externalEvents.find((event) => {
-        if (sourceUrl && normalizeCalendarUrl(event.sourceUrl || "") !== normalizeCalendarUrl(sourceUrl)) return false;
+        if (sourceUrl && normalizeCalendarUrl(event.sourceUrl || "") !== normalizedSourceUrlForScan) return false;
         const eventUid = this.normalizeIdentityValue(event.uid || this.extractUidFromCompositeEventId(event.id));
         return eventUid === uid && this.areDatesLikelySameSlot(startDate, event.startDate);
       }) || null;

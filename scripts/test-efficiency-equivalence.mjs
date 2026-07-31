@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+import "./test-external-source-normalization.mjs";
 async function importBundled(entry, plugins = []) {
   const build = await esbuild.build({
     entryPoints: [fileURLToPath(new URL(entry, import.meta.url))],
