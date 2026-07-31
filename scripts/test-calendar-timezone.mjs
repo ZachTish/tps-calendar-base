@@ -446,21 +446,22 @@ test('calendar date arithmetic preserves local days across DST and clamps months
   });
 });
 
-test('multi-day selections stay start-anchored and responsive weeks honor firstDay', async () => {
+test('manual multi-day selections stay centered while exact ranges stay start-anchored', async () => {
   const {
     clampCalendarNavigationDate,
     getCalendarAnchorForStart,
     getCalendarStartForAnchor,
+    resolveCalendarRangeAnchor,
     shiftCalendarMonthStart,
   } =
     await importUtility('../src/utils/calendar-day-count.ts');
   const anchor = new Date(2026, 6, 30, 14, 30);
 
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '2d', 2)), '2026-07-30');
-  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 3)), '2026-07-30');
-  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '6d', 6)), '2026-07-30');
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 3)), '2026-07-29');
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '6d', 6)), '2026-07-28');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '3d', 1)), '2026-07-30');
-  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 7)), '2026-07-30');
+  assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 7)), '2026-07-27');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, '7d', 2)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7, 1)), '2026-07-27');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 2, 0)), '2026-07-30');
@@ -479,12 +480,78 @@ test('multi-day selections stay start-anchored and responsive weeks honor firstD
   assert.equal(formatLocalDate(getCalendarAnchorForStart(twoDayStart, '2d', 2)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarAnchorForStart(sixDayStart, '6d', 6)), '2026-07-30');
   assert.equal(
-    formatLocalDate(getCalendarAnchorForStart(new Date(2026, 6, 30), 'week', 3, 1)),
+    formatLocalDate(getCalendarAnchorForStart(new Date(2026, 6, 29), 'week', 3, 1)),
     '2026-07-30',
   );
   assert.equal(
     formatLocalDate(getCalendarAnchorForStart(new Date(2026, 6, 30), 'week', 7, 1)),
     '2026-07-27',
+  );
+
+  const expectedCenteredStarts = [
+    '2026-07-30',
+    '2026-07-29',
+    '2026-07-29',
+    '2026-07-28',
+    '2026-07-28',
+    '2026-07-27',
+  ];
+  for (let dayCount = 2; dayCount <= 7; dayCount += 1) {
+    const viewMode = `${dayCount}d`;
+    const exactStart = getCalendarStartForAnchor(anchor, viewMode, dayCount, 1, 'start');
+    assert.equal(formatLocalDate(exactStart), '2026-07-30');
+    assert.equal(
+      formatLocalDate(getCalendarAnchorForStart(exactStart, viewMode, dayCount, 1, 'start')),
+      '2026-07-30',
+    );
+
+    const centeredStart = getCalendarStartForAnchor(anchor, viewMode, dayCount, 1, 'center');
+    assert.equal(
+      formatLocalDate(centeredStart),
+      expectedCenteredStarts[dayCount - 2],
+      `${dayCount}d must keep the selected day in the historical left-biased center position`,
+    );
+    assert.equal(
+      formatLocalDate(getCalendarAnchorForStart(centeredStart, viewMode, dayCount, 1, 'center')),
+      '2026-07-30',
+    );
+  }
+
+  assert.equal(resolveCalendarRangeAnchor(false, false), 'center', 'manual range without bounds');
+  assert.equal(resolveCalendarRangeAnchor(false, true), 'center', 'manual range with date bounds');
+  assert.equal(resolveCalendarRangeAnchor(true, false), 'center', 'entry-derived automatic range');
+  assert.equal(resolveCalendarRangeAnchor(true, true), 'start', 'explicit filter-based range');
+
+  const expectedResponsiveWeekStarts = [
+    '2026-07-30',
+    '2026-07-30',
+    '2026-07-29',
+    '2026-07-29',
+    '2026-07-28',
+    '2026-07-28',
+    '2026-07-27',
+  ];
+  for (let dayCount = 1; dayCount <= 7; dayCount += 1) {
+    assert.equal(
+      formatLocalDate(getCalendarStartForAnchor(anchor, 'week', dayCount, 1, 'center')),
+      expectedResponsiveWeekStarts[dayCount - 1],
+      `responsive week ${dayCount}d start`,
+    );
+  }
+  assert.equal(formatLocalDate(anchor), '2026-07-30', 'responsive transitions must not mutate the selected day');
+  assert.equal(
+    formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7, 0, 'center')),
+    '2026-07-26',
+    'full Sunday-first week',
+  );
+
+  const savedThreeDay = new Date(2026, 6, 31);
+  const restoredStart = getCalendarStartForAnchor(savedThreeDay, '3d', 3, 1, 'center');
+  assert.equal(formatLocalDate(restoredStart), '2026-07-30');
+  assert.equal(
+    formatLocalDate(getCalendarAnchorForStart(restoredStart, '3d', 3, 1, 'center')),
+    '2026-07-31',
+    'datesSet must round-trip to the same saved selected day',
   );
 
   assert.equal(
@@ -516,7 +583,7 @@ test('multi-day selections stay start-anchored and responsive weeks honor firstD
   assert.equal(formatLocalDate(shiftCalendarMonthStart(new Date(2028, 0, 31), 1)), '2028-02-01');
 });
 
-test('week anchors and seven-day navigation retain local days across DST', async () => {
+test('centered, exact, and week anchors retain local days across DST', async () => {
   const bundled = await bundleUtility('../src/utils/calendar-day-count.ts');
   const encoded = Buffer.from(bundled).toString('base64');
   const probe = `
@@ -531,11 +598,31 @@ test('week anchors and seven-day navigation retain local days across DST', async
     const nextMonday = new Date(springMonday);
     nextMonday.setDate(nextMonday.getDate() + 7);
     const fallSunday = dates.getCalendarStartForAnchor(new Date(2026, 10, 1, 12), "week", 7, 0);
+    const springAnchor = new Date(2026, 2, 8, 12);
+    const springCentered3 = dates.getCalendarStartForAnchor(springAnchor, "3d", 3, 1, "center");
+    const springCentered6 = dates.getCalendarStartForAnchor(springAnchor, "6d", 6, 1, "center");
+    const springExact = dates.getCalendarStartForAnchor(springAnchor, "6d", 6, 1, "start");
+    const fallAnchor = new Date(2026, 10, 1, 12);
+    const fallCentered3 = dates.getCalendarStartForAnchor(fallAnchor, "3d", 3, 1, "center");
+    const fallCentered6 = dates.getCalendarStartForAnchor(fallAnchor, "6d", 6, 1, "center");
+    const fallExact = dates.getCalendarStartForAnchor(fallAnchor, "6d", 6, 1, "start");
     console.log(JSON.stringify({
       springSunday: format(springSunday),
       springMonday: format(springMonday),
       nextMonday: format(nextMonday),
       fallSunday: format(fallSunday),
+      springCentered3: format(springCentered3),
+      springCentered3Inverse: format(dates.getCalendarAnchorForStart(springCentered3, "3d", 3, 1, "center")),
+      springCentered6: format(springCentered6),
+      springCentered6Inverse: format(dates.getCalendarAnchorForStart(springCentered6, "6d", 6, 1, "center")),
+      springExact: format(springExact),
+      springExactInverse: format(dates.getCalendarAnchorForStart(springExact, "6d", 6, 1, "start")),
+      fallCentered3: format(fallCentered3),
+      fallCentered3Inverse: format(dates.getCalendarAnchorForStart(fallCentered3, "3d", 3, 1, "center")),
+      fallCentered6: format(fallCentered6),
+      fallCentered6Inverse: format(dates.getCalendarAnchorForStart(fallCentered6, "6d", 6, 1, "center")),
+      fallExact: format(fallExact),
+      fallExactInverse: format(dates.getCalendarAnchorForStart(fallExact, "6d", 6, 1, "start")),
     }));
   `;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', probe], {
@@ -549,6 +636,18 @@ test('week anchors and seven-day navigation retain local days across DST', async
     springMonday: '2026-03-02',
     nextMonday: '2026-03-09',
     fallSunday: '2026-11-01',
+    springCentered3: '2026-03-07',
+    springCentered3Inverse: '2026-03-08',
+    springCentered6: '2026-03-06',
+    springCentered6Inverse: '2026-03-08',
+    springExact: '2026-03-08',
+    springExactInverse: '2026-03-08',
+    fallCentered3: '2026-10-31',
+    fallCentered3Inverse: '2026-11-01',
+    fallCentered6: '2026-10-30',
+    fallCentered6Inverse: '2026-11-01',
+    fallExact: '2026-11-01',
+    fallExactInverse: '2026-11-01',
   });
 });
 
@@ -587,7 +686,8 @@ test('calendar day-count paths use shared calendar-day helper', () => {
   assert.match(reactSource, /getCalendarAnchorForStart\(/);
   assert.match(reactSource, /isWeekView\s*\? 7\s*:/);
   assert.match(reactSource, /hasExplicitFilterRange\s*&& derivedFilterRangeDays !== null/);
-  assert.match(reactSource, /const fullCalendarInstanceKey = `calendar-\$\{resolvedFilterViewMode\}-\$\{safeWeekStartDay\}-/);
+  assert.match(reactSource, /resolveCalendarRangeAnchor\(filterRangeAuto, hasExplicitFilterRange\)/);
+  assert.match(reactSource, /const fullCalendarInstanceKey = `calendar-\$\{resolvedFilterViewMode\}-\$\{safeWeekStartDay\}-\$\{rangeAnchor\}-/);
   assert.match(
     reactSource,
     /if \(currentDate && lastObservedCurrentDatePropRef\.current !== currentDate\) \{\s*displayedAnchorRef\.current = new Date\(currentDate\);/,

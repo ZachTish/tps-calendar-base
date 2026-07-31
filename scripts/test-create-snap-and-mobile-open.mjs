@@ -1020,6 +1020,8 @@ test("exact filter ranges do not shift into their midpoint in constrained embeds
       rangeStart,
       `${configuredDays}d`,
       renderedDays,
+      1,
+      "start",
     );
 
     assert.equal(renderedDays, configuredDays);

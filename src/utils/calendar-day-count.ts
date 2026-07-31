@@ -2,6 +2,15 @@ const EMBEDDED_TIMEGRID_MIN_DAY_WIDTH_PX = 230;
 const CANVAS_TIMEGRID_MIN_DAY_WIDTH_PX = 230;
 const TIMEGRID_SIDE_CHROME_PX = 70;
 
+export type CalendarRangeAnchor = "center" | "start";
+
+export function resolveCalendarRangeAnchor(
+  filterRangeAuto: boolean,
+  hasExplicitFilterRange: boolean,
+): CalendarRangeAnchor {
+  return filterRangeAuto && hasExplicitFilterRange ? "start" : "center";
+}
+
 export function getAdaptiveTimeGridDayCount(
   configuredDayCount: number,
   containerWidth: number,
@@ -29,15 +38,16 @@ export function getAdaptiveTimeGridDayCount(
 
 /**
  * Resolves the first rendered calendar day from the user's selected day.
- * Custom multi-day ranges are forward-looking. A full seven-day week snaps to
- * its configured first day; a responsive partial week begins on the selected
- * day so Today and date-picker targets remain visible.
+ * Manual multi-day ranges keep the selected day centered. Exact filter ranges
+ * are start-anchored so their lower bound remains the first rendered day. A
+ * full seven-day week always snaps to its configured first day.
  */
 export function getCalendarStartForAnchor(
   anchor: Date,
   viewMode: string,
   displayedDayCount: number,
   weekStartDay = 1,
+  rangeAnchor: CalendarRangeAnchor = "center",
 ): Date {
   const start = new Date(anchor);
   if (Number.isNaN(start.getTime())) return start;
@@ -55,18 +65,37 @@ export function getCalendarStartForAnchor(
       : 1;
     const offset = (start.getDay() - safeWeekStartDay + 7) % 7;
     start.setDate(start.getDate() - offset);
+  } else if (rangeAnchor === "center") {
+    start.setDate(start.getDate() - Math.floor((safeDisplayedDayCount - 1) / 2));
   }
   return start;
 }
 
-/** Normalizes FullCalendar's current start back to the persisted first day. */
+/** Normalizes FullCalendar's rendered start back to the persisted selected day. */
 export function getCalendarAnchorForStart(
   startDate: Date,
   viewMode: string,
   displayedDayCount: number,
   weekStartDay = 1,
+  rangeAnchor: CalendarRangeAnchor = "center",
 ): Date {
-  return getCalendarStartForAnchor(startDate, viewMode, displayedDayCount, weekStartDay);
+  const anchor = new Date(startDate);
+  if (Number.isNaN(anchor.getTime())) return anchor;
+  if (viewMode === "month" || viewMode === "continuous") {
+    return anchor;
+  }
+
+  anchor.setHours(0, 0, 0, 0);
+  const safeDisplayedDayCount = Number.isFinite(displayedDayCount)
+    ? Math.max(1, Math.round(displayedDayCount))
+    : 1;
+  if (viewMode === "week" && safeDisplayedDayCount >= 7) {
+    return getCalendarStartForAnchor(anchor, viewMode, safeDisplayedDayCount, weekStartDay, rangeAnchor);
+  }
+  if (rangeAnchor === "center") {
+    anchor.setDate(anchor.getDate() + Math.floor((safeDisplayedDayCount - 1) / 2));
+  }
+  return anchor;
 }
 
 export function clampCalendarNavigationDate(

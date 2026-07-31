@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.3.11
+
+- Manual multi-day views once again treat the saved or selected date as the focal day. A three-day view on Friday therefore renders Thursday through Saturday instead of Friday through Sunday.
+- Exact filter-bounded ranges remain start-anchored, so a July 31–August 5 filter still renders those exact six columns. Full seven-column weeks still align to the configured first weekday.
+- FullCalendar now converts rendered starts back to the same selected day before persisting, preventing reloads, responsive resizing, Today, date-picker jumps, and Previous/Next navigation from drifting the focal date.
+- This is a backward-compatible correctness patch with no settings, Base-schema, command, plugin-API, or note-data migration. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.3.10
 
 - Manual two-through-seven-day views now treat the selected or saved calendar date as the first visible day. Selecting Friday in a three-day view therefore renders Friday through Sunday instead of Thursday through Saturday.
@@ -202,7 +209,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Embedded Calendar Bases preserve the native Base header/toolbar by default, including the view selector, Base-query result count, sort/filter/property/search controls, and `New` action. In dedicated and other surfaces where Calendar navigation is shown, its separate label reports the number of event cards in the exact visible date range. Per-view `Embedded Base header` can be set to `Hide` when a compact read-only embed is wanted.
 - Embedded calendar Bases in reading mode use FullCalendar's native time-grid header and all-day row. Reading mode does not add synthetic all-day labels or overlay layers, so the native all-day cells remain available for selection and drag/drop.
 - Embedded reading mode keeps a compact dedicated-view-like structure: darker day header/all-day chrome, centered native all-day axis label, no transform-based all-day label positioning, and no forced all-day max-height clipping.
-- Dedicated Calendar Base tabs preserve their configured day count when workspace sidebars or split panes narrow the leaf. Manual width-based day-count reduction is limited to constrained Markdown/Canvas embeds; direct dashboard embeds can still request `preserveDayCount`. Manual two-through-seven-day ranges begin on the selected date. A complete seven-column week aligns to the configured first weekday and advances by seven days; a responsive partial week begins on the selected date so Today and date-picker navigation stay visible. Explicitly bounded filter ranges retain their exact derived span in constrained embeds.
+- Dedicated Calendar Base tabs preserve their configured day count when workspace sidebars or split panes narrow the leaf. Manual width-based day-count reduction is limited to constrained Markdown/Canvas embeds; direct dashboard embeds can still request `preserveDayCount`. Manual two-through-seven-day ranges center the selected date, using the earlier center position for an even number of columns. A complete seven-column week aligns to the configured first weekday and advances by seven days; a responsive partial manual week keeps the selected date as its focal day so Today and date-picker navigation remain stable. Filter-based ranges with explicit date bounds remain start-anchored and retain their exact derived span in constrained embeds.
 - Embedded time-grid calendars reserve one consistent 64px first column across the synchronized header, all-day, and hour tables. This keeps the complete time ruler visible when FullCalendar recalculates fixed table layouts at different phone, tablet, split-pane, and desktop widths.
 - Embedded event tiles use compact dedicated-view-style treatment with readable titles, solid explicit event colors, lighter padding, and hidden property chips so timed events remain legible inside note embeds.
 - When hidden hours are enabled and a timed event falls outside the currently visible range, the affected day now gets a directional edge highlight: top edge for earlier hidden events, bottom edge for later hidden events. All-day/date-only events are ignored for this marker because they remain visible in the all-day row. The global hidden-hours button still indicates that hidden timed events exist in the visible range.
