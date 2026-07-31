@@ -1017,8 +1017,6 @@ export class CalendarView extends BasesView {
       this.styledEmbeddedHeaders.add(targetHeader);
     }
 
-    this.syncNativeResultsCountInHeader(targetHeader);
-
     // Remove legacy desktop header portal controls from previous builds.
     const legacyPortals = this.containerEl
       .closest('.workspace-leaf-content')
@@ -1052,34 +1050,6 @@ export class CalendarView extends BasesView {
     }
     return headers[headers.length - 1];
   }
-
-  private syncNativeResultsCountInHeader(header: HTMLElement): void {
-    const countEl =
-      header.querySelector<HTMLElement>(".view-header-count") ??
-      header.querySelector<HTMLElement>(".bases-view-results-count") ??
-      header.querySelector<HTMLElement>(".bases-results-count") ??
-      header.querySelector<HTMLElement>(".bases-view-result-count") ??
-      header.querySelector<HTMLElement>(".bases-result-count") ??
-      header.querySelector<HTMLElement>("[class*=\"results-count\"]") ??
-      header.querySelector<HTMLElement>("[class*=\"result-count\"]") ??
-      header.querySelector<HTMLElement>(".bases-view-results") ??
-      header.querySelector<HTMLElement>(".bases-results");
-    if (!countEl) return;
-
-    const count = this.getRenderedResultCount();
-    const text = `${count} result${count === 1 ? "" : "s"}`;
-    if (countEl.textContent?.trim() !== text) {
-      countEl.textContent = text;
-    }
-  }
-
-  private getRenderedResultCount(): number {
-    // Match what the calendar currently renders in this view.
-    // Entries are deduped by slot identity in updateCalendar().
-    return this.entries.length;
-  }
-
-
 
   private installHeaderResizeObserver(): void {
     if (this.headerResizeObserver || this.headerMutationObserver) return;

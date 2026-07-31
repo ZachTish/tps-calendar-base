@@ -571,6 +571,40 @@ body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-wrapper .tps-calendar-aux-
   display: none !important;
 }
 
+.bases-calendar-wrapper .bases-calendar-visible-event-count {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bases-calendar-wrapper .bases-calendar-nav--count-only {
+  padding-inline: 10px !important;
+}
+
+@media (max-width: 600px) {
+  .bases-calendar-wrapper .bases-calendar-floating-nav,
+  .bases-calendar-wrapper .bases-calendar-top-nav {
+    max-width: calc(100% - 12px) !important;
+    gap: 6px !important;
+    padding-inline: 8px !important;
+  }
+
+  .bases-calendar-wrapper .bases-calendar-title-text {
+    max-width: 30vw !important;
+  }
+
+  .bases-calendar-wrapper .bases-calendar-visible-event-count {
+    max-width: 8.5rem;
+    font-size: 0.6875rem;
+  }
+}
+
 body.is-mobile .bases-calendar-wrapper .bases-calendar-floating-nav,
 body.is-phone .bases-calendar-wrapper .bases-calendar-floating-nav,
 body.is-tablet .bases-calendar-wrapper .bases-calendar-floating-nav,

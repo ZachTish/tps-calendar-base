@@ -9,6 +9,7 @@ interface CalendarNavigationProps {
   navigationBoundsStart?: Date;
   navigationBoundsEnd?: Date;
   headerTitle: string;
+  visibleEventCount: number | null;
   currentDate?: Date;
   onDateChange?: (date: Date) => void;
   onPrevClick: () => void;
@@ -17,6 +18,18 @@ interface CalendarNavigationProps {
   mobileNavHidden: boolean;
   floatingNavStyle: React.CSSProperties;
   mode?: "embedded" | "dedicated";
+}
+
+export function shouldRenderCalendarNavigation(
+  showNavButtons: boolean | undefined,
+  visibleEventCount: number | null,
+  mobileNavHidden: boolean,
+): boolean {
+  return !mobileNavHidden && (showNavButtons === true || visibleEventCount !== null);
+}
+
+export function formatVisibleEventCountLabel(visibleEventCount: number): string {
+  return `${visibleEventCount} visible ${visibleEventCount === 1 ? "event" : "events"}`;
 }
 
 /**
@@ -32,6 +45,7 @@ export const CalendarNavigation: React.FC<CalendarNavigationProps> = ({
   navigationBoundsStart,
   navigationBoundsEnd,
   headerTitle,
+  visibleEventCount,
   currentDate,
   onDateChange,
   onPrevClick,
@@ -80,112 +94,140 @@ export const CalendarNavigation: React.FC<CalendarNavigationProps> = ({
     [navigationLocked, onDateChange, navigationBoundsStart, navigationBoundsEnd],
   );
 
-  if (!showNavButtons || mobileNavHidden) return null;
+  const showNavigation = showNavButtons === true;
+  if (!shouldRenderCalendarNavigation(showNavButtons, visibleEventCount, mobileNavHidden)) {
+    return null;
+  }
 
   const isEmbedded = mode === "embedded";
+  const navigationClassName = isEmbedded
+    ? "bases-calendar-floating-nav"
+    : "bases-calendar-top-nav";
+  const visibleEventCountLabel = visibleEventCount === null
+    ? null
+    : formatVisibleEventCountLabel(visibleEventCount);
 
   return (
     <div
-      className={isEmbedded ? "bases-calendar-floating-nav" : "bases-calendar-top-nav"}
+      className={`${navigationClassName}${showNavigation ? "" : " bases-calendar-nav--count-only"}`}
       style={isEmbedded ? floatingNavStyle : undefined}
     >
-      <div style={{ position: "relative", display: "flex" }}>
-        <button
-          className="bases-calendar-title-text"
-          style={{
-            cursor: "pointer",
-            fontWeight: 600,
-            fontSize: "0.9rem",
-            display: "flex",
-            alignItems: "center",
-            gap: "4px",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            minWidth: 0,
-            maxWidth: "100%",
-            background: "transparent",
-            border: "none",
-            padding: 0,
-            pointerEvents: "auto",
-            opacity: datePickerDisabled ? 0.5 : 1,
-          }}
-          title="Jump to date"
-          onClick={() => {
-            if (datePickerDisabled) return;
-            const input = navDateInputRef.current;
-            if (!input) return;
-            if (currentDate) {
-              input.value = formatDateInputValue(currentDate) || "";
-            }
-            if (typeof (input as any).showPicker === "function") {
-              (input as any).showPicker();
-            } else {
-              input.click();
-            }
-          }}
+      {showNavigation && (
+        <div style={{ position: "relative", display: "flex" }}>
+          <button
+            className="bases-calendar-title-text"
+            style={{
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: "0.9rem",
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              minWidth: 0,
+              maxWidth: "100%",
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              pointerEvents: "auto",
+              opacity: datePickerDisabled ? 0.5 : 1,
+            }}
+            title="Jump to date"
+            onClick={() => {
+              if (datePickerDisabled) return;
+              const input = navDateInputRef.current;
+              if (!input) return;
+              if (currentDate) {
+                input.value = formatDateInputValue(currentDate) || "";
+              }
+              if (typeof (input as any).showPicker === "function") {
+                (input as any).showPicker();
+              } else {
+                input.click();
+              }
+            }}
+          >
+            {headerTitle}
+            <span style={{ fontSize: "0.6em", opacity: 0.7 }}>&#9660;</span>
+          </button>
+        </div>
+      )}
+
+      {visibleEventCount !== null && (
+        <span
+          className="bases-calendar-visible-event-count"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-label={`${visibleEventCountLabel} in calendar`}
+          title="Events visible in this calendar range"
         >
-          {headerTitle}
-          <span style={{ fontSize: "0.6em", opacity: 0.7 }}>&#9660;</span>
-        </button>
-      </div>
+          {visibleEventCountLabel}
+        </span>
+      )}
 
-      <input
-        ref={navDateInputRef}
-        type="date"
-        style={{
-          position: "absolute",
-          opacity: 0,
-          width: "1px",
-          height: "1px",
-          pointerEvents: "none",
-        }}
-        tabIndex={-1}
-        min={formatDateInputValue(navigationBoundsStart)}
-        max={formatDateInputValue(navigationBoundsEnd)}
-        onChange={handleDateInputChange}
-      />
+      {showNavigation && (
+        <>
+          <input
+            ref={navDateInputRef}
+            type="date"
+            style={{
+              position: "absolute",
+              opacity: 0,
+              width: "1px",
+              height: "1px",
+              pointerEvents: "none",
+            }}
+            tabIndex={-1}
+            min={formatDateInputValue(navigationBoundsStart)}
+            max={formatDateInputValue(navigationBoundsEnd)}
+            onChange={handleDateInputChange}
+          />
 
-      <div
-        style={{
-          width: "1px",
-          height: "16px",
-          background: "var(--background-modifier-border)",
-          margin: "0 2px",
-        }}
-      />
+          <div
+            style={{
+              width: "1px",
+              height: "16px",
+              background: "var(--background-modifier-border)",
+              margin: "0 2px",
+            }}
+          />
 
-      <button
-        className="bases-calendar-nav-button"
-        onClick={onPrevClick}
-        title="Previous"
-        disabled={prevDisabled}
-        style={{ pointerEvents: "auto", opacity: prevDisabled ? 0.5 : 1 }}
-      >
-        &#8249;
-      </button>
-      <button
-        className="bases-calendar-nav-button"
-        onClick={onTodayCentered}
-        disabled={todayDisabled}
-        style={{
-          fontSize: "0.8rem",
-          padding: "2px 8px",
-          pointerEvents: "auto",
-          opacity: todayDisabled ? 0.5 : 1,
-        }}
-      >
-        Today
-      </button>
-      <button
-        className="bases-calendar-nav-button"
-        onClick={onNextClick}
-        title="Next"
-        disabled={nextDisabled}
-        style={{ pointerEvents: "auto", opacity: nextDisabled ? 0.5 : 1 }}
-      >
-        &#8250;
-      </button>
+          <button
+            className="bases-calendar-nav-button"
+            onClick={onPrevClick}
+            title="Previous"
+            disabled={prevDisabled}
+            style={{ pointerEvents: "auto", opacity: prevDisabled ? 0.5 : 1 }}
+          >
+            &#8249;
+          </button>
+          <button
+            className="bases-calendar-nav-button"
+            onClick={onTodayCentered}
+            disabled={todayDisabled}
+            style={{
+              fontSize: "0.8rem",
+              padding: "2px 8px",
+              pointerEvents: "auto",
+              opacity: todayDisabled ? 0.5 : 1,
+            }}
+          >
+            Today
+          </button>
+          <button
+            className="bases-calendar-nav-button"
+            onClick={onNextClick}
+            title="Next"
+            disabled={nextDisabled}
+            style={{ pointerEvents: "auto", opacity: nextDisabled ? 0.5 : 1 }}
+          >
+            &#8250;
+          </button>
+        </>
+      )}
     </div>
   );
 };

@@ -1,6 +1,11 @@
 import { useMemo } from "react";
 import { BasesEntry, BasesPropertyId, Value } from "obsidian";
 import type { CalendarEntry } from "../CalendarReactView";
+import {
+  doesCalendarDisplayIntervalOverlapRange,
+  normalizeCalendarDisplayInterval,
+} from "../utils/calendar-display-interval";
+import { countVisibleCalendarDisplayIntervals } from "../utils/calendar-visible-count";
 
 const normalizeValue = (value: unknown): string => {
   if (value === null || value === undefined) return "";
@@ -48,6 +53,21 @@ const formatAllDayDateKey = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
+export const isCalendarEntryDisplayedAllDay = (
+  calEntry: CalendarEntry,
+  allDayProperty?: BasesPropertyId | null,
+): boolean => {
+  if (calEntry.isAuxiliaryDate) return calEntry.forceAllDay === true;
+  if (calEntry.isExternal) return !!calEntry.externalEvent?.isAllDay;
+
+  const allDaySource = allDayProperty
+    ? tryGetValue(calEntry.entry, allDayProperty)
+    : null;
+  const normalizedAllDaySource = normalizeValue(allDaySource).trim().toLowerCase();
+  return calEntry.forceAllDay === true
+    || ["true", "yes", "y", "1"].includes(normalizedAllDaySource);
+};
+
 interface UseCalendarEventsOptions {
   entries: CalendarEntry[];
   allDayProperty?: BasesPropertyId | null;
@@ -82,39 +102,55 @@ export function useCalendarEvents({
     return map;
   }, [entries]);
 
+  const normalizedEntries = useMemo(
+    () => entries.flatMap((calEntry) => {
+      const isAllDay = isCalendarEntryDisplayedAllDay(calEntry, allDayProperty);
+      const interval = normalizeCalendarDisplayInterval({
+        startDate: calEntry.startDate,
+        endDate: calEntry.endDate,
+        isAllDay,
+        defaultEventDurationMinutes: defaultEventDuration,
+      });
+      return interval ? [{ calEntry, interval, isAllDay }] : [];
+    }),
+    [entries, allDayProperty, defaultEventDuration],
+  );
+
+  const visibleEventCount = useMemo(
+    () => visibleDateRange
+      ? countVisibleCalendarDisplayIntervals(normalizedEntries, visibleDateRange)
+      : null,
+    [normalizedEntries, visibleDateRange],
+  );
+
   const renderedEntries = useMemo(() => {
-    if (!visibleDateRange) return entries;
+    if (!visibleDateRange) return normalizedEntries;
 
     const rangeStart = new Date(visibleDateRange.start);
     const rangeEnd = new Date(visibleDateRange.end);
-    if (!Number.isFinite(rangeStart.getTime()) || !Number.isFinite(rangeEnd.getTime())) return entries;
+    if (!Number.isFinite(rangeStart.getTime()) || !Number.isFinite(rangeEnd.getTime())) {
+      return normalizedEntries;
+    }
 
     // Keep a small buffer so events spanning the edge of the viewport do not
     // disappear while FullCalendar settles after navigation.
     rangeStart.setDate(rangeStart.getDate() - 1);
     rangeEnd.setDate(rangeEnd.getDate() + 1);
-    const rangeStartMs = rangeStart.getTime();
-    const rangeEndMs = rangeEnd.getTime();
-
-    return entries.filter((calEntry) => {
-      const startDate = new Date(calEntry.startDate);
-      const endDate = calEntry.endDate
-        ? new Date(calEntry.endDate)
-        : new Date(startDate.getTime() + defaultEventDuration * 60 * 1000);
-      return endDate.getTime() >= rangeStartMs && startDate.getTime() < rangeEndMs;
-    });
-  }, [entries, visibleDateRange, defaultEventDuration]);
+    return normalizedEntries.filter(({ interval }) => (
+      doesCalendarDisplayIntervalOverlapRange(interval, { start: rangeStart, end: rangeEnd })
+    ));
+  }, [normalizedEntries, visibleDateRange]);
 
   const events = useMemo(() => {
     const normalizedNonActiveStatuses = doneStatuses.map((status) =>
       status.trim().toLowerCase()
     );
 
-    return renderedEntries.flatMap((calEntry) => {
-      const startDate = new Date(calEntry.startDate);
-      const endDate = calEntry.endDate
-        ? new Date(calEntry.endDate)
-        : new Date(startDate.getTime() + 60 * 60 * 1000);
+    return renderedEntries.flatMap(({ calEntry, interval, isAllDay }) => {
+      const startDate = interval.sourceStart;
+      const endDate = interval.sourceEnd;
+      const eventStart = interval.start;
+      const eventEnd = interval.end;
 
       const classNames = ["bases-calendar-event", ...(calEntry.cssClasses || [])];
       const isAuxiliaryDate = !!calEntry.isAuxiliaryDate;
@@ -129,36 +165,6 @@ export function useCalendarEvents({
       const effectiveColor = explicitColor || (calEntry.isExternal ? "#3788d8" : "");
       const backgroundColor = effectiveColor;
       const borderColor = normalizeCssColorValue(calEntry.borderColor || "") || backgroundColor;
-
-      const allDaySource = allDayProperty
-        ? tryGetValue(calEntry.entry, allDayProperty)
-        : null;
-      const normalizedAllDaySource = normalizeValue(allDaySource).trim().toLowerCase();
-      const isAllDay = isAuxiliaryDate
-        ? calEntry.forceAllDay === true
-        : calEntry.isExternal
-        ? !!calEntry.externalEvent?.isAllDay
-        : calEntry.forceAllDay === true || ["true", "yes", "y", "1"].includes(normalizedAllDaySource);
-
-      let eventStart = startDate;
-      let eventEnd = endDate;
-      if (isAllDay) {
-        eventStart = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-        // FullCalendar expects all-day `end` to be exclusive; guarantee at least 1 full day.
-        const candidateEnd = new Date(endDate);
-        if (
-          candidateEnd.getHours() === 0 &&
-          candidateEnd.getMinutes() === 0 &&
-          candidateEnd.getSeconds() === 0 &&
-          candidateEnd.getMilliseconds() === 0 &&
-          candidateEnd.getTime() > eventStart.getTime()
-        ) {
-          eventEnd = candidateEnd;
-        } else {
-          eventEnd = new Date(eventStart);
-          eventEnd.setDate(eventEnd.getDate() + 1);
-        }
-      }
 
       const fcStart = isAllDay ? formatAllDayDateKey(eventStart) : eventStart;
       const fcEnd = isAllDay ? formatAllDayDateKey(eventEnd) : eventEnd;
@@ -230,9 +236,9 @@ export function useCalendarEvents({
 
       return [baseEvent];
     });
-  }, [renderedEntries, allDayProperty, minEventHeight, doneStatuses, noteEventsEditable]);
+  }, [renderedEntries, minEventHeight, doneStatuses, noteEventsEditable]);
 
-  return { basesEntryMap, events };
+  return { basesEntryMap, events, visibleEventCount };
 }
 
 function normalizeCssColorValue(rawValue: string): string {

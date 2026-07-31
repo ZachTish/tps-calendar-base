@@ -33,7 +33,7 @@ import { ExternalCalendarEvent } from "./types";
 // Extracted hooks
 import { useCalendarZoom } from "./hooks/useCalendarZoom";
 import { useTimeFollowing } from "./hooks/useTimeFollowing";
-import { useCalendarEvents, normalizeValue, tryGetValue } from "./hooks/useCalendarEvents";
+import { normalizeValue, tryGetValue, useCalendarEvents } from "./hooks/useCalendarEvents";
 
 // Extracted components
 import { useEventRenderer } from "./components/EventRenderer";
@@ -1346,7 +1346,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   );
 
   // Events hook
-  const { basesEntryMap, events } = useCalendarEvents({
+  const { basesEntryMap, events, visibleEventCount } = useCalendarEvents({
     entries: renderableEntries,
     allDayProperty,
     defaultEventDuration,
@@ -3742,6 +3742,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
           navigationBoundsStart={navigationBoundsStart}
           navigationBoundsEnd={navigationBoundsEnd}
           headerTitle={headerTitle}
+          visibleEventCount={visibleEventCount}
           currentDate={displayedAnchorRef.current}
           onDateChange={handleDatePickerChange}
           onPrevClick={handlePrevClick}

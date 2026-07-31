@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.3.7
+
+- Day, three-day, and other FullCalendar-backed navigable views now show a Calendar-owned count for the events that overlap the exact visible date range. The count follows navigation and data refreshes, includes local-note, inline-task, and external events, and excludes auxiliary-date and archived-warning markers that are not rendered as event cards.
+- Removed the unsupported selector probing and `textContent` rewrite of Obsidian's private Base-header result-count element. Obsidian remains the sole owner of its query-result count; Calendar's separate count is labeled as visible events and exposed as a polite accessible status.
+- Exact half-open range tests cover one-day/three-day navigation, spanning and boundary events, configured missing-end duration, daylight-saving days, invalid data, and the absence of private result-count DOM access. The counter is a memoized linear pass only when the visible range or entries change.
+- This backward-compatible reliability patch changes no settings, commands, plugin API, Base schema, note data, or external automation. Minimum supported Obsidian remains 1.10.0.
+- Validation passed all 121 release-declared tests, three separate containment checks, TypeScript, a separate production-mode build, and a reloaded Obsidian 1.12.7 test-vault inspection. The permanent three-record QA Base showed `0 visible events` for July 30–August 1 and `3 visible events` for July 16–18, then returned to its original July 31 date without creating or editing a note.
+
 ## 0.3.6
 
 - External-event fallback scans now normalize each stored calendar source URL once per nonempty scan instead of once for every candidate event. This covers local-note event-ID, UID, and title matching; vault-wide UID/title suppression; and inline-task UID matching.
@@ -70,12 +78,13 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 - 2026-07-30 (0.3.3) optimization validation: the exact released implementation was measured before removal, and the permanent regression now prevents the orphaned day-context scan from returning. Focused preservation coverage kept numeric date headers, auxiliary/archived markers, external-event deduplication, and embedded slot behavior intact. All 95 release-declared tests, three separate containment checks, and TypeScript passed; the separate final production-mode build, reloaded test-vault UI, artifact hashes, and fresh BRAT-download verification are recorded in the 0.3.3 GitHub release. Production was not accessed.
 - 2026-07-30 (0.3.4) displayed-day validation: timezone-isolated parsing, daylight-saving arithmetic, nested AND/OR/NOT range logic, equality/strict/one-sided bounds, responsive anchor, stale-prop protection, view-mode precedence, host-scope, public-navigation, and date-picker regressions passed with the complete declared suite and TypeScript. After test deployment and `Reload app without saving`, the permanent three-day fixture restored July 16–18, Previous/Next moved exactly one day, Today centered July 30 in July 29–31, and synthetic filter views verified strict, OR, one-sided, and zero-result additive future-date windows. The synthetic files were moved to `_archive`; the permanent fixture state was restored, no outbound automation was enabled, and production was not accessed.
 - 2026-07-28 (0.3.2) source-alignment validation: all five focused view/efficiency regressions and all 94 release-declared tests passed with TypeScript. The versioned runtime kept the exact `0.3.1` `main.js` bytes, changed only `manifest.json`, and preserved the absent `data.json` state. After `Reload app without saving`, Obsidian 1.12.7 rendered `Inbox/TishOS Phone Calendar QA.base` as its three-day Calendar with four results; no settings, notes, feeds, or outbound automation were changed. The required final build reported the test runtime unchanged, and production was not accessed.
+- 2026-07-31 (0.3.7) visible-count validation: all 121 release-declared tests, three separate containment checks, and TypeScript passed. After test deployment and `Reload app without saving`, `Inbox/TishOS Phone Calendar QA.base` kept its three native Base-query results while Calendar reported zero visible events for July 30–August 1 and three for July 16–18. Today restored the original July 31 state; no notes, settings, feeds, or outbound automation changed, and production was not accessed.
 
 ## Install with BRAT
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.3.6` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.3.7` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 
@@ -91,7 +100,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Registers a custom **Bases view type** — drop it into any Base layout to show a time-grid calendar.
 - Renders notes as events using configurable frontmatter fields (date, startTime, endTime, title, etc.).
 - Supports week, day, continuous-scroll, and **filter-based** display modes.
-- Navigation controls (previous/next/today) and condensed event display levels.
+- Navigation controls (previous/next/today), an accessible count of events in the exact visible range for FullCalendar-backed navigable views, and condensed event display levels.
 - Day headers omit the aggregate task/context checklist badge and give the date label the full header width, keeping the day number visible in constrained layouts. Separate auxiliary-date and archived-external warning markers remain available.
 - `Show now indicator` is a per-view display option. An explicit Show/Hide value overrides the global plugin setting; a view that omits the option inherits the global setting.
 
@@ -162,7 +171,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Restore your prior settings after the check.
 
 ### Embedded reading-mode rendering validation
-- Embedded Calendar Bases preserve the native Base header/toolbar by default, including the view selector, result count, sort/filter/property/search controls, and `New` action. Per-view `Embedded Base header` can be set to `Hide` when a compact read-only embed is wanted.
+- Embedded Calendar Bases preserve the native Base header/toolbar by default, including the view selector, Base-query result count, sort/filter/property/search controls, and `New` action. In dedicated and other surfaces where Calendar navigation is shown, its separate label reports the number of event cards in the exact visible date range. Per-view `Embedded Base header` can be set to `Hide` when a compact read-only embed is wanted.
 - Embedded calendar Bases in reading mode use FullCalendar's native time-grid header and all-day row. Reading mode does not add synthetic all-day labels or overlay layers, so the native all-day cells remain available for selection and drag/drop.
 - Embedded reading mode keeps a compact dedicated-view-like structure: darker day header/all-day chrome, centered native all-day axis label, no transform-based all-day label positioning, and no forced all-day max-height clipping.
 - Dedicated Calendar Base tabs preserve their configured day count when workspace sidebars or split panes narrow the leaf. Width-based day-count reduction is limited to constrained markdown/Canvas embeds; direct dashboard embeds can still request `preserveDayCount`.
