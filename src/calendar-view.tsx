@@ -84,6 +84,7 @@ import { getInclusiveCalendarDisplayBounds } from "./utils/calendar-display-inte
 import { isCalendarEntryDisplayedAllDay } from "./utils/calendar-entry-all-day";
 import {
   clampCalendarNavigationDate,
+  resolveCalendarRangeAnchor,
   shiftCalendarMonthStart,
 } from "./utils/calendar-day-count";
 import {
@@ -2414,8 +2415,14 @@ export class CalendarView extends BasesView {
     // use the matching entry span.
     const hasExplicitBounds = Boolean(filterBounds.start || filterBounds.end);
     this.hasExplicitFilterRange = hasExplicitBounds;
-    this.navigationBoundsStart = filterBounds.start ? new Date(filterBounds.start) : null;
-    this.navigationBoundsEnd = filterBounds.end ? new Date(filterBounds.end) : null;
+    const shouldConstrainNavigation =
+      resolveCalendarRangeAnchor(this.filterRangeAuto, hasExplicitBounds) === "start";
+    this.navigationBoundsStart = shouldConstrainNavigation && filterBounds.start
+      ? new Date(filterBounds.start)
+      : null;
+    this.navigationBoundsEnd = shouldConstrainNavigation && filterBounds.end
+      ? new Date(filterBounds.end)
+      : null;
 
     // Resolved endpoints own their respective side. A missing side comes from
     // matching entries, so `scheduled < Friday` can show the complete matching

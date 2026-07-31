@@ -668,6 +668,13 @@ test('calendar day-count paths use shared calendar-day helper', () => {
   assert.match(utilSource, /export function getInclusiveCalendarDayCount/);
   assert.match(utilSource, /Date\.UTC\(startDate\.getFullYear\(\), startDate\.getMonth\(\), startDate\.getDate\(\)\)/);
   assert.match(hostSource, /getInclusiveCalendarDayCount\(startOfMinDay, startOfMaxDay\)/);
+  assert.match(
+    hostSource,
+    /resolveCalendarRangeAnchor\(this\.filterRangeAuto, hasExplicitBounds\) === "start"/,
+    'manual views must not inherit exact-filter navigation bounds that clip their centered columns',
+  );
+  assert.match(hostSource, /this\.navigationBoundsStart = shouldConstrainNavigation && filterBounds\.start/);
+  assert.match(hostSource, /this\.navigationBoundsEnd = shouldConstrainNavigation && filterBounds\.end/);
   assert.match(reactSource, /getInclusiveCalendarDayCount\(start, end\)/);
   assert.match(hostSource, /isPositiveEqualityOperator\(condition\.operator\)/);
   assert.match(hostSource, /normalizeFilterUpperBound\(boundaryDate, condition\.operator\)/);
