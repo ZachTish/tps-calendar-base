@@ -7,8 +7,14 @@ export function getAdaptiveTimeGridDayCount(
   containerWidth: number,
   isConstrainedEmbed: boolean,
   isCanvasEmbed: boolean,
+  preserveConfiguredDayCount = false,
 ): number {
-  if (!isConstrainedEmbed || !Number.isFinite(containerWidth) || containerWidth <= 0) {
+  if (
+    preserveConfiguredDayCount
+    || !isConstrainedEmbed
+    || !Number.isFinite(containerWidth)
+    || containerWidth <= 0
+  ) {
     return configuredDayCount;
   }
 

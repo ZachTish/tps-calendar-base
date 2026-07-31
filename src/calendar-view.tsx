@@ -5427,6 +5427,7 @@ export class CalendarView extends BasesView {
             // onToggleHiddenEvents={() => this.toggleHiddenEvents()}
             showNavButtons={this.showNavButtons}
             navigationLocked={this.navigationLockedByAutoRange}
+            filterRangeAuto={this.filterRangeAuto}
             entryBoundsStart={this.filterRangeAuto && this.filterRangeStart ? this.filterRangeStart : undefined}
             entryBoundsEnd={this.filterRangeAuto && this.filterRangeEnd ? this.filterRangeEnd : undefined}
             navigationBoundsStart={this.navigationBoundsStart ?? undefined}

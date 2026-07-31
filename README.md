@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.3.9
+
+- Filter-based one-through-seven-day calendars now preserve their exact derived day count inside narrow Markdown, Canvas, and mobile embeds. A July 31–August 5 range no longer collapses to one or two columns beginning at its August 2 midpoint.
+- Manual multi-day views keep their existing responsive behavior, so an ordinary embedded `3d`, `7d`, or week view can still reduce its visible columns for readability unless the view explicitly preserves its day count.
+- This is a backward-compatible correctness patch with no settings, Base-schema, or note-data migration. Minimum supported Obsidian remains 1.10.0.
+- Validation passed all 131 tests, including three containment checks, TypeScript, the required separate production-mode build, and a reloaded Obsidian 1.12.7 test-vault inspection. The constrained six-day fixture rendered Jul 31–Aug 5 instead of beginning at Aug 2; the temporary inspection note was moved to `_archive`, and production was not accessed.
+
 ## 0.3.8
 
 - Filter-based calendars now preserve the exact inclusive span from one through seven days. Two-day and six-day results render as two and six columns instead of being rounded up to three or seven; `2d` and `6d` are also available as explicit per-view modes.
@@ -89,6 +96,7 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 - 2026-07-28 (0.3.2) source-alignment validation: all five focused view/efficiency regressions and all 94 release-declared tests passed with TypeScript. The versioned runtime kept the exact `0.3.1` `main.js` bytes, changed only `manifest.json`, and preserved the absent `data.json` state. After `Reload app without saving`, Obsidian 1.12.7 rendered `Inbox/TishOS Phone Calendar QA.base` as its three-day Calendar with four results; no settings, notes, feeds, or outbound automation were changed. The required final build reported the test runtime unchanged, and production was not accessed.
 - 2026-07-31 (0.3.7) visible-count validation: all 121 release-declared tests, three separate containment checks, and TypeScript passed. After test deployment and `Reload app without saving`, `Inbox/TishOS Phone Calendar QA.base` kept its three native Base-query results while Calendar reported zero visible events for July 30–August 1 and three for July 16–18. Today restored the original July 31 state; no notes, settings, feeds, or outbound automation changed, and production was not accessed.
 - 2026-07-31 (0.3.8) exact displayed-day validation: all 130 release-declared tests, three containment checks, and TypeScript passed. After test deployment and `Reload app without saving`, a synthetic Base rendered exactly July 31–August 1 for two days and July 31–August 5 for six days; both all-day and timed midnight-boundary views rendered only July 31. Switching six days to one day remained on July 31 after follow-up refreshes, stale delayed saves were scoped to their originating view, a dedicated week advanced Monday–Sunday, and a constrained embed rendered two readable week columns. Synthetic QA was archived, no outbound automation was enabled, and production was not accessed.
+- 2026-07-31 (0.3.9) constrained exact-range validation: all 131 tests, including three containment checks, and TypeScript passed. After test deployment and `Reload app without saving`, `_archive/Calendar Exact Days QA.base#Exact 6 days` rendered Jul 31–Aug 5 as six correct filter-derived columns inside a constrained Markdown embed instead of collapsing to the Aug 2 midpoint. The temporary QA note was archived, manual responsive behavior remained covered, and production was not accessed.
 
 ## Install with BRAT
 
@@ -184,7 +192,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Embedded Calendar Bases preserve the native Base header/toolbar by default, including the view selector, Base-query result count, sort/filter/property/search controls, and `New` action. In dedicated and other surfaces where Calendar navigation is shown, its separate label reports the number of event cards in the exact visible date range. Per-view `Embedded Base header` can be set to `Hide` when a compact read-only embed is wanted.
 - Embedded calendar Bases in reading mode use FullCalendar's native time-grid header and all-day row. Reading mode does not add synthetic all-day labels or overlay layers, so the native all-day cells remain available for selection and drag/drop.
 - Embedded reading mode keeps a compact dedicated-view-like structure: darker day header/all-day chrome, centered native all-day axis label, no transform-based all-day label positioning, and no forced all-day max-height clipping.
-- Dedicated Calendar Base tabs preserve their configured day count when workspace sidebars or split panes narrow the leaf. Width-based day-count reduction is limited to constrained markdown/Canvas embeds; direct dashboard embeds can still request `preserveDayCount`.
+- Dedicated Calendar Base tabs preserve their configured day count when workspace sidebars or split panes narrow the leaf. Manual width-based day-count reduction is limited to constrained Markdown/Canvas embeds; direct dashboard embeds can still request `preserveDayCount`. Filter-based one-through-seven-day views always retain the exact derived span, including in constrained embeds, so responsive sizing cannot shift the calendar into the range midpoint.
 - Embedded time-grid calendars reserve one consistent 64px first column across the synchronized header, all-day, and hour tables. This keeps the complete time ruler visible when FullCalendar recalculates fixed table layouts at different phone, tablet, split-pane, and desktop widths.
 - Embedded event tiles use compact dedicated-view-style treatment with readable titles, solid explicit event colors, lighter padding, and hidden property chips so timed events remain legible inside note embeds.
 - When hidden hours are enabled and a timed event falls outside the currently visible range, the affected day now gets a directional edge highlight: top edge for earlier hidden events, bottom edge for later hidden events. All-day/date-only events are ignored for this marker because they remain visible in the all-day row. The global hidden-hours button still indicates that hidden timed events exist in the visible range.
@@ -223,7 +231,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 
 ### Filter-Based View Mode
 - New view mode option that automatically adjusts the calendar display based on your filtered data range.
-- When selected, the calendar analyzes the occupied local calendar days of visible events and preserves every exact one-through-seven-day span (`day`, `2d`, `3d`, `4d`, `5d`, `6d`, or `7d`); longer spans use month.
+- When selected, the calendar analyzes the occupied local calendar days of visible events and preserves every exact one-through-seven-day span (`day`, `2d`, `3d`, `4d`, `5d`, `6d`, or `7d`), even in a constrained embed; longer spans use month.
 - Filter-based views recalculate independently when the active Base view changes. All-day and timed intervals are half-open, so an event ending exactly at midnight does not add the next day.
 - Unlike the legacy "Auto view mode from visible local events" toggle, filter-based mode doesn't persist manual view changes — it always recalculates the best view based on current data.
 - Particularly useful for filtered views where you want the calendar to adapt to the time span of your query results.

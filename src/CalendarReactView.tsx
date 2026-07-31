@@ -378,6 +378,7 @@ interface CalendarReactViewProps {
   headerContainer?: HTMLElement;
   showNavButtons?: boolean;
   navigationLocked?: boolean;
+  filterRangeAuto?: boolean;
   entryBoundsStart?: Date;
   entryBoundsEnd?: Date;
   navigationBoundsStart?: Date;
@@ -592,6 +593,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   headerContainer,
   showNavButtons,
   navigationLocked = false,
+  filterRangeAuto = false,
   entryBoundsStart,
   entryBoundsEnd,
   navigationBoundsStart,
@@ -824,7 +826,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     ? Math.max(0, Math.min(6, weekStartDay))
     : 1;
   const derivedFilterRangeDays = useMemo(() => {
-    if (viewMode !== "filter-based") return null;
+    if (!filterRangeAuto) return null;
     if (!entryBoundsStart || !entryBoundsEnd) return null;
     const start = new Date(entryBoundsStart);
     const end = new Date(entryBoundsEnd);
@@ -833,7 +835,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     const inclusiveDays = getInclusiveCalendarDayCount(start, end);
     if (!Number.isFinite(inclusiveDays) || inclusiveDays < 1) return 1;
     return inclusiveDays;
-  }, [viewMode, entryBoundsStart, entryBoundsEnd]);
+  }, [filterRangeAuto, entryBoundsStart, entryBoundsEnd]);
 
   const resolvedFilterViewMode: ViewMode = useMemo(() => {
     if (viewMode !== "filter-based") return viewMode;
@@ -843,6 +845,15 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, [viewMode, derivedFilterRangeDays]);
 
   const configuredDayCount = getConfiguredTimeGridDayCount(resolvedFilterViewMode);
+  // A filter-based range promises the exact occupied/bounded days. Reducing
+  // only its rendered column count would reuse the range's centered anchor and
+  // start a narrow embed in the middle of the requested span. Keep all of the
+  // derived days together; manual multi-day views retain responsive reduction.
+  const preserveFilterRangeDayCount =
+    filterRangeAuto
+    && derivedFilterRangeDays !== null
+    && derivedFilterRangeDays >= 1
+    && derivedFilterRangeDays <= 7;
   const targetDayCount = useMemo(() => {
     if (resolvedFilterViewMode === "month" || resolvedFilterViewMode === "continuous" || preserveEmbeddedDayCount) {
       return configuredDayCount;
@@ -852,8 +863,9 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       containerWidth,
       isEmbedMode || isCanvasEmbed,
       isCanvasEmbed,
+      preserveFilterRangeDayCount,
     );
-  }, [configuredDayCount, containerWidth, isCanvasEmbed, isEmbedMode, preserveEmbeddedDayCount, resolvedFilterViewMode]);
+  }, [configuredDayCount, containerWidth, isCanvasEmbed, isEmbedMode, preserveEmbeddedDayCount, preserveFilterRangeDayCount, resolvedFilterViewMode]);
   const viewName =
     resolvedFilterViewMode === "month" ? "dayGridMonth" :
       resolvedFilterViewMode === "continuous" ? "timeGridDay" :

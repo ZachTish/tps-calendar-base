@@ -922,7 +922,8 @@ test("reading-mode embedded calendars stay compact and preserve Bases chrome by 
   assert.match(reactViewSource, /from "\.\/utils\/calendar-day-count"/);
   assert.match(calendarDayCountSource, /const EMBEDDED_TIMEGRID_MIN_DAY_WIDTH_PX = 230/);
   assert.match(calendarDayCountSource, /const CANVAS_TIMEGRID_MIN_DAY_WIDTH_PX = 230/);
-  assert.match(calendarDayCountSource, /if \(!isConstrainedEmbed \|\|/);
+  assert.match(calendarDayCountSource, /preserveConfiguredDayCount = false/);
+  assert.match(calendarDayCountSource, /preserveConfiguredDayCount[\s\S]*?\|\| !isConstrainedEmbed/);
   assert.match(reactViewSource, /getAdaptiveTimeGridDayCount/);
   assert.match(reactViewSource, /const _DRAG_EVENT_TYPES = \['mousedown','mousemove','mouseup'\] as const/);
   assert.doesNotMatch(reactViewSource, /new PointerEvent\(e\.type/);
@@ -998,6 +999,55 @@ test("dedicated calendar tabs preserve configured day counts while constrained e
   assert.equal(getAdaptiveTimeGridDayCount(3, 570, true, false), 2);
   assert.equal(getAdaptiveTimeGridDayCount(3, 570, true, true), 2);
   assert.equal(getAdaptiveTimeGridDayCount(3, 0, true, false), 3);
+});
+
+test("exact filter ranges do not shift into their midpoint in constrained embeds", async () => {
+  const {
+    getAdaptiveTimeGridDayCount,
+    getCalendarStartForAnchor,
+  } = await importCalendarDayCountUtility();
+  const rangeStart = new Date(2026, 6, 31);
+
+  for (let configuredDays = 2; configuredDays <= 7; configuredDays += 1) {
+    const centeredAnchor = new Date(rangeStart);
+    centeredAnchor.setDate(
+      centeredAnchor.getDate() + Math.floor((configuredDays - 1) / 2),
+    );
+    const renderedDays = getAdaptiveTimeGridDayCount(
+      configuredDays,
+      400,
+      true,
+      false,
+      true,
+    );
+    const renderedStart = getCalendarStartForAnchor(
+      centeredAnchor,
+      `${configuredDays}d`,
+      renderedDays,
+    );
+
+    assert.equal(renderedDays, configuredDays);
+    assert.equal(renderedStart.getFullYear(), 2026);
+    assert.equal(renderedStart.getMonth(), 6);
+    assert.equal(renderedStart.getDate(), 31);
+  }
+
+  assert.equal(getAdaptiveTimeGridDayCount(3, 400, true, false, false), 1);
+  assert.match(calendarViewSource, /filterRangeAuto=\{this\.filterRangeAuto\}/);
+  assert.match(reactViewSource, /filterRangeAuto = false/);
+  assert.match(
+    reactViewSource,
+    /const derivedFilterRangeDays = useMemo\(\(\) => \{[\s\S]*?if \(!filterRangeAuto\) return null;/,
+  );
+  assert.match(reactViewSource, /const preserveFilterRangeDayCount =/);
+  assert.match(
+    reactViewSource,
+    /const preserveFilterRangeDayCount =\s*filterRangeAuto\s*&& derivedFilterRangeDays !== null/,
+  );
+  assert.match(
+    reactViewSource,
+    /getAdaptiveTimeGridDayCount\([\s\S]*?preserveFilterRangeDayCount,/,
+  );
 });
 
 test("calendar keeps event drag snap separate and continuous view uses configured durations", () => {
