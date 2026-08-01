@@ -1,5 +1,15 @@
 # TPS Calendar Base
 
+## 0.4.0
+
+- Calendar now evaluates top-level Base formulas for synthesized checkbox-task rows and external calendar records through TPS Global Context Menu's supported version-1 formula API. Formula-backed start/end or duration, title, status, priority, all-day state, and filters use the same compiled semantics as TPS Table, TPS List, and TPS Kanban.
+- Synthetic task formulas receive row-first `row`, `note`, `file`, `this`, `task`, and one-based `line` contexts. Bare Kind is additive: checkbox rows match task identity while retaining any explicit Kind, and `row.kind`/`row.itemKind` remain the structural item type.
+- Formula filters preserve stored order and normal short-circuiting. Any evaluated formula error, unsupported operation, incompatible API, or missing exact line-metadata contract excludes the synthetic row with a deduplicated diagnostic; Calendar never substitutes a same-named inline field or a regex parser.
+- Native note formulas remain owned by Obsidian. Computed fields are read-only, so Calendar refuses creation or mutation paths that would need to write a formula-backed start property. Ordinary calendars without formulas remain independent of GCM and create no formula sessions.
+- Calendar listens for GCM's supported `tps:gcm-api-changed` lifecycle event, clears every formula/line-metadata cache, and refreshes when the shared API is installed, replaced, or removed.
+- One Calendar-owned capability registry now handles that GCM handshake for every consumer. It registers before requesting the API, accepts only the exact public GCM source identity, supports either plugin load order plus unload/reload, and removes Calendar's private `app.plugins`/development-folder discovery. Status options, custom inline-property permission, parent-link policy, Daily Notes, identity, menus, and formula/line metadata all resolve through the same delivered API; missing or incompatible optional configuration capabilities fail closed while Calendar's documented built-in task fields remain available.
+- This is a backward-compatible minor release. Existing settings, commands, Base files, note data, and minimum supported Obsidian 1.10.0 remain unchanged; no migration is required.
+
 ## 0.3.13
 
 - Manual multi-day calendars once again treat the saved, selected, Today, or date-picker date as the focal day. A three-day view on Friday renders Thursday through Saturday instead of Friday through Sunday.
@@ -130,6 +140,7 @@ Canonical source, tests, Git metadata, and dependencies live in `/Users/zachtish
 - 2026-07-31 (0.3.10) selected-day validation: all 134 tests, three containment checks, TypeScript, and the required separate build passed. In reloaded Obsidian 1.12.7, `Inbox/TishOS Phone Calendar QA.base` changed from the legacy centered Jul 30–Aug 1 display to the selected-first Jul 31–Aug 2 display; Previous/Next moved one day and Today restored Jul 31. Explicit fixtures rendered Jul 31–Aug 1 and Jul 31–Aug 5, the full week rendered Mon Jul 27–Sun Aug 2 and advanced to Aug 3–9, and `_archive/Calendar Responsive Week QA.md` retained Jul 31 as the first of two constrained columns. Fixture dates were restored, no outbound automation was enabled, and production was not accessed.
 - 2026-07-31 (0.3.11) centered-day validation: all 131 declared tests, five shared workspace-containment checks, TypeScript, and the required separate build passed from a clean release worktree. After `Reload app without saving` in Obsidian 1.12.7, `Inbox/TishOS Phone Calendar QA.base` rendered Jul 30–Aug 1 around its saved Jul 31 focal date; an automatic explicit filter rendered the exact Jul 31–Aug 5 span; and a temporary manually pinned three-day view with the same bounds still centered Jul 31 and preserved it after the save debounce. The temporary view was removed, fixture state was restored, no outbound automation was enabled, and production was not accessed.
 - 2026-07-31 (0.3.12) selected-first correction validation: all 132 release-declared tests, TypeScript, and a separate production-mode build passed from an isolated clean validation tree that excluded unrelated Formula API work. After a forced reload in Obsidian 1.12.7, the permanent three-day fixture rendered Fri Jul 31–Sun Aug 2; Next rendered Sat Aug 1–Mon Aug 3 and Previous restored the original range. Exact two- and six-day filters remained Jul 31–Aug 1 and Jul 31–Aug 5, while the Monday-first week remained Jul 27–Aug 2. Every fixture retained `tps_currentDate: 2026-07-31`; no outbound automation was enabled and production was not accessed.
+- 2026-07-31 (0.4.0) formula/API validation: all 149 release-declared tests passed with zero skips, including the exact GCM lifecycle/configuration contract and the real GCM formula provider. A separate production-mode build deployed only the Calendar bundle and manifest to the verified test vault. After `Reload app without saving` in Obsidian 1.12.7, the ordinary three-day Calendar still rendered its nine Base results, and an isolated formula Base rendered exactly two checkbox tasks at 10:00 and 11:00 with formula-derived titles while excluding the task with no computable date. The temporary Base was moved to `_archive`; settings, note contents, outbound automation, and production were untouched.
 
 ## Install with BRAT
 
@@ -154,6 +165,15 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Navigation controls (previous/next/today), an accessible count of events in the exact visible range for FullCalendar-backed navigable views, and condensed event display levels.
 - Day headers omit the aggregate task/context checklist badge and give the date label the full header width, keeping the day number visible in constrained layouts. Separate auxiliary-date and archived-external warning markers remain available.
 - `Show now indicator` is a per-view display option. An explicit Show/Hide value overrides the global plugin setting; a view that omits the option inherits the global setting.
+
+### Base formulas on synthetic records
+
+- Top-level Base `formulas:` can drive Calendar's configured start, end/duration, title, status, priority, all-day property, and filter expressions for checkbox tasks and external records. Native note rows continue to use Obsidian's own formula results.
+- Calendar uses only TPS Global Context Menu's exact `plugin.api.formulas` version 1 and `plugin.api.lineMetadata` version 1 contracts. A formula-bearing synthetic view fails closed if either required API is absent or incompatible; ordinary non-formula Calendar views remain fully standalone.
+- Checkbox-task contexts expose inline fields as row-first bare names plus `row`, containing-note frontmatter as `note`, source identity as `file`, the Base host as `this`, checkbox structure as `task`, and one-based physical-line metadata as `line`. Structural identity stays available through `row.kind`, `row.itemKind`, and `row.itemType`; additive identities are available in `row.kinds`, while `row.explicitKind` contains only the line's explicit Kind value.
+- Persisted inline Markdown values remain strings because a line has no authoritative Base property schema. Formulas should convert deliberately, for example `number(points)`, `date(scheduled)`, `allDay == "true"`, `labels.split(",")`, or `link(owner)`. `list(value)` wraps one scalar and does not parse comma or bracket syntax.
+- Formula-backed fields are computed and therefore read-only. If a creation, drag, or resize operation would have to write the configured formula start field, Calendar refuses the mutation and directs the user to a view with a writable property.
+- Filter groups evaluate children in stored order with normal `and`/`or` short-circuiting. An evaluated error cannot be inverted by `not` or bypassed by a later sibling; an unreachable branch is not evaluated.
 
 ### External Calendar Sync
 - Reads iCal feed configurations from **TPS-Controller** settings (no duplicate config).
@@ -377,7 +397,7 @@ src/
 | Plugin | Relationship |
 |--------|-------------|
 | TPS-Controller | Reads iCal config; shares 4 service files (to be consolidated) |
-| TPS-GCM | Independent — both render the same vault notes |
+| TPS-GCM | Optional shared formula, canonical line-metadata, and versioned configuration APIs for synthetic Calendar records; non-formula views remain independent |
 | TPS-Notifier | Independent |
 | TPS-NNC | Independent |
 

@@ -1,5 +1,4 @@
 import { App, normalizePath } from "obsidian";
-import { getPluginById } from "../core";
 
 export interface TypeFolderOption {
   path: string;
@@ -8,6 +7,7 @@ export interface TypeFolderOption {
 }
 
 const MAX_TYPE_FOLDER_OPTIONS = 500;
+const TYPE_TEMPLATE_ROOT = "System/Templates/Types";
 
 export class TypeFolderService {
   private app: App;
@@ -75,11 +75,6 @@ export class TypeFolderService {
   }
 
   private getTypeTemplateRoot(): string | null {
-    const gcmPlugin = getPluginById(this.app, 'tps-global-context-menu') as any;
-    const configuredRoot = gcmPlugin?.settings?.typeTemplateFolderPath;
-    if (typeof configuredRoot === "string" && configuredRoot.trim()) {
-      return normalizePath(configuredRoot.trim());
-    }
-    return "System/Templates/Types";
+    return TYPE_TEMPLATE_ROOT;
   }
 }

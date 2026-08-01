@@ -132,7 +132,7 @@ test("style-rule outputs and decisive short-circuiting stay stable", async () =>
     assert.equal(reads, 2, `${match} should stop after its decisive condition`);
   }
 });
-test("type-folder options use one snapshot and traversal for representative roots", async () => {
+test("type-folder options use one snapshot and the authoritative contained template root", async () => {
   const { TypeFolderService } = await importBundled(
     "../src/services/type-folder-service.ts",
     [obsidianStub],
@@ -140,7 +140,6 @@ test("type-folder options use one snapshot and traversal for representative root
   const option = (path, hasTypeTemplate) => ({ path, label: path, hasTypeTemplate });
   const cases = [
     {
-      root: null,
       files: [
         ["System/Templates/Types/Projects.md", "System/Templates/Types"],
         ["System/Templates/Types/Areas/Health.MD", "System/Templates/Types/Areas"],
@@ -151,10 +150,9 @@ test("type-folder options use one snapshot and traversal for representative root
       expected: [option("Areas/Health", true), option("Projects", true), option("Areas", false)],
     },
     {
-      root: "Templates/Kinds",
       files: [
-        ["Templates/Kinds/Projects.md", "Templates/Kinds"],
-        ["Templates/Kinds/Logs/Food.md", "Templates/Kinds/Logs"],
+        ["System/Templates/Types/Projects.md", "System/Templates/Types"],
+        ["System/Templates/Types/Logs/Food.md", "System/Templates/Types/Logs"],
         ["Projects/One.md", "Projects"],
         ["Logs/Food/One.md", "Logs/Food"],
         ["Archive/Old.md", "Archive"],
@@ -181,11 +179,6 @@ test("type-folder options use one snapshot and traversal for representative root
       },
     });
     const app = {
-      plugins: {
-        getPlugin: () => scenario.root
-          ? { settings: { typeTemplateFolderPath: scenario.root } }
-          : null,
-      },
       vault: {
         getMarkdownFiles: () => {
           snapshotCalls += 1;

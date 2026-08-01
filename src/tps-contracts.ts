@@ -6,6 +6,8 @@ export const TPS_EVENTS = {
   CALENDAR_SYNC_COMPLETED: "tps:calendar-sync-completed",
   REMINDERS_UPDATED: "tps:reminders-updated",
   FILES_UPDATED: "tps:files-updated",
+  GCM_API_REQUEST: "tps:gcm-api-request",
+  GCM_API_CHANGED: "tps:gcm-api-changed",
   GCM_EXPLICIT_ACTION: "tps:gcm-explicit-action",
   CALENDAR_EXPLICIT_REFRESH: "tps:calendar-explicit-refresh",
 } as const;
@@ -28,6 +30,19 @@ export interface TPSEventPayload {
 
 export interface TPSFilesUpdatedPayload extends TPSEventPayload {
   paths: string[];
+}
+
+export interface TPSGcmApiChangedPayload extends TPSEventPayload {
+  source: "tps-global-context-menu";
+  available: boolean;
+  formulasVersion: number | null;
+  lineMetadataVersion: number | null;
+  entityIndexVersion: number | null;
+  api: unknown | null;
+}
+
+export interface TPSGcmApiRequestPayload extends TPSEventPayload {
+  requester: string;
 }
 
 export interface TPSControllerRoleChangedPayload extends TPSEventPayload {

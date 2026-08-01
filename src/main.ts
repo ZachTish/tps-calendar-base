@@ -11,10 +11,13 @@ import { normalizeCalendarUrl, normalizeCalendarTag } from "./utils";
 import { ExternalCalendarConfig, CalendarPluginSettings, ExternalCalendarEvent } from "./types";
 import { DEFAULT_SETTINGS, migrateSettings } from "./settings-migration";
 import { CalendarSettingsPersistence } from "./settings-persistence";
-import { getPluginById } from "./core";
 import { getTPSControllerApi } from "./tps-controller-api";
 import { TPS_EVENTS } from "./tps-events";
-import { emitCalendarSettingsChanged } from "./tps-gcm-api";
+import {
+  emitCalendarSettingsChanged,
+  getGcmStatusOptions,
+  installGcmApiRegistry,
+} from "./tps-gcm-api";
 import { parseCalendarDateInput } from "./utils/filter-date-utils";
 
 
@@ -37,6 +40,7 @@ export default class ObsidianCalendarPlugin
 
   async onload() {
     const startedAt = performance.now();
+    installGcmApiRegistry(this, this.app);
     this.externalCalendarService = new ExternalCalendarService();
     this.registerBasesView(CalendarViewType, {
       name: "Calendar",
@@ -425,11 +429,8 @@ export default class ObsidianCalendarPlugin
   }
 
   getStatusValues(): string[] {
-    const gcm = getPluginById(this.app, "tps-global-context-menu") as any
-      || getPluginById(this.app, "TPS-Global-Context-Menu (Dev)") as any;
-    const gcmOptions = gcm?.api?.services?.status?.getStatusOptions?.()
-      || gcm?.sharedServices?.status?.getStatusOptions?.();
-    if (Array.isArray(gcmOptions) && gcmOptions.length > 0) {
+    const gcmOptions = getGcmStatusOptions(this.app);
+    if (gcmOptions.length > 0) {
       return gcmOptions;
     }
     return this.settings.statusValues ?? [];

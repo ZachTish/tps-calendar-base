@@ -22,6 +22,7 @@ import { insertLineAfterFrontmatter } from "../utils/frontmatter-insert";
 import { normalizeCalendarTaskTargetPath } from "../utils/task-target-path";
 import { normalizeTaskAssociatedNotePath } from "../utils/task-associated-note";
 import { ensureCalendarDailyNote } from "../utils/daily-note-creation";
+import { isGcmInlinePropertyAllowed } from "../tps-gcm-api";
 
 export interface NewEventServiceConfig {
   app: App;
@@ -545,12 +546,7 @@ export class NewEventService {
     if (normalized === "tags") return false;
     if (normalized === "associatednotepath") return false;
     if (["scheduled", "timeestimate", "status", "priority", "due", "start", "end"].includes(normalized)) return true;
-    const gcm = getPluginById(this.config.app, "tps-global-context-menu") as any;
-    const properties = Array.isArray(gcm?.settings?.properties) ? gcm.settings.properties : [];
-    return properties.some((property: any) => {
-      if (property?.disabled || property?.hidden || property?.allowInlineSet === false) return false;
-      return String(property?.key || "").trim().toLowerCase() === normalized;
-    });
+    return isGcmInlinePropertyAllowed(this.config.app, normalized);
   }
 
   private async ensureDailyNoteFile(date: Date): Promise<TFile> {

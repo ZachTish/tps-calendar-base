@@ -10,6 +10,7 @@ async function importNewEventService() {
       contents: `
         export { NewEventService } from "./src/services/new-event-service.ts";
         export { ensureCalendarDailyNoteTitleFallback } from "./src/utils/daily-note-creation.ts";
+        export { installGcmApiRegistry } from "./src/tps-gcm-api.ts";
         export { TFile } from "obsidian";
       `,
       resolveDir: fileURLToPath(new URL("..", import.meta.url)),
@@ -150,16 +151,6 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
   }
 
   let app;
-  if (typeof options.gcmEnsureForIsoDate === "function") {
-    pluginRegistry["tps-global-context-menu"] = {
-      api: {
-        dailyNotes: {
-          version: 1,
-          ensureForIsoDate: (isoDate) => options.gcmEnsureForIsoDate(isoDate, app),
-        },
-      },
-    };
-  }
   if (typeof options.templaterTransform === "function") {
     pluginRegistry["templater-obsidian"] = {
       settings: {
@@ -278,6 +269,25 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
       },
     },
   };
+
+  if (
+    typeof options.gcmEnsureForIsoDate === "function"
+    && typeof options.installGcmApiRegistry === "function"
+  ) {
+    options.installGcmApiRegistry({ register() {}, registerEvent() {} }, app);
+    app.workspace.trigger("tps:gcm-api-changed", {
+      source: "tps-global-context-menu",
+      sourcePluginId: "tps-global-context-menu",
+      timestamp: Date.now(),
+      available: true,
+      api: {
+        dailyNotes: {
+          version: 1,
+          ensureForIsoDate: (isoDate) => options.gcmEnsureForIsoDate(isoDate, app),
+        },
+      },
+    });
+  }
 
   return {
     app,
@@ -409,6 +419,56 @@ test("NewEventService preserves an explicit Base equality default", async () => 
   assert.doesNotMatch(content, /(?:^|\n)folderPath:/);
 });
 
+test("NewEventService writes custom task fields only through the exact GCM configuration capability", async () => {
+  const { NewEventService, installGcmApiRegistry } = await importNewEventService();
+  const listeners = new Map();
+  const app = {
+    workspace: {
+      on(name, callback) {
+        const callbacks = listeners.get(name) ?? new Set();
+        callbacks.add(callback);
+        listeners.set(name, callbacks);
+        return { name, callback };
+      },
+      offref(ref) {
+        listeners.get(ref?.name)?.delete(ref?.callback);
+      },
+      trigger(name, payload) {
+        for (const callback of listeners.get(name) ?? []) callback(payload);
+      },
+    },
+  };
+  installGcmApiRegistry({ register() {}, registerEvent() {} }, app);
+  app.workspace.trigger("tps:gcm-api-changed", {
+    source: "tps-global-context-menu",
+    sourcePluginId: "tps-global-context-menu",
+    timestamp: Date.now(),
+    available: true,
+    api: {
+      configuration: {
+        version: 1,
+        isInlinePropertyAllowed: (key) => key === "client",
+        getParentLinkPolicy: () => ({ format: "wikilink", tag: [], autoSelfLink: false }),
+      },
+    },
+  });
+  const service = new NewEventService({ app });
+  const line = service.buildTaskLine(
+    "Capability task",
+    new Date("2027-01-03T14:00:00"),
+    new Date("2027-01-03T14:30:00"),
+    [],
+    { priority: "high", client: "Acme", privateField: "hidden" },
+  );
+
+  assert.match(line, /\[priority:: high\]/u, "documented built-ins remain locally supported");
+  assert.match(line, /\[client:: Acme\]/u, "the exact public capability may authorize a custom inline field");
+  assert.doesNotMatch(line, /\[privateField:: hidden\]/u);
+  const encoded = line.match(/\[tpsInlineProps:: ([^\]]+)\]/u)?.[1];
+  assert.ok(encoded);
+  assert.deepEqual(JSON.parse(decodeURIComponent(encoded)), { privateField: "hidden" });
+});
+
 test("NewEventService task mode writes an inline scheduled task to the resolved target note", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   const fake = createFakeCalendarApp(TFile, {
@@ -448,9 +508,10 @@ test("NewEventService task mode writes an inline scheduled task to the resolved 
 });
 
 test("NewEventService delegates missing daily-note task targets to the GCM daily-note API", async () => {
-  const { NewEventService, TFile } = await importNewEventService();
+  const { NewEventService, TFile, installGcmApiRegistry } = await importNewEventService();
   const ensuredDates = [];
   const fake = createFakeCalendarApp(TFile, {}, {
+    installGcmApiRegistry,
     gcmEnsureForIsoDate: async (isoDate, app) => {
       ensuredDates.push(isoDate);
       await app.vault.createFolder("Inbox");
@@ -486,7 +547,7 @@ test("NewEventService delegates missing daily-note task targets to the GCM daily
 });
 
 test("NewEventService asks GCM before reusing a conflicting local Daily Note target", async () => {
-  const { NewEventService, TFile } = await importNewEventService();
+  const { NewEventService, TFile, installGcmApiRegistry } = await importNewEventService();
   const localContent = "---\ntitle: Wrong local target\n---\n\nMust remain untouched\n";
   const canonicalPath = "Inbox/Daily/2027-01-14.md";
   const ensuredDates = [];
@@ -494,6 +555,7 @@ test("NewEventService asks GCM before reusing a conflicting local Daily Note tar
     "2027-01-14.md": localContent,
     [canonicalPath]: "---\ntitle: Canonical readable title\nkind: dailynote\n---\n\nCanonical body\n",
   }, {
+    installGcmApiRegistry,
     gcmEnsureForIsoDate: async (isoDate, app) => {
       ensuredDates.push(isoDate);
       return app.vault.getAbstractFileByPath(canonicalPath);
@@ -882,8 +944,9 @@ test("Calendar standalone creation is single-flight and creates date-format subf
 });
 
 test("NewEventService fails closed when GCM is available but cannot create the daily note", async () => {
-  const { NewEventService, TFile } = await importNewEventService();
+  const { NewEventService, TFile, installGcmApiRegistry } = await importNewEventService();
   const fake = createFakeCalendarApp(TFile, {}, {
+    installGcmApiRegistry,
     gcmEnsureForIsoDate: async () => null,
   });
   const service = new NewEventService({

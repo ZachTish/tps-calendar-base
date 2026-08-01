@@ -13,6 +13,22 @@ export interface GcmEventsApi {
 }
 
 export interface GcmApi {
+  services?: {
+    frontmatter?: {
+      process?: (
+        file: TFile,
+        mutator: (frontmatter: Record<string, unknown>) => void | Promise<void>,
+      ) => Promise<unknown>;
+    };
+  };
+  status?: {
+    getStatusOptions?: () => unknown;
+  };
+  configuration?: {
+    version?: number;
+    isInlinePropertyAllowed?: (key: string) => boolean;
+    getParentLinkPolicy?: () => unknown;
+  };
   events?: GcmEventsApi;
   dailyNotes?: {
     version?: number;
@@ -32,6 +48,120 @@ export interface GcmApi {
     buildCalendarExternalId?: (event: Partial<ExternalCalendarEvent>) => string;
     getExternalId?: (frontmatter: Record<string, unknown>) => string | null;
   };
+  [capability: string]: unknown;
+}
+
+export interface GcmParentLinkPolicy {
+  format: 'wikilink' | 'markdown-title';
+  tag: unknown;
+  autoSelfLink: boolean;
+}
+
+type GcmApiListener = (api: GcmApi | null, previousApi: GcmApi | null) => void;
+
+interface GcmApiRegistryState {
+  api: GcmApi | null;
+  installed: boolean;
+  installToken: symbol | null;
+  listeners: Set<GcmApiListener>;
+}
+
+const GCM_PLUGIN_ID = 'tps-global-context-menu';
+const CALENDAR_PLUGIN_ID = 'tps-calendar-base';
+const GCM_CONFIGURATION_API_VERSION = 1;
+const gcmApiRegistries = new WeakMap<App, GcmApiRegistryState>();
+
+function getGcmRegistryState(app: App): GcmApiRegistryState {
+  let state = gcmApiRegistries.get(app);
+  if (!state) {
+    state = {
+      api: null,
+      installed: false,
+      installToken: null,
+      listeners: new Set<GcmApiListener>(),
+    };
+    gcmApiRegistries.set(app, state);
+  }
+  return state;
+}
+
+function notifyGcmApiListeners(
+  state: GcmApiRegistryState,
+  api: GcmApi | null,
+  previousApi: GcmApi | null,
+): void {
+  if (api === previousApi) return;
+  for (const listener of [...state.listeners]) {
+    try {
+      listener(api, previousApi);
+    } catch {
+      // One consumer must not prevent the registry from updating the others.
+    }
+  }
+}
+
+function acceptGcmApiPayload(app: App, payload: unknown): void {
+  if (!payload || typeof payload !== 'object') return;
+  const record = payload as Record<string, unknown>;
+  if (record.source !== GCM_PLUGIN_ID || record.sourcePluginId !== GCM_PLUGIN_ID) return;
+
+  const state = getGcmRegistryState(app);
+  let nextApi: GcmApi | null;
+  if (record.available === false) {
+    nextApi = null;
+  } else if (record.available === true && record.api && typeof record.api === 'object') {
+    nextApi = record.api as GcmApi;
+  } else {
+    // A malformed availability event cannot replace a known-good capability.
+    return;
+  }
+  const previousApi = state.api;
+  state.api = nextApi;
+  notifyGcmApiListeners(state, nextApi, previousApi);
+}
+
+/**
+ * Install Calendar's single GCM capability registry. The listener is active
+ * before the request is emitted, so both plugin load orders are supported.
+ * Consumers read only the API object delivered through this workspace
+ * handshake; this module never probes Obsidian's private plugin registry.
+ */
+export function installGcmApiRegistry(owner: EventOwner, app: App): void {
+  const state = getGcmRegistryState(app);
+  if (state.installed) return;
+  const installToken = Symbol('gcm-api-registry');
+  state.installed = true;
+  state.installToken = installToken;
+
+  owner.registerEvent(app.workspace.on(
+    TPS_EVENTS.GCM_API_CHANGED as any,
+    ((payload: unknown) => acceptGcmApiPayload(app, payload)) as any,
+  ));
+  owner.register(() => {
+    const current = gcmApiRegistries.get(app);
+    if (!current || current.installToken !== installToken) return;
+    current.api = null;
+    current.installed = false;
+    current.installToken = null;
+    current.listeners.clear();
+    gcmApiRegistries.delete(app);
+  });
+
+  app.workspace.trigger(TPS_EVENTS.GCM_API_REQUEST as any, {
+    sourcePluginId: CALENDAR_PLUGIN_ID,
+    requester: CALENDAR_PLUGIN_ID,
+    timestamp: Date.now(),
+  });
+}
+
+export function onGcmApiChanged(
+  owner: Pick<EventOwner, 'register'>,
+  app: App,
+  listener: GcmApiListener,
+): void {
+  const state = getGcmRegistryState(app);
+  state.listeners.add(listener);
+  owner.register(() => state.listeners.delete(listener));
 }
 
 export function revealCompletedCheckboxesForFile(app: App, filePath: string, lineNumber?: number): void {
@@ -54,12 +184,54 @@ export interface EventOwner {
 }
 
 export function getGcmApi(app: App): GcmApi | null {
-  const plugins = (app as any)?.plugins;
-  const plugin = plugins?.getPlugin?.('tps-global-context-menu')
-    || plugins?.plugins?.['tps-global-context-menu']
-    || plugins?.getPlugin?.('TPS-Global-Context-Menu (Dev)')
-    || plugins?.plugins?.['TPS-Global-Context-Menu (Dev)'];
-  return plugin?.api || null;
+  return gcmApiRegistries.get(app)?.api ?? null;
+}
+
+export function getGcmStatusOptions(app: App): string[] {
+  const status = getGcmApi(app)?.status;
+  if (typeof status?.getStatusOptions !== 'function') return [];
+  try {
+    const raw = status.getStatusOptions();
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export function isGcmInlinePropertyAllowed(app: App, key: string): boolean {
+  const configuration = getGcmApi(app)?.configuration;
+  if (
+    configuration?.version !== GCM_CONFIGURATION_API_VERSION
+    || typeof configuration.isInlinePropertyAllowed !== 'function'
+  ) return false;
+  try {
+    return configuration.isInlinePropertyAllowed(String(key || '').trim()) === true;
+  } catch {
+    return false;
+  }
+}
+
+export function getGcmParentLinkPolicy(app: App): GcmParentLinkPolicy | null {
+  const configuration = getGcmApi(app)?.configuration;
+  if (
+    configuration?.version !== GCM_CONFIGURATION_API_VERSION
+    || typeof configuration.getParentLinkPolicy !== 'function'
+  ) return null;
+  try {
+    const raw = configuration.getParentLinkPolicy();
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const record = raw as Record<string, unknown>;
+    return {
+      format: record.format === 'markdown-title' ? 'markdown-title' : 'wikilink',
+      tag: record.tag,
+      autoSelfLink: record.autoSelfLink === true,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export interface GcmDailyNoteEnsureAttempt {

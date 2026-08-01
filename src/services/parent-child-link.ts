@@ -1,7 +1,7 @@
 import { App, TFile, normalizePath } from "obsidian";
 import * as logger from "../logger";
 import { mergeTagInputs, parseTagInput } from "../utils/tag-utils";
-import { getPluginSettings } from "../core";
+import { getGcmParentLinkPolicy } from "../tps-gcm-api";
 import {
     classifyDeletedMarkdownLink,
     createDeletedMarkdownLinkContext,
@@ -9,22 +9,16 @@ import {
 
 type ParentLinkFormat = "wikilink" | "markdown-title";
 
-function getGlobalContextMenuSettings(app: App): Record<string, any> {
-    return getPluginSettings(app, 'tps-global-context-menu');
-}
-
 function getParentLinkFormat(app: App): ParentLinkFormat {
-    const format = getGlobalContextMenuSettings(app)?.parentLinkFormat;
-    return format === "markdown-title" ? "markdown-title" : "wikilink";
+    return getGcmParentLinkPolicy(app)?.format ?? "wikilink";
 }
 
 function getParentTagOnChildLink(app: App): string[] {
-    const raw = getGlobalContextMenuSettings(app)?.parentTagOnChildLink;
-    return parseTagInput(raw);
+    return parseTagInput(getGcmParentLinkPolicy(app)?.tag);
 }
 
 function shouldAutoSelfLinkParent(app: App): boolean {
-    return getGlobalContextMenuSettings(app)?.autoSelfLinkParentInParentKey === true;
+    return getGcmParentLinkPolicy(app)?.autoSelfLink === true;
 }
 
 function normalizeFrontmatterKey(key: string): string {

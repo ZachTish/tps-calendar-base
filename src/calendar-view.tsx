@@ -32,6 +32,8 @@ import {
   emitFilesUpdated,
   ensureInternalIdInFrontmatter,
   getExternalId,
+  getGcmApi,
+  onGcmApiChanged,
   registerCalendarRefresh,
   registerExplicitAction,
   registerFilesUpdated,
@@ -105,6 +107,19 @@ import {
   resolveShowNowIndicator,
   snapshotCalendarDateKey,
 } from "./utils/view-config";
+import {
+  extractCalendarFormulaDefinitions,
+  getCalendarFormulaName,
+  isCalendarFormulaProperty,
+  readCalendarFormulaResult,
+  resolveCalendarFormulaApi,
+  resolveCalendarLineMetadataApi,
+  type CalendarFormulaApi,
+  type CalendarFormulaDefinitions,
+  type CalendarFormulaSession,
+  type CalendarLineMetadataApi,
+  type CalendarLineMetadataField,
+} from "./utils/calendar-formula-api";
 
 type CalendarEventTitlePromptResult = {
   title: string;
@@ -112,7 +127,6 @@ type CalendarEventTitlePromptResult = {
 };
 import {
   extractDate,
-  extractDuration,
   resolveDateValue,
   valueToString,
   tryParseDate,
@@ -120,7 +134,6 @@ import {
 } from "./utils/date-value-utils";
 import * as logger from "./logger";
 import { parseDateFromFilename } from "./utils/daily-file-date";
-import { getPluginById } from "./core/type-guards";
 
 export const CalendarViewType = "calendar";
 const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
@@ -170,9 +183,19 @@ type InlineScheduledTask = {
   durationKey?: string;
   durationMinutes?: number;
   inlineProperties: Map<string, string>;
+  inlineFields: CalendarLineMetadataField[];
   checkboxState: string;
   status: string;
   completed: boolean;
+  tags: string[];
+};
+type CalendarSyntheticFormulaState = {
+  session: CalendarFormulaSession | null;
+  recordId: string;
+  failedFormulas: Set<string>;
+};
+type CalendarFilterEvaluationState = {
+  formulaFailed: boolean;
 };
 type InlineTaskNoteAssociation = {
   linkedFile: TFile | null;
@@ -363,6 +386,12 @@ export class CalendarView extends BasesView {
     }
     if (typeof value === "object") {
       const anyValue = value as any;
+      if (anyValue.__tpsFormulaType === "duration" && typeof this.formulaApi?.format === "function") {
+        const milliseconds = Number(this.formulaApi.format(value));
+        if (Number.isFinite(milliseconds) && milliseconds > 0) {
+          return milliseconds / 60000;
+        }
+      }
       if ("data" in anyValue) {
         return this.parseDurationMinutesFromValue(anyValue.data);
       }
@@ -412,7 +441,7 @@ export class CalendarView extends BasesView {
       }
     }
 
-    const entryDuration = extractDuration(entry, propId);
+    const entryDuration = this.parseDurationMinutesFromValue(this.tryGetEntryValue(entry, propId));
     if (entryDuration !== null && entryDuration > 0) {
       return entryDuration;
     }
@@ -421,8 +450,7 @@ export class CalendarView extends BasesView {
   }
 
   private getGcmTimeTrackingService(): any | null {
-    const plugin = getPluginById<any>(this.app, "tps-global-context-menu");
-    return plugin?.timeTrackingService ?? plugin?.api?.timeTracking ?? null;
+    return this.getGcmApi()?.timeTracking ?? null;
   }
 
   private getActiveTimerCountForFile(file: TFile): number {
@@ -482,6 +510,17 @@ export class CalendarView extends BasesView {
   private cachedExternalEvents: ExternalCalendarEvent[] = [];
   private isFetchingExternalEvents: boolean = false;
   private currentBaseFileFilterSources: unknown[] = [];
+  private formulaDefinitions: CalendarFormulaDefinitions = {};
+  private formulaApi: CalendarFormulaApi | null = null;
+  private lineMetadataApi: CalendarLineMetadataApi | null = null;
+  private compiledFormulaSet: unknown = null;
+  private formulaSourceId = "";
+  private formulaThisValue: Record<string, unknown> = {};
+  private formulaRuntimeFailure: { code: string; message: string } | null = null;
+  private formulaNow = new Date();
+  private formulaEvaluationEnabled = false;
+  private readonly reportedFormulaDiagnostics = new Set<string>();
+  private inlineTaskContentCache = new Map<string, { revision: string; content: string }>();
   private viewMode: CalendarViewMode = "week";
   private allDayLimit: number = 3; // New property with default 3
 
@@ -593,6 +632,13 @@ export class CalendarView extends BasesView {
     baseFileName?: string,
     frontmatterProcessor?: (frontmatter: Record<string, unknown>) => void,
   ): Promise<void> {
+    if (isCalendarFormulaProperty(this.startDateProp)) {
+      logger.warn("[CalendarView] Refusing Base create through computed start formula", {
+        startProperty: this.startDateProp,
+      });
+      new Notice("This Calendar uses a computed start formula, which cannot be written. Create the item through a view with a writable start property.");
+      return;
+    }
     const filterSources = await this.readBaseFileFilterSources();
     const nowRange = this.resolveCurrentTimeCreateRange();
     const createOptions = this.buildCalendarNewEventOptions(filterSources);
@@ -746,25 +792,12 @@ export class CalendarView extends BasesView {
     return { start, end };
   }
 
-  private getGcmPluginInstance(): any {
-    const plugins = (this.app as any)?.plugins;
-    return (
-      plugins?.getPlugin?.("tps-global-context-menu") ||
-      plugins?.plugins?.["tps-global-context-menu"] ||
-      plugins?.getPlugin?.("TPS-Global-Context-Menu (Dev)") ||
-      plugins?.plugins?.["TPS-Global-Context-Menu (Dev)"] ||
-      null
-    );
-  }
-
   private getGcmApi(): any {
-    const plugin = this.getGcmPluginInstance();
-    return plugin?.api || plugin || null;
+    return getGcmApi(this.app);
   }
 
   private getGcmServices(): any {
-    const gcm = this.getGcmApi();
-    return gcm?.services || gcm?.sharedServices || null;
+    return this.getGcmApi()?.services ?? null;
   }
 
   private async processGcmFrontmatter(file: TFile, mutator: (frontmatter: Record<string, unknown>) => void | Promise<void>): Promise<void> {
@@ -777,15 +810,14 @@ export class CalendarView extends BasesView {
   }
 
   private addGcmItemsToNativeMenu(menu: Menu, files: TFile[]): void {
-    const controller = this.getGcmPluginInstance()?.menuController;
-    if (typeof controller?.addToNativeMenu === "function") {
-      controller.addToNativeMenu(menu, files);
+    const addToNativeMenu = this.getGcmApi()?.menus?.addToNativeMenu;
+    if (typeof addToNativeMenu === "function") {
+      addToNativeMenu(menu, files);
     }
   }
 
   private getGcmTaskLineContextMenuService(): any {
-    const gcmPlugin = this.getGcmPluginInstance() as any;
-    return gcmPlugin?.taskLineContextMenuService ?? this.getGcmApi()?.taskLineContextMenuService ?? null;
+    return this.getGcmApi()?.taskLines ?? null;
   }
 
   onload(): void {
@@ -1277,12 +1309,9 @@ export class CalendarView extends BasesView {
       if (!propId) return null;
       const parsed = parsePropertyId(propId);
 
-      // Convert formula properties to note properties
+      // Formula columns are computed and have no supported writable backing field.
       if (parsed.type === 'formula') {
-        const propertyName = parsed.name || (parsed as any).property;
-        if (propertyName) {
-          return `note.${propertyName}` as BasesPropertyId;
-        }
+        return null;
       }
 
       return propId;
@@ -1438,10 +1467,13 @@ export class CalendarView extends BasesView {
     this.pendingDataRetryCount = 0;
     this.updateExternalCalendarVisibility();
     const filterSourcesStartedAt = performance.now();
+    this.formulaNow = new Date();
     this.currentBaseFileFilterSources = await this.readBaseFileFilterSources();
+    await this.prepareFormulaRuntime();
     this.trace("updateCalendar:base-filter-sources", {
       durationMs: Math.round(performance.now() - filterSourcesStartedAt),
       sourceCount: this.currentBaseFileFilterSources.length,
+      formulaCount: Object.keys(this.formulaDefinitions).length,
     });
     this.trace("updateCalendar:query-data", {
       queryEntryCount: queryData.data?.length ?? 0,
@@ -1633,12 +1665,15 @@ export class CalendarView extends BasesView {
           : undefined;
 
         const cache = entryCache;
-        const frontmatterAllDay = allDayFieldName
-          ? this.parseBooleanLike(
-            this.getFrontmatterValueCaseInsensitive(cache?.frontmatter as Record<string, any> | undefined, allDayFieldName),
-            false,
-          )
-          : false;
+        const formulaAllDayConfigured = isCalendarFormulaProperty(this.allDayProperty);
+        const frontmatterAllDay = formulaAllDayConfigured
+          ? this.parseBooleanLike(this.tryGetEntryValue(entry, this.allDayProperty!), false)
+          : allDayFieldName
+            ? this.parseBooleanLike(
+              this.getFrontmatterValueCaseInsensitive(cache?.frontmatter as Record<string, any> | undefined, allDayFieldName),
+              false,
+            )
+            : false;
         const frontmatterTitle = entryFrontmatterTitle;
         const isArchived = entryFile && archiveFolder
           ? normalizePath(entryFile.path).startsWith(`${archiveFolder}/`)
@@ -1838,10 +1873,11 @@ export class CalendarView extends BasesView {
           startDate.getMinutes() === 0 &&
           startDate.getSeconds() === 0 &&
           startDate.getMilliseconds() === 0;
-        const forceAllDay =
-          frontmatterAllDay ||
-          forceAllDayFromSource ||
-          (!hasExplicitEnd && configuredDurationMinutes === null && startsAtMidnight);
+        const forceAllDay = formulaAllDayConfigured
+          ? frontmatterAllDay
+          : frontmatterAllDay ||
+            forceAllDayFromSource ||
+            (!hasExplicitEnd && configuredDurationMinutes === null && startsAtMidnight);
 
         if (forceAllDay && this.endDateProp) {
           const allDayDurationMinutes = this.parseDurationMinutesFromValue(
@@ -2036,17 +2072,10 @@ export class CalendarView extends BasesView {
         continue;
       }
 
+      const calendarEntry = this.createExternalCalendarEntry(extEvent, false, fakeEntry);
+      if (!calendarEntry) continue;
       renderedExternal += 1;
-      currentEntries.push({
-        entry: fakeEntry,
-        startDate: extEvent.startDate,
-        endDate: extEvent.endDate,
-        title: extEvent.title,
-        isExternal: true,
-        externalEvent: extEvent,
-        color: this.plugin.getCalendarColor(extEvent.sourceUrl || ""),
-        cssClasses: ["bases-calendar-event", "is-external"],
-      });
+      currentEntries.push(calendarEntry);
     }
 
     let renderedArchivedExternalPlaceholders = 0;
@@ -2069,19 +2098,10 @@ export class CalendarView extends BasesView {
         continue;
       }
 
+      const calendarEntry = this.createExternalCalendarEntry(extEvent, true, fakeEntry);
+      if (!calendarEntry) continue;
       renderedArchivedExternalPlaceholders += 1;
-      currentEntries.push({
-        entry: fakeEntry,
-        startDate: extEvent.startDate,
-        endDate: extEvent.endDate,
-        title: extEvent.title,
-        isExternal: true,
-        isArchivedExternalPlaceholder: true,
-        externalEvent: extEvent,
-        color: "transparent",
-        iconName: "triangle-alert",
-        cssClasses: ["bases-calendar-event", "is-external", "is-archived-external-placeholder"],
-      });
+      currentEntries.push(calendarEntry);
     }
     logger.log("[CalendarView] External event render decisions", {
       totalCandidates: allExternalEvents.length,
@@ -4506,16 +4526,10 @@ export class CalendarView extends BasesView {
   private getCheckboxStateForStatus(status: string): string | null {
     const normalized = String(status || "").trim().toLowerCase();
     if (!normalized) return null;
-    const mappings = this.getGcmPluginInstance()?.settings?.linkedSubitemCheckboxMappings || [];
-    if (Array.isArray(mappings)) {
-      for (const mapping of mappings) {
-        const statuses = Array.isArray(mapping?.statuses)
-          ? mapping.statuses.map((value: unknown) => String(value || "").trim().toLowerCase())
-          : [];
-        if (statuses.includes(normalized) && String(mapping?.checkboxState || "").trim()) {
-          return String(mapping.checkboxState).trim();
-        }
-      }
+    const stateForStatus = this.getGcmApi()?.taskCheckboxes?.stateForStatus;
+    if (typeof stateForStatus === "function") {
+      const state = String(stateForStatus(normalized) || "").trim();
+      if (state) return state;
     }
     if (normalized === "complete") return "[x]";
     if (normalized === "working") return "[\\]";
@@ -4944,9 +4958,7 @@ export class CalendarView extends BasesView {
 
   private async createAssociatedNoteForInlineTask(task: InlineScheduledTask): Promise<void> {
     const lineIndex = Math.max(0, Math.floor(task.lineNumber));
-    const service = this.getGcmPluginInstance()?.dailyInboxLineService
-      ?? this.getGcmApi()?.dailyInboxLineService
-      ?? this.getGcmServices()?.dailyInboxLineService;
+    const service = this.getGcmApi()?.taskLines;
     if (typeof service?.createNoteForLine !== "function") {
       logger.flow("AssociatedTaskNote", "create:unavailable", {
         path: task.file.path,
@@ -4988,11 +5000,11 @@ export class CalendarView extends BasesView {
 
   private addGcmInlineTaskMenuItems(menu: Menu, inlineTask: InlineScheduledTask, calEntry: CalendarEntry): boolean {
     const taskLineContextMenuService = this.getGcmTaskLineContextMenuService();
-    if (typeof taskLineContextMenuService?.addTaskLineMenuItems !== "function") return false;
+    if (typeof taskLineContextMenuService?.addMenuItems !== "function") return false;
 
     const lineIndex = Math.max(0, Math.floor(inlineTask.lineNumber));
     menu.addSeparator();
-    taskLineContextMenuService.addTaskLineMenuItems(
+    taskLineContextMenuService.addMenuItems(
       menu,
       {
         file: inlineTask.file,
@@ -5129,12 +5141,9 @@ export class CalendarView extends BasesView {
   }
 
   private getTaskAssociationParentKeys(): string[] {
-    const gcmPlugin = this.getGcmPluginInstance();
     const serviceKeys = this.getGcmServices()?.parents?.getParentKeys?.();
     return Array.from(new Set([
       this.plugin.settings.parentLinkKey,
-      gcmPlugin?.settings?.parentLinkFrontmatterKey,
-      gcmPlugin?.settings?.parentLinkKey,
       ...(Array.isArray(serviceKeys) ? serviceKeys : []),
       "parent",
       "parents",
@@ -5993,27 +6002,93 @@ export class CalendarView extends BasesView {
 
   private createExternalEntry(extEvent: ExternalCalendarEvent): BasesEntry {
     const sourceKey = extEvent.sourceUrl || "external";
+    const file = {
+      path: `external:${sourceKey}:${extEvent.id}`,
+      basename: extEvent.title,
+      name: extEvent.title,
+      extension: 'md',
+      stat: { ctime: 0, mtime: 0, size: 0 },
+      parent: null,
+    } as any;
+    const external = {
+      kind: "external-event",
+      itemKind: "external-event",
+      itemType: "external-event",
+      explicitKind: null,
+      kinds: ["external-event"],
+      id: extEvent.id,
+      uid: extEvent.uid,
+      title: extEvent.title,
+      description: extEvent.description,
+      start: extEvent.startDate,
+      startDate: extEvent.startDate,
+      scheduled: extEvent.startDate,
+      end: extEvent.endDate,
+      endDate: extEvent.endDate,
+      duration: Math.max(0, (extEvent.endDate.getTime() - extEvent.startDate.getTime()) / 60000),
+      timeEstimate: Math.max(0, (extEvent.endDate.getTime() - extEvent.startDate.getTime()) / 60000),
+      allDay: extEvent.isAllDay,
+      status: extEvent.isCancelled ? (this.plugin.settings.canceledStatusValue || "wont-do") : "",
+      path: file.path,
+      location: extEvent.location || "",
+      organizer: extEvent.organizer || "",
+      attendees: extEvent.attendees || [],
+      url: extEvent.url || "",
+      sourceUrl: extEvent.sourceUrl || "",
+      cancelled: extEvent.isCancelled === true,
+      canceled: extEvent.isCancelled === true,
+    };
+    const formulaFile = {
+      path: file.path,
+      name: file.name,
+      basename: file.basename,
+      extension: file.extension,
+      folder: "",
+      size: 0,
+      ctime: 0,
+      mtime: 0,
+      tags: [],
+      links: [],
+      properties: {},
+    };
+    const formulaState = this.createSyntheticFormulaState({
+      row: external,
+      note: {},
+      file: formulaFile,
+      thisValue: this.formulaThisValue,
+      external: { ...external, file: formulaFile },
+      now: this.formulaNow,
+    }, file.path);
     return {
-      file: {
-        path: `external:${sourceKey}:${extEvent.id}`,
-        basename: extEvent.title,
-        name: extEvent.title,
-        extension: 'md',
-        stat: { ctime: 0, mtime: 0, size: 0 },
-        parent: null,
-      } as any,
+      file,
+      tpsFormulaState: formulaState,
       getValue: (propId: BasesPropertyId | string) => {
+        if (isCalendarFormulaProperty(propId)) {
+          return this.readSyntheticFormulaValue(formulaState, propId);
+        }
         const parsed = typeof propId === "string" ? parsePropertyId(propId as BasesPropertyId) : parsePropertyId(propId);
         const name = (parsed.name || (parsed as any).property || String(propId)).toLowerCase();
 
         if (name === "title") return extEvent.title;
         // Return timestamps (numbers) for dates to avoid filter engine confusion
-        if (name === "startdate" || name === "start") return extEvent.startDate.getTime();
+        if (name === "startdate" || name === "start" || name === "scheduled") return extEvent.startDate.getTime();
         if (name === "enddate" || name === "end") return extEvent.endDate.getTime();
+        if (name === "timeestimate" || name === "duration") {
+          return Math.max(0, (extEvent.endDate.getTime() - extEvent.startDate.getTime()) / 60000);
+        }
         if (name === "allday") return extEvent.isAllDay;
+        if (name === "kind") return "external-event";
+        if (name === "itemkind" || name === "itemtype") return "external-event";
+        if (name === "explicitkind" || name === "entitykind") return null;
+        if (name === "kinds") return ["external-event"];
+        if (name === "status") return extEvent.isCancelled ? (this.plugin.settings.canceledStatusValue || "wont-do") : "";
         if (name === "description") return extEvent.description;
         if (name === "location") return extEvent.location;
         if (name === "organizer") return extEvent.organizer;
+        if (name === "attendees") return extEvent.attendees || [];
+        if (name === "sourceurl") return extEvent.sourceUrl;
+        if (name === "uid") return extEvent.uid;
+        if (name === "id") return extEvent.id;
         if (name === "url") return extEvent.url;
 
         return null;
@@ -6021,27 +6096,106 @@ export class CalendarView extends BasesView {
     } as unknown as BasesEntry;
   }
 
+  private createExternalCalendarEntry(
+    extEvent: ExternalCalendarEvent,
+    archivedPlaceholder = false,
+    existingEntry?: BasesEntry,
+  ): CalendarEntry | null {
+    const entry = existingEntry || this.createExternalEntry(extEvent);
+    let startDate = extEvent.startDate;
+    if (isCalendarFormulaProperty(this.startDateProp)) {
+      const resolvedStart = this.resolveEntryStartDate(entry, undefined);
+      if (!resolvedStart) return null;
+      startDate = resolvedStart.date;
+    }
+
+    let endDate = extEvent.endDate;
+    if (this.endDateProp && isCalendarFormulaProperty(this.endDateProp)) {
+      if (this.useEndDuration) {
+        const durationMinutes = this.resolveDurationMinutes(entry, this.endDateProp, undefined);
+        endDate = durationMinutes !== null && durationMinutes > 0
+          ? new Date(startDate.getTime() + durationMinutes * 60000)
+          : new Date(startDate.getTime() + this.getMinimumEventDurationMinutes() * 60000);
+      } else {
+        endDate = extractDate(entry, this.endDateProp, this.getDailyNoteDateFormat())
+          ?? new Date(startDate.getTime() + this.getMinimumEventDurationMinutes() * 60000);
+      }
+    }
+
+    const titleValue = this.titleProp && isCalendarFormulaProperty(this.titleProp)
+      ? this.formulaAwareValueToString(entry, this.titleProp, this.tryGetEntryValue(entry, this.titleProp))
+      : null;
+    const statusValue = this.statusField && isCalendarFormulaProperty(this.statusField)
+      ? this.formulaAwareValueToString(entry, this.statusField, this.tryGetEntryValue(entry, this.statusField)) || undefined
+      : extEvent.isCancelled
+        ? (this.plugin.settings.canceledStatusValue || "wont-do")
+        : undefined;
+    const priorityValue = this.priorityField && isCalendarFormulaProperty(this.priorityField)
+      ? this.formulaAwareValueToString(entry, this.priorityField, this.tryGetEntryValue(entry, this.priorityField)) || undefined
+      : undefined;
+    const allDay = this.allDayProperty && isCalendarFormulaProperty(this.allDayProperty)
+      ? this.parseBooleanLike(this.tryGetEntryValue(entry, this.allDayProperty), false)
+      : extEvent.isAllDay;
+    if (this.syntheticFormulaFieldsFailed(entry, [
+      this.startDateProp,
+      this.endDateProp,
+      this.titleProp,
+      this.statusField,
+      this.priorityField,
+      this.allDayProperty,
+    ])) {
+      return null;
+    }
+    const cssClasses = ["bases-calendar-event", "is-external"];
+    cssClasses.push(...this.getStatusCssClasses(statusValue));
+    if (archivedPlaceholder) cssClasses.push("is-archived-external-placeholder");
+
+    return {
+      entry,
+      startDate,
+      endDate,
+      title: titleValue || extEvent.title,
+      forceAllDay: allDay,
+      isExternal: true,
+      isArchivedExternalPlaceholder: archivedPlaceholder || undefined,
+      externalEvent: {
+        ...extEvent,
+        title: titleValue || extEvent.title,
+        startDate,
+        endDate,
+        isAllDay: allDay,
+      },
+      status: statusValue,
+      priority: priorityValue,
+      color: archivedPlaceholder ? "transparent" : this.plugin.getCalendarColor(extEvent.sourceUrl || ""),
+      iconName: archivedPlaceholder ? "triangle-alert" : undefined,
+      cssClasses,
+    };
+  }
+
   private evaluateEntryFilterSource(
     source: unknown,
     entry: BasesEntry,
   ): { applied: boolean; result: boolean } {
+    const evaluationState: CalendarFilterEvaluationState = { formulaFailed: false };
     const evalNode = (node: any): { applied: boolean; result: boolean } => {
       if (!node) return { applied: false, result: true };
       if (typeof node === "object" && "data" in node) return evalNode(node.data);
       if (typeof node === "string") {
+        const formulaResult = this.evaluateSyntheticFormulaFilterExpression(entry, node, evaluationState);
+        if (formulaResult) return formulaResult;
         const condition = this.parseEntryFilterExpression(node);
-        return condition ? this.evaluateEntryFilterCondition(entry, condition) : { applied: false, result: true };
+        return condition ? this.evaluateEntryFilterCondition(entry, condition, evaluationState) : { applied: false, result: true };
       }
       if (Array.isArray(node)) {
         let applied = false;
-        let result = true;
         for (const child of node) {
           const childResult = evalNode(child);
           if (!childResult.applied) continue;
           applied = true;
-          result = result && childResult.result;
+          if (!childResult.result) return { applied: true, result: false };
         }
-        return { applied, result: applied ? result : true };
+        return { applied, result: true };
       }
       if (typeof node !== "object") return { applied: false, result: true };
 
@@ -6058,14 +6212,13 @@ export class CalendarView extends BasesView {
       const orChildren = (node as any).or ?? (node as any).any;
       if (Array.isArray(orChildren)) {
         let applied = false;
-        let result = false;
         for (const child of orChildren) {
           const childResult = evalNode(child);
           if (!childResult.applied) continue;
           applied = true;
-          result = result || childResult.result;
+          if (childResult.result) return { applied: true, result: true };
         }
-        return { applied, result: applied ? result : true };
+        return { applied, result: applied ? false : true };
       }
 
       if (Array.isArray((node as any).children)) {
@@ -6077,14 +6230,101 @@ export class CalendarView extends BasesView {
       }
 
       const condition = this.extractEntryFilterCondition(node);
-      return condition ? this.evaluateEntryFilterCondition(entry, condition) : { applied: false, result: true };
+      return condition ? this.evaluateEntryFilterCondition(entry, condition, evaluationState) : { applied: false, result: true };
     };
 
     try {
-      return evalNode(source);
+      const result = evalNode(source);
+      return evaluationState.formulaFailed
+        ? { applied: true, result: false }
+        : result;
     } catch (error) {
       logger.warn("[CalendarView] Failed to evaluate entry filters:", error);
-      return { applied: false, result: true };
+      return { applied: true, result: false };
+    }
+  }
+
+  private evaluateSyntheticFormulaFilterExpression(
+    entry: BasesEntry,
+    expression: string,
+    evaluationState?: CalendarFilterEvaluationState,
+  ): { applied: boolean; result: boolean } | null {
+    const source = String(expression || "");
+    let hasFormulaReference = false;
+    if (this.formulaApi) {
+      try {
+        hasFormulaReference = this.formulaApi.hasReference(source);
+      } catch (error) {
+        if (evaluationState) evaluationState.formulaFailed = true;
+        this.reportFormulaDiagnostic({
+          formula: "$calendar-filter",
+          code: "formula-reference-detection-failed",
+          message: error instanceof Error ? error.message : String(error || "Formula reference detection failed"),
+        });
+        return { applied: true, result: false };
+      }
+    } else {
+      // Without the exact provider API, a syntactic formula access is unsafe
+      // to reinterpret as an ordinary property condition. Fail it closed.
+      hasFormulaReference = /\bformula\s*(?:\.|\[)/iu.test(source);
+    }
+    if (!hasFormulaReference) return null;
+    const formulaNames = Array.from(
+      source.matchAll(/\bformula(?:\.([A-Za-z_$][A-Za-z0-9_$-]*)|\[\s*(["'])(.*?)\2\s*\])/giu),
+      (match) => match[1] || match[3],
+    ).filter(Boolean);
+    if (formulaNames.length === 0) formulaNames.push("$calendar-filter");
+    const state = (entry as any).tpsFormulaState as CalendarSyntheticFormulaState | undefined;
+    if (!state) return null;
+
+    if (!state.session) {
+      if (evaluationState) evaluationState.formulaFailed = true;
+      this.readSyntheticFormulaValue(state, `formula.${formulaNames[0]}`);
+      return { applied: true, result: false };
+    }
+    if (typeof state.session.evaluateExpression !== "function" || !this.formulaApi) {
+      if (evaluationState) evaluationState.formulaFailed = true;
+      for (const name of formulaNames) state.failedFormulas.add(name.toLowerCase());
+      this.reportFormulaDiagnostic({
+        formula: formulaNames.join(","),
+        code: "formula-filter-api-incompatible",
+        message: "The TPS formula API cannot evaluate Calendar filter expressions",
+      });
+      return { applied: true, result: false };
+    }
+
+    let result;
+    try {
+      result = state.session.evaluateExpression(expression, "$calendar-filter");
+    } catch (error) {
+      if (evaluationState) evaluationState.formulaFailed = true;
+      for (const name of formulaNames) state.failedFormulas.add(name.toLowerCase());
+      this.reportFormulaDiagnostic({
+        formula: formulaNames.join(","),
+        code: "formula-filter-evaluation-threw",
+        message: error instanceof Error ? error.message : String(error || "Formula filter evaluation failed"),
+      });
+      return { applied: true, result: false };
+    }
+    if (result.status !== "value" && result.status !== "empty") {
+      if (evaluationState) evaluationState.formulaFailed = true;
+      for (const name of formulaNames) state.failedFormulas.add(name.toLowerCase());
+      this.reportFormulaDiagnostic({
+        ...result,
+        formula: formulaNames.join(","),
+      });
+      return { applied: true, result: false };
+    }
+    try {
+      return { applied: true, result: this.formulaApi.isTruthy(result.value) };
+    } catch (error) {
+      if (evaluationState) evaluationState.formulaFailed = true;
+      this.reportFormulaDiagnostic({
+        formula: formulaNames.join(","),
+        code: "formula-filter-truthiness-threw",
+        message: error instanceof Error ? error.message : String(error || "Formula filter truthiness failed"),
+      });
+      return { applied: true, result: false };
     }
   }
 
@@ -6177,70 +6417,140 @@ export class CalendarView extends BasesView {
   private evaluateEntryFilterCondition(
     entry: BasesEntry,
     condition: { property: string; operator: string; value: unknown },
+    evaluationState?: CalendarFilterEvaluationState,
   ): { applied: boolean; result: boolean } {
     const actual = this.getEntryFilterValue(entry, condition.property);
-    const op = String(condition.operator || "is").trim().toLowerCase().replace(/\s+/g, "");
-
-    if (op.includes("isempty")) {
-      return { applied: true, result: this.isFilterValueEmpty(actual) };
+    const formulaName = getCalendarFormulaName(condition.property)?.toLowerCase();
+    const formulaState = (entry as any).tpsFormulaState as CalendarSyntheticFormulaState | undefined;
+    if (formulaName && formulaState?.failedFormulas.has(formulaName)) {
+      if (evaluationState) evaluationState.formulaFailed = true;
+      return { applied: true, result: false };
     }
-    if (op.includes("isnotempty") || op.includes("notempty")) {
-      return { applied: true, result: !this.isFilterValueEmpty(actual) };
+    const op = String(condition.operator || "is").trim().toLowerCase().replace(/[\s_-]+/g, "");
+    const positiveEquality = new Set(["", "=", "==", "===", "is", "equal", "equals"]);
+    const negativeEquality = new Set(["!=", "!==", "isnot", "not", "notequal", "notequals", "doesnotequal"]);
+    const positiveContains = new Set(["contains", "containsany", "has"]);
+    const negativeContains = new Set(["!contains", "notcontains", "doesnotcontain"]);
+    const positiveStarts = new Set(["startswith", "starts"]);
+    const negativeStarts = new Set(["!startswith", "notstartswith", "doesnotstartwith"]);
+    const positiveEnds = new Set(["endswith", "ends"]);
+    const negativeEnds = new Set(["!endswith", "notendswith", "doesnotendwith"]);
+    const emptyOperators = new Set(["empty", "isempty"]);
+    const existsOperators = new Set(["exists", "isnotempty", "notempty"]);
+    const notExistsOperators = new Set(["!exists", "notexists", "doesnotexist"]);
+    const relationalOperators = new Set([">", ">=", "<", "<="]);
+    const supported = positiveEquality.has(op)
+      || negativeEquality.has(op)
+      || positiveContains.has(op)
+      || negativeContains.has(op)
+      || positiveStarts.has(op)
+      || negativeStarts.has(op)
+      || positiveEnds.has(op)
+      || negativeEnds.has(op)
+      || emptyOperators.has(op)
+      || existsOperators.has(op)
+      || notExistsOperators.has(op)
+      || relationalOperators.has(op);
+    if (!supported) {
+      if (evaluationState) evaluationState.formulaFailed = true;
+      if (formulaName) {
+        formulaState?.failedFormulas.add(formulaName);
+        this.reportFormulaDiagnostic({
+          formula: formulaName,
+          code: "unsupported-formula-filter-operator",
+          message: `Unsupported formula filter operator: ${condition.operator || "(empty)"}`,
+        });
+      }
+      return { applied: true, result: false };
     }
 
     const expected = this.unwrapFilterValue(condition.value);
-    const isNegative =
-      op.includes("doesnot") ||
-      op.includes("isnot") ||
-      op.includes("notequal") ||
-      op.includes("notequals") ||
-      op.includes("!=") ||
-      op === "not";
+    const expectedItems = Array.isArray(expected) ? expected : [expected];
+    const negative = negativeEquality.has(op)
+      || negativeContains.has(op)
+      || negativeStarts.has(op)
+      || negativeEnds.has(op);
 
-    if (actual === undefined || actual === null || actual === "") {
-      return { applied: true, result: isNegative };
-    }
+    if (formulaName) {
+      if (!this.formulaApi) {
+        if (evaluationState) evaluationState.formulaFailed = true;
+        return { applied: true, result: false };
+      }
+      try {
+        const actualItems = this.formulaApi.comparableValues(actual);
+        if (emptyOperators.has(op)) return { applied: true, result: actualItems.length === 0 };
+        if (existsOperators.has(op)) return { applied: true, result: actualItems.length > 0 };
+        if (notExistsOperators.has(op)) return { applied: true, result: actualItems.length === 0 };
 
-    if (op.includes(">") || op.includes("<")) {
-      const actualComparable = this.toFilterComparable(actual);
-      const expectedComparable = this.toFilterComparable(expected);
-      if (actualComparable === null || expectedComparable === null) return { applied: false, result: true };
-      if (op.includes(">=")) return { applied: true, result: actualComparable >= expectedComparable };
-      if (op.includes("<=")) return { applied: true, result: actualComparable <= expectedComparable };
-      if (op.includes(">")) return { applied: true, result: actualComparable > expectedComparable };
-      if (op.includes("<")) return { applied: true, result: actualComparable < expectedComparable };
+        let matched = false;
+        if (relationalOperators.has(op)) {
+          matched = actualItems.some((current) => expectedItems.some((target) => {
+            const comparison = this.formulaApi!.compare(current, target);
+            return op === ">" ? comparison > 0
+              : op === ">=" ? comparison >= 0
+                : op === "<" ? comparison < 0
+                  : comparison <= 0;
+          }));
+        } else if (positiveEquality.has(op) || negativeEquality.has(op)) {
+          matched = actualItems.some((current) =>
+            expectedItems.some((target) => this.formulaApi!.compare(current, target) === 0));
+        } else {
+          const listLike = Array.isArray(actual)
+            || String((actual as any)?.constructor?.type || "").toLowerCase() === "list";
+          matched = actualItems.some((current) => expectedItems.some((target) => {
+            if (positiveContains.has(op) || negativeContains.has(op)) {
+              if (this.formulaApi!.compare(current, target) === 0) return true;
+              return !listLike && this.formulaApi!.format(current).toLowerCase()
+                .includes(this.formulaApi!.format(target).toLowerCase());
+            }
+            const currentText = this.formulaApi!.format(current).toLowerCase();
+            const targetText = this.formulaApi!.format(target).toLowerCase();
+            return positiveStarts.has(op) || negativeStarts.has(op)
+              ? currentText.startsWith(targetText)
+              : currentText.endsWith(targetText);
+          }));
+        }
+        return { applied: true, result: negative ? !matched : matched };
+      } catch (error) {
+        if (evaluationState) evaluationState.formulaFailed = true;
+        formulaState?.failedFormulas.add(formulaName);
+        this.reportFormulaDiagnostic({
+          formula: formulaName,
+          code: "formula-filter-comparison-failed",
+          message: error instanceof Error ? error.message : String(error || "Formula filter comparison failed"),
+        });
+        return { applied: true, result: false };
+      }
     }
 
     const actualValues = this.filterValueToStrings(actual);
-    const expectedValues = Array.isArray(expected)
-      ? expected.flatMap((value) => this.filterValueToStrings(value))
-      : this.filterValueToStrings(expected);
-
-    if (!expectedValues.length && !op.includes("empty")) {
-      return { applied: false, result: true };
+    if (emptyOperators.has(op)) return { applied: true, result: actualValues.length === 0 };
+    if (existsOperators.has(op)) return { applied: true, result: actualValues.length > 0 };
+    if (notExistsOperators.has(op)) return { applied: true, result: actualValues.length === 0 };
+    const expectedValues = expectedItems.flatMap((value) => this.filterValueToStrings(value));
+    if (expectedValues.length === 0) return { applied: true, result: false };
+    if (relationalOperators.has(op)) {
+      const actualComparable = this.toFilterComparable(actual);
+      const expectedComparable = this.toFilterComparable(expected);
+      if (actualComparable === null || expectedComparable === null) {
+        if (evaluationState) evaluationState.formulaFailed = true;
+        return { applied: true, result: false };
+      }
+      return {
+        applied: true,
+        result: op === ">" ? actualComparable > expectedComparable
+          : op === ">=" ? actualComparable >= expectedComparable
+            : op === "<" ? actualComparable < expectedComparable
+              : actualComparable <= expectedComparable,
+      };
     }
-
-    const equals = actualValues.some((actualValue) =>
-      expectedValues.some((expectedValue) => actualValue === expectedValue),
-    );
-    const contains = actualValues.some((actualValue) =>
-      expectedValues.some((expectedValue) => actualValue.includes(expectedValue)),
-    );
-    const starts = actualValues.some((actualValue) =>
-      expectedValues.some((expectedValue) => actualValue.startsWith(expectedValue)),
-    );
-    const ends = actualValues.some((actualValue) =>
-      expectedValues.some((expectedValue) => actualValue.endsWith(expectedValue)),
-    );
-
-    let result: boolean;
-    if (op.includes("containsany")) result = equals || contains;
-    else if (op.includes("contains")) result = contains;
-    else if (op.includes("startswith")) result = starts;
-    else if (op.includes("endswith")) result = ends;
-    else result = equals;
-
-    return { applied: true, result: isNegative ? !result : result };
+    const matched = actualValues.some((current) => expectedValues.some((target) => {
+      if (positiveContains.has(op) || negativeContains.has(op)) return current.includes(target);
+      if (positiveStarts.has(op) || negativeStarts.has(op)) return current.startsWith(target);
+      if (positiveEnds.has(op) || negativeEnds.has(op)) return current.endsWith(target);
+      return current === target;
+    }));
+    return { applied: true, result: negative ? !matched : matched };
   }
 
   private getEntryFilterValue(entry: BasesEntry, property: string): unknown {
@@ -6607,6 +6917,7 @@ export class CalendarView extends BasesView {
       const rawValue = this.tryGetEntryValue(entry, this.startDateProp);
       const resolved = extractDate(entry, this.startDateProp, dailyFormat);
       if (resolved) return { date: resolved, slot: "start", isDateOnly: this.isDateOnlyValue(rawValue) };
+      if (isCalendarFormulaProperty(this.startDateProp)) return null;
     }
 
     const entryFile = entry.file;
@@ -6635,6 +6946,9 @@ export class CalendarView extends BasesView {
     frontmatter: Record<string, any> | undefined,
     startResolution: ResolvedEntryStartDate,
   ): boolean {
+    // Native Bases entries own native formula evaluation. A resolved formula
+    // date is authoritative even when no same-named frontmatter field exists.
+    if (isCalendarFormulaProperty(this.startDateProp)) return true;
     const startField = this.getNoteField(this.startDateProp);
     if (startField && this.getFrontmatterValueCaseInsensitive(frontmatter, startField) != null) return true;
     if (!startField && this.startDateProp) return true;
@@ -6695,9 +7009,9 @@ export class CalendarView extends BasesView {
     const parsed = parsePropertyId(propId);
     const propertyName = parsed.name || (parsed as any).property;
 
-    // Return the property name regardless of type (note or formula)
-    // Formula properties are computed, but we write to the underlying note property
-    if (parsed.type === "note" || parsed.type === "formula") {
+    // A formula has no supported writable or same-named note-property backing.
+    if (parsed.type === "formula") return null;
+    if (parsed.type === "note") {
       return propertyName || null;
     }
 
@@ -7270,8 +7584,10 @@ export class CalendarView extends BasesView {
     const scheduledKey = this.getNoteField(this.startDateProp) || this.plugin.settings.startProperty || "scheduled";
     const durationKey = this.getNoteField(this.endDateProp) || this.plugin.settings.endProperty || "timeEstimate";
     const entries: CalendarEntry[] = [];
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const content = await this.app.vault.cachedRead(file);
+    const sources = await this.readInlineTaskSources(this.app.vault.getMarkdownFiles());
+    for (const source of sources) {
+      if (!source) continue;
+      const { file, content } = source;
       const lines = content.split(/\r?\n/);
       const cache = this.app.metadataCache.getFileCache(file);
       const frontmatter = cache?.frontmatter as Record<string, any> | undefined;
@@ -7282,11 +7598,24 @@ export class CalendarView extends BasesView {
       for (let i = 0; i < lines.length; i++) {
         const task = this.parseInlineScheduledTask(file, i, lines[i], scheduledKey, durationKey, footnoteMetadata);
         if (!task) continue;
-        const startDate = this.parseFrontmatterDateValue(task.scheduledValue);
-        if (!startDate) continue;
-        const endDate = task.durationMinutes && task.durationMinutes > 0
-          ? new Date(startDate.getTime() + task.durationMinutes * 60000)
-          : new Date(startDate.getTime() + this.getMinimumEventDurationMinutes() * 60000);
+        const entry = this.createInlineTaskBasesEntry(task);
+        const startResolution = this.resolveEntryStartDate(entry, frontmatter);
+        if (!startResolution) continue;
+        const startDate = startResolution.date;
+        let endDate: Date | undefined;
+        if (this.endDateProp) {
+          if (this.useEndDuration) {
+            const durationMinutes = this.resolveDurationMinutes(entry, this.endDateProp, frontmatter);
+            if (durationMinutes !== null && durationMinutes > 0) {
+              endDate = new Date(startDate.getTime() + durationMinutes * 60000);
+            }
+          } else {
+            endDate = extractDate(entry, this.endDateProp, this.getDailyNoteDateFormat()) ?? undefined;
+          }
+        }
+        if (!endDate) {
+          endDate = new Date(startDate.getTime() + this.getMinimumEventDurationMinutes() * 60000);
+        }
         const associatedFile = this.findExplicitAssociatedNoteForInlineTask(task).file;
         const associatedFrontmatter = associatedFile
           ? this.app.metadataCache.getFileCache(associatedFile)?.frontmatter as Record<string, any> | undefined
@@ -7296,14 +7625,50 @@ export class CalendarView extends BasesView {
           ...(associatedFrontmatter || {}),
         };
         const priorityField = (this.getNoteField(this.priorityField) || "priority").toLowerCase();
-        const priorityValue = task.inlineProperties.get(priorityField)
-          || task.inlineProperties.get("priority")
-          || this.getFrontmatterStringCaseInsensitive(associatedFrontmatter, priorityField)
-          || this.getFrontmatterStringCaseInsensitive(frontmatter, priorityField)
-          || undefined;
+        const configuredPriority = this.priorityField
+          ? this.tryGetEntryValue(entry, this.priorityField)
+          : null;
+        const priorityValue = isCalendarFormulaProperty(this.priorityField)
+          ? this.formulaAwareValueToString(entry, this.priorityField, configuredPriority) || undefined
+          : valueToString(configuredPriority)
+            || task.inlineProperties.get(priorityField)
+            || task.inlineProperties.get("priority")
+            || this.getFrontmatterStringCaseInsensitive(associatedFrontmatter, priorityField)
+            || this.getFrontmatterStringCaseInsensitive(frontmatter, priorityField)
+            || undefined;
+        const configuredStatus = this.statusField
+          ? this.tryGetEntryValue(entry, this.statusField)
+          : null;
+        const statusValue = isCalendarFormulaProperty(this.statusField)
+          ? this.formulaAwareValueToString(entry, this.statusField, configuredStatus) || undefined
+          : valueToString(configuredStatus) || task.status || undefined;
+        const configuredTitle = this.titleProp
+          ? this.formulaAwareValueToString(entry, this.titleProp, this.tryGetEntryValue(entry, this.titleProp))
+          : null;
+        const title = configuredTitle || task.title;
+        const configuredAllDay = this.allDayProperty
+          ? this.tryGetEntryValue(entry, this.allDayProperty)
+          : null;
+        const formulaAllDayConfigured = isCalendarFormulaProperty(this.allDayProperty);
+        const forceAllDay = formulaAllDayConfigured
+          ? this.parseBooleanLike(configuredAllDay, false)
+          : this.parseBooleanLike(configuredAllDay, false)
+            || startResolution.isDateOnly
+            || (!isCalendarFormulaProperty(this.startDateProp)
+              && /^\d{4}-\d{2}-\d{2}$/.test(task.scheduledValue.trim()));
+        if (this.syntheticFormulaFieldsFailed(entry, [
+          this.startDateProp,
+          this.endDateProp,
+          this.titleProp,
+          this.statusField,
+          this.priorityField,
+          this.allDayProperty,
+        ])) {
+          continue;
+        }
         const styleOverride = this.resolveNoteEventStyleOverride(
           styleFrontmatter,
-          task.status || undefined,
+          statusValue,
           priorityValue,
         );
         const ruleColor = this.normalizeCssColorValue(styleOverride?.color || "");
@@ -7313,14 +7678,14 @@ export class CalendarView extends BasesView {
             || ""
           : "";
         const inlineTaskColor = applyColorToCard ? ruleColor || frontmatterColor : "";
-        const entry = this.createInlineTaskBasesEntry(task);
         entries.push({
           entry,
           startDate,
           endDate,
-          title: task.title,
-          forceAllDay: /^\d{4}-\d{2}-\d{2}$/.test(task.scheduledValue.trim()),
-          status: task.status || undefined,
+          title,
+          forceAllDay,
+          status: statusValue,
+          priority: priorityValue,
           iconName: this.getInlineTaskCheckboxIconName(task.checkboxState),
           cssClasses: ["bases-calendar-inline-task-event"],
           backgroundColor: inlineTaskColor || undefined,
@@ -7329,6 +7694,44 @@ export class CalendarView extends BasesView {
       }
     }
     return entries;
+  }
+
+  private async readInlineTaskSources(
+    files: readonly TFile[],
+  ): Promise<Array<{ file: TFile; content: string } | null>> {
+    const results: Array<{ file: TFile; content: string } | null> = new Array(files.length).fill(null);
+    const cache = this.inlineTaskContentCache ??= new Map<string, { revision: string; content: string }>();
+    const currentPaths = new Set(files.map((file) => file.path));
+    for (const path of cache.keys()) {
+      if (!currentPaths.has(path)) cache.delete(path);
+    }
+    let cursor = 0;
+    const workerCount = Math.min(files.length, 8);
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (cursor < files.length) {
+        const index = cursor;
+        cursor += 1;
+        const file = files[index];
+        const revision = `${Number(file.stat?.mtime || 0)}:${Number(file.stat?.size || 0)}`;
+        const cached = cache.get(file.path);
+        if (cached?.revision === revision) {
+          results[index] = { file, content: cached.content };
+          continue;
+        }
+        try {
+          const content = await this.app.vault.cachedRead(file);
+          cache.set(file.path, { revision, content });
+          results[index] = { file, content };
+        } catch (error) {
+          // One inaccessible source must not erase every other Calendar row.
+          // Do not substitute stale content: omit only this source and retry it
+          // on the next refresh because no cache revision was written.
+          logger.flowError("InlineTasks", "source-read:failed", error, { path: file.path });
+        }
+      }
+    });
+    await Promise.all(workers);
+    return results;
   }
 
   private parseInlineScheduledTask(
@@ -7341,45 +7744,52 @@ export class CalendarView extends BasesView {
   ): InlineScheduledTask | null {
     const taskMatch = line.match(/^\s*[-*]\s+\[([^\]]*)\]\s+(.+)$/);
     if (!taskMatch) return null;
-    const props = this.parseInlineDataviewProperties(line, footnoteMetadata);
-    const scheduledValue = props.get(scheduledKey.toLowerCase()) || props.get("scheduled");
-    if (!scheduledValue) return null;
+    if (this.formulaEvaluationEnabled && !this.lineMetadataApi) return null;
+    const parsedLine = this.formulaEvaluationEnabled
+      ? this.lineMetadataApi?.parseLine(line)
+      : null;
+    const props = this.parseInlineDataviewProperties(line, footnoteMetadata, parsedLine?.fields);
+    const scheduledValue = props.get(scheduledKey.toLowerCase()) || props.get("scheduled") || "";
+    // A formula start may derive its value from any row/note/task field, so a
+    // checkbox line cannot be rejected before its formula session is evaluated.
+    if (!scheduledValue && !isCalendarFormulaProperty(this.startDateProp)) return null;
     const durationRaw = props.get(durationKey.toLowerCase()) || props.get("timeestimate");
     const durationMinutes = durationRaw ? this.parseDurationMinutesFromValue(durationRaw) ?? undefined : undefined;
     const checkboxState = this.normalizeInlineTaskCheckboxState(taskMatch[1] || "");
-    const status = this.resolveInlineTaskStatus(checkboxState, props);
+    const status = this.resolveInlineTaskStatus(checkboxState);
     return {
       file,
       lineNumber,
       line,
-      title: this.cleanInlineTaskTitle(taskMatch[2]),
+      title: parsedLine?.displayTitle || this.cleanInlineTaskTitle(taskMatch[2]),
       scheduledKey,
       scheduledValue,
       durationKey,
       durationMinutes,
       inlineProperties: props,
+      inlineFields: parsedLine?.fields ?? Array.from(props, ([key, value]) => ({ key, value })),
       checkboxState,
       status,
       completed: this.isDoneStatusValue(status),
+      tags: parsedLine?.tags ?? Array.from(new Set(
+        Array.from(line.matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu)).map((match) => match[1].toLowerCase()),
+      )),
     };
   }
 
   private normalizeInlineTaskCheckboxState(rawState: string): string {
-    const raw = String(rawState ?? "").trim();
-    if (raw.startsWith("[") && raw.endsWith("]")) return raw;
-    return `[${raw}]`;
+    const source = String(rawState ?? "");
+    const wrapped = source.trim();
+    if (wrapped.startsWith("[") && wrapped.endsWith("]")) {
+      const marker = wrapped.slice(1, -1).trim();
+      return marker ? `[${marker}]` : "[ ]";
+    }
+    const marker = source.trim();
+    return marker ? `[${marker}]` : "[ ]";
   }
 
-  private resolveInlineTaskStatus(checkboxState: string, inlineProperties: Map<string, string>): string {
-    const statusValue = inlineProperties.get((this.plugin.settings.statusKey || "status").toLowerCase())
-      || inlineProperties.get("status")
-      || "";
+  private resolveInlineTaskStatus(checkboxState: string): string {
     const statusService = this.getGcmServices()?.status;
-    const normalizedStatus = typeof statusService?.normalize === "function"
-      ? statusService.normalize(statusValue)
-      : String(statusValue || "").trim().toLowerCase();
-    if (normalizedStatus) return normalizedStatus;
-
     if (typeof statusService?.checkboxStateToStatus === "function") {
       const mapped = statusService.checkboxStateToStatus(checkboxState);
       if (mapped) return String(mapped).trim().toLowerCase();
@@ -7490,8 +7900,20 @@ export class CalendarView extends BasesView {
     });
   }
 
-  private parseInlineDataviewProperties(line: string, footnoteMetadata?: Map<string, string>): Map<string, string> {
+  private parseInlineDataviewProperties(
+    line: string,
+    footnoteMetadata?: Map<string, string>,
+    canonicalFields?: CalendarLineMetadataField[],
+  ): Map<string, string> {
     const props = new Map<string, string>();
+    if (this.formulaEvaluationEnabled) {
+      for (const field of canonicalFields || []) {
+        const key = String(field?.key || "").trim().toLowerCase();
+        if (!key || props.has(key)) continue;
+        props.set(key, String(field?.value ?? "").trim());
+      }
+      return props;
+    }
     const regex = /\[([^\[\]:]+)::\s*([^\]]+)\]/g;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(line)) !== null) {
@@ -7552,27 +7974,145 @@ export class CalendarView extends BasesView {
   }
 
   private createInlineTaskBasesEntry(task: InlineScheduledTask): BasesEntry {
+    const oneBasedLineNumber = task.lineNumber + 1;
+    const taskTags = Array.from(new Set(
+      (task.tags ?? this.lineMetadataApi?.readTags(task.line) ?? [])
+        .map((tag) => String(tag || "").trim())
+        .filter(Boolean)
+        .map((tag) => tag.startsWith("#") ? tag : `#${tag}`),
+    ));
+    const explicitKindFields = task.inlineFields.filter((field) =>
+      String(field.key || "").trim().toLowerCase().replace(/[\s_.-]+/g, "") === "kind",
+    );
+    const explicitKindInputs = explicitKindFields.length > 0
+      ? explicitKindFields.map((field) => field.value)
+      : [task.inlineProperties.get("kind")];
+    const explicitKinds = this.lineMetadataApi
+      ? Array.from(new Set(
+          explicitKindInputs.flatMap((value) => this.lineMetadataApi!.parseStringList(value)),
+        ))
+      : [];
+    const normalizeAdditiveKindIdentity = (value: unknown): string => {
+      const normalized = String(value ?? "").trim().toLowerCase();
+      if (normalized === "tasks") return "task";
+      if (normalized === "bullets") return "bullet";
+      if (normalized === "notes") return "note";
+      return normalized;
+    };
+    const kinds = Array.from(new Set(
+      ["task", ...explicitKinds]
+        .map(normalizeAdditiveKindIdentity)
+        .filter(Boolean),
+    ));
+    const explicitKind = explicitKinds.length === 0
+      ? null
+      : explicitKinds.length === 1
+        ? explicitKinds[0]
+        : explicitKinds;
+    const inlineGroups = new Map<string, { aliases: Set<string>; values: string[] }>();
+    const addInlineField = (rawKey: string, rawValue: unknown) => {
+      const key = String(rawKey || "").trim();
+      const normalized = key.toLowerCase().replace(/[\s_.-]+/g, "");
+      if (!key || !normalized) return;
+      const group = inlineGroups.get(normalized) ?? { aliases: new Set<string>(), values: [] };
+      group.aliases.add(key);
+      group.values.push(String(rawValue ?? "").trim());
+      inlineGroups.set(normalized, group);
+    };
+    for (const field of task.inlineFields) addInlineField(field.key, field.value);
+    for (const [key, value] of task.inlineProperties) {
+      const normalized = key.toLowerCase().replace(/[\s_.-]+/g, "");
+      if (!inlineGroups.has(normalized)) addInlineField(key, value);
+    }
+    const inlineRow: Record<string, unknown> = {};
+    for (const [normalized, group] of inlineGroups) {
+      const aggregate: unknown = group.values.length > 1 ? [...group.values] : group.values[0] ?? "";
+      inlineRow[normalized] = aggregate;
+      for (const alias of group.aliases) inlineRow[alias] = aggregate;
+    }
     const values = new Map<string, any>([
+      ...Object.entries(inlineRow).map(([key, value]) => [key.toLowerCase(), value] as [string, unknown]),
       ["kind", "task"],
+      ["itemkind", "task"],
+      ["itemtype", "task"],
+      ["explicitkind", explicitKind],
+      ["entitykind", explicitKind],
+      ["kinds", kinds],
       ["title", task.title],
+      ["text", task.title],
+      ["line", oneBasedLineNumber],
+      ["linenumber", oneBasedLineNumber],
+      ["path", task.file.path],
       [task.scheduledKey.toLowerCase(), task.scheduledValue],
       ["scheduled", task.scheduledValue],
-      ["status", task.status],
-      ["checkboxState", task.checkboxState],
+      ["checkboxstate", task.checkboxState],
+      ["checkboxstatus", task.status],
+      ["raw", task.line],
+      ["open", !task.completed],
+      ["done", task.completed],
+      ["completed", task.completed],
+      ["tags", taskTags],
     ]);
-    for (const [key, value] of task.inlineProperties.entries()) {
-      if (!values.has(key)) values.set(key, value);
-    }
     if (task.durationKey && task.durationMinutes != null) {
       values.set(task.durationKey.toLowerCase(), task.durationMinutes);
       values.set("timeestimate", task.durationMinutes);
     }
+    const row = {
+      ...inlineRow,
+      ...Object.fromEntries(values.entries()),
+      kind: "task",
+      itemKind: "task",
+      itemType: "task",
+      lineNumber: oneBasedLineNumber,
+      checkboxState: task.checkboxState,
+      checkboxStatus: task.status,
+      explicitKind,
+      kinds,
+    } as Record<string, unknown>;
+    let formulaState: CalendarSyntheticFormulaState = {
+      session: null,
+      recordId: `${task.file.path}:${oneBasedLineNumber}`,
+      failedFormulas: new Set<string>(),
+    };
+    if (this.formulaEvaluationEnabled) {
+      const sourceCache = this.app.metadataCache.getFileCache(task.file);
+      const sourceFrontmatter = (sourceCache?.frontmatter || {}) as Record<string, unknown>;
+      const fileContext = this.createFormulaFileContext(task.file, sourceFrontmatter);
+      formulaState = this.createSyntheticFormulaState({
+        row,
+        note: sourceFrontmatter,
+        file: fileContext,
+        thisValue: this.formulaThisValue,
+        task: {
+          ...row,
+          status: task.status,
+          checkboxState: task.checkboxState,
+          checkboxStatus: task.status,
+          open: !task.completed,
+          done: task.completed,
+          tags: taskTags,
+          file: fileContext,
+        },
+        line: {
+          ...row,
+          number: oneBasedLineNumber,
+          raw: task.line,
+          file: fileContext,
+        },
+        now: this.formulaNow,
+      }, formulaState.recordId);
+    }
     return {
       file: task.file,
       inlineTask: task,
+      tpsFormulaState: formulaState,
       getValue: (propId: BasesPropertyId | string) => {
+        if (isCalendarFormulaProperty(propId)) {
+          return this.readSyntheticFormulaValue(formulaState, propId);
+        }
         const parsed = parsePropertyId(propId as BasesPropertyId);
         const key = (parsed.name || (parsed as any).property || String(propId)).trim().toLowerCase();
+        if (key === "kind") return kinds;
         return values.get(key) ?? null;
       },
     } as unknown as BasesEntry;
@@ -8179,12 +8719,15 @@ export class CalendarView extends BasesView {
    */
   private resolveContainerLeafFile(): TFile | null {
     // Cheap: check if the controller exposes the file directly.
-    const ctrl = this.controller as any;
-    const ctrlFile = ctrl.file ?? ctrl.sourceFile ?? ctrl.baseFile ?? null;
+    const ctrl = (this.controller ?? null) as any;
+    const ctrlFile = ctrl?.file ?? ctrl?.sourceFile ?? ctrl?.baseFile ?? null;
     if (ctrlFile instanceof TFile) return ctrlFile;
 
     // Embedded bases may not expose ctrl.file; try resolving from the embed DOM wrapper.
-    const embedHost = this.containerEl.closest(".internal-embed") as HTMLElement | null;
+    const container = this.containerEl as HTMLElement | undefined;
+    const embedHost = typeof container?.closest === "function"
+      ? container.closest(".internal-embed") as HTMLElement | null
+      : null;
     if (embedHost) {
       const rawSrc =
         embedHost.getAttribute("src") ||
@@ -8199,7 +8742,7 @@ export class CalendarView extends BasesView {
         .trim();
       if (normalizedSrc) {
         const activePath = (this.app.workspace.getActiveFile() as TFile | null)?.path || "";
-        const fromController = (ctrl.currentFile as TFile | null)?.path || "";
+        const fromController = (ctrl?.currentFile as TFile | null)?.path || "";
         const candidates = [activePath, fromController, ""];
         for (const sourcePath of candidates) {
           const resolved = this.app.metadataCache.getFirstLinkpathDest(normalizedSrc, sourcePath);
@@ -8211,7 +8754,9 @@ export class CalendarView extends BasesView {
     }
 
     // Walk workspace leaves to find the one whose container wraps this view.
-    const leafEl = this.containerEl.closest('.workspace-leaf');
+    const leafEl = typeof container?.closest === "function"
+      ? container.closest('.workspace-leaf')
+      : null;
     if (!leafEl) return null;
 
     let found: TFile | null = null;
@@ -8245,6 +8790,245 @@ export class CalendarView extends BasesView {
     } catch {
       return null;
     }
+  }
+
+  private async prepareFormulaRuntime(): Promise<void> {
+    const baseFile = this.resolveContainerLeafFile();
+    let parsedDefinition: unknown = null;
+    try {
+      if (baseFile) {
+        parsedDefinition = parseYaml(await this.app.vault.cachedRead(baseFile));
+      }
+    } catch (error) {
+      this.formulaDefinitions = {};
+      this.formulaApi = null;
+      this.lineMetadataApi = null;
+      this.compiledFormulaSet = null;
+      this.formulaSourceId = baseFile?.path || "calendar:unresolved-base";
+      this.formulaThisValue = {};
+      this.formulaEvaluationEnabled = [
+        this.startDateProp,
+        this.endDateProp,
+        this.titleProp,
+        this.statusField,
+        this.priorityField,
+        this.allDayProperty,
+      ].some((property) => isCalendarFormulaProperty(property));
+      this.formulaRuntimeFailure = {
+        code: "formula-definition-read-failed",
+        message: error instanceof Error ? error.message : String(error || "Base definition could not be read"),
+      };
+      return;
+    }
+
+    this.formulaDefinitions = extractCalendarFormulaDefinitions(parsedDefinition);
+    this.formulaSourceId = baseFile?.path || "calendar:unresolved-base";
+    this.formulaEvaluationEnabled = Object.keys(this.formulaDefinitions).length > 0
+      || [
+        this.startDateProp,
+        this.endDateProp,
+        this.titleProp,
+        this.statusField,
+        this.priorityField,
+        this.allDayProperty,
+      ].some((property) => isCalendarFormulaProperty(property))
+      || (this.currentBaseFileFilterSources || []).some((source) => {
+        try {
+          return /\bformula\s*(?:\.|\[)/i.test(JSON.stringify(source));
+        } catch {
+          return false;
+        }
+      });
+    if (!this.formulaEvaluationEnabled) {
+      this.formulaApi = null;
+      this.lineMetadataApi = null;
+      this.compiledFormulaSet = null;
+      this.formulaThisValue = {};
+      this.formulaRuntimeFailure = null;
+      return;
+    }
+    this.formulaThisValue = this.buildFormulaThisValue();
+    const gcm = this.getGcmApi();
+    const resolution = resolveCalendarFormulaApi(gcm?.formulas);
+    if (!resolution.ok) {
+      this.formulaApi = null;
+      this.lineMetadataApi = null;
+      this.compiledFormulaSet = null;
+      this.formulaRuntimeFailure = resolution;
+      return;
+    }
+
+    const lineMetadataResolution = resolveCalendarLineMetadataApi(gcm?.lineMetadata);
+    if (!lineMetadataResolution.ok) {
+      this.formulaApi = null;
+      this.lineMetadataApi = null;
+      this.compiledFormulaSet = null;
+      this.formulaRuntimeFailure = lineMetadataResolution;
+      this.reportFormulaDiagnostic({
+        formula: "line-metadata",
+        code: lineMetadataResolution.code,
+        message: lineMetadataResolution.message,
+      });
+      return;
+    }
+
+    this.formulaApi = resolution.api;
+    this.lineMetadataApi = lineMetadataResolution.api;
+    try {
+      this.compiledFormulaSet = this.formulaApi.compile(
+        this.formulaDefinitions,
+        `tps-calendar:${this.formulaSourceId}`,
+      );
+      this.formulaRuntimeFailure = null;
+    } catch (error) {
+      this.compiledFormulaSet = null;
+      this.formulaRuntimeFailure = {
+        code: "formula-compile-failed",
+        message: error instanceof Error ? error.message : String(error || "Formula compilation failed"),
+      };
+    }
+  }
+
+  private reportFormulaDiagnostic(result: {
+    formula?: string;
+    code?: string;
+    message?: string;
+  }): void {
+    const formula = String(result.formula || "unknown").replace(/^formula\./i, "");
+    const code = String(result.code || "formula-error");
+    const key = `${this.formulaSourceId}\u0000${formula.toLowerCase()}\u0000${code}`;
+    if (this.reportedFormulaDiagnostics.has(key)) return;
+    this.reportedFormulaDiagnostics.add(key);
+    const message = result.message || "Formula evaluation failed";
+    logger.warn("[CalendarView] TPS formula evaluation unavailable", {
+      basePath: this.formulaSourceId,
+      formula,
+      code,
+      message,
+    });
+    new Notice(`Calendar could not evaluate formula.${formula} for TPS rows: ${message}`);
+  }
+
+  private buildFormulaThisValue(): Record<string, unknown> {
+    const contextFile = this.getFilterExpressionContextFile() || this.resolveContainerLeafFile();
+    if (!(contextFile instanceof TFile)) return {};
+    const cache = this.app.metadataCache.getFileCache(contextFile);
+    const frontmatter = (cache?.frontmatter || {}) as Record<string, unknown>;
+    return {
+      ...frontmatter,
+      file: this.createFormulaFileContext(contextFile, frontmatter),
+    };
+  }
+
+  private createFormulaFileContext(
+    file: TFile,
+    frontmatter?: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const cache = this.app.metadataCache.getFileCache(file);
+    const properties = frontmatter || (cache?.frontmatter || {}) as Record<string, unknown>;
+    const frontmatterTags = Array.isArray(properties.tags)
+      ? properties.tags
+      : properties.tags == null
+        ? []
+        : [properties.tags];
+    const rawTags = [
+      ...(cache?.tags || []).map((tag) => tag.tag),
+      ...frontmatterTags.map((tag) => String(tag || "")),
+    ];
+    const tags = this.lineMetadataApi
+      ? this.lineMetadataApi.parseTags(rawTags)
+      : Array.from(new Set(rawTags.map((tag) => String(tag || "").trim()).filter(Boolean)));
+    return {
+      path: file.path,
+      name: file.name,
+      basename: file.basename,
+      extension: file.extension,
+      folder: file.parent?.path || "",
+      size: Number(file.stat?.size || 0),
+      ctime: Number(file.stat?.ctime || 0),
+      mtime: Number(file.stat?.mtime || 0),
+      tags,
+      links: (cache?.links || []).map((link) => link.link),
+      properties,
+    };
+  }
+
+  private createSyntheticFormulaState(
+    context: Record<string, unknown>,
+    recordId: string,
+  ): CalendarSyntheticFormulaState {
+    if (!this.formulaApi || !this.compiledFormulaSet) {
+      return { session: null, recordId, failedFormulas: new Set<string>() };
+    }
+    try {
+      return {
+        session: this.formulaApi.createSession(this.compiledFormulaSet, context),
+        recordId,
+        failedFormulas: new Set<string>(),
+      };
+    } catch (error) {
+      this.reportFormulaDiagnostic({
+        formula: "session",
+        code: "formula-session-failed",
+        message: error instanceof Error ? error.message : String(error || "Formula session could not be created"),
+      });
+      return { session: null, recordId, failedFormulas: new Set<string>() };
+    }
+  }
+
+  private syntheticFormulaFieldsFailed(
+    entry: BasesEntry,
+    propertyIds: Array<BasesPropertyId | null>,
+  ): boolean {
+    const state = (entry as any).tpsFormulaState as CalendarSyntheticFormulaState | undefined;
+    if (!state || state.failedFormulas.size === 0) return false;
+    return propertyIds.some((propertyId) => {
+      const formula = getCalendarFormulaName(propertyId)?.toLowerCase();
+      return formula ? state.failedFormulas.has(formula) : false;
+    });
+  }
+
+  private formulaAwareValueToString(
+    entry: BasesEntry,
+    propertyId: BasesPropertyId | null,
+    value: unknown,
+  ): string | null {
+    if (!isCalendarFormulaProperty(propertyId)) return valueToString(value);
+    try {
+      return this.formulaApi?.format(value) ?? valueToString(value);
+    } catch (error) {
+      const formula = getCalendarFormulaName(propertyId) || "unknown";
+      const state = (entry as any).tpsFormulaState as CalendarSyntheticFormulaState | undefined;
+      state?.failedFormulas.add(formula.toLowerCase());
+      this.reportFormulaDiagnostic({
+        formula,
+        code: "formula-format-failed",
+        message: error instanceof Error ? error.message : String(error || "Formula value could not be formatted"),
+      });
+      return null;
+    }
+  }
+
+  private readSyntheticFormulaValue(
+    state: CalendarSyntheticFormulaState,
+    propertyId: BasesPropertyId | string,
+  ): unknown {
+    const result = readCalendarFormulaResult(state.session, propertyId);
+    if (result.status === "value" || result.status === "empty") return result.value;
+    const formulaName = getCalendarFormulaName(propertyId) || result.formula;
+    state.failedFormulas.add(String(formulaName || "").trim().toLowerCase());
+
+    if (!state.session) {
+      if (this.formulaRuntimeFailure) {
+        result.code = this.formulaRuntimeFailure.code;
+        result.message = this.formulaRuntimeFailure.message;
+      } else if (!this.compiledFormulaSet) {
+        result.code = "formula-compile-unavailable";
+        result.message = "The authoritative Base formulas could not be compiled";
+      }
+    }
+    this.reportFormulaDiagnostic(result);
+    return null;
   }
 
   /**
@@ -9199,6 +9983,14 @@ export class CalendarView extends BasesView {
         this.refreshFromPluginSettings();
       }),
     );
+    onGcmApiChanged(this, this.app, () => {
+      this.formulaApi = null;
+      this.lineMetadataApi = null;
+      this.compiledFormulaSet = null;
+      this.formulaRuntimeFailure = null;
+      this.reportedFormulaDiagnostics.clear();
+      this.scheduleRefresh(0, true);
+    });
     registerExplicitAction(this, this.app, (paths) => {
       void this.refreshAfterExplicitGcmAction(paths);
     });
