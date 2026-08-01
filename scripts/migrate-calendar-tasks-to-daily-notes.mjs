@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { TEST_VAULT_ROOT, isPathInside } from "../../workspace-paths.mjs";
+
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -12,8 +14,7 @@ const explicitSources = process.argv
   .filter((arg) => !arg.startsWith("--"))
   .map((arg) => arg.replace(/^\/+/, ""));
 
-const pluginDir = path.resolve(new URL(".", import.meta.url).pathname, "..");
-const vaultRoot = path.resolve(pluginDir, "../../..");
+const vaultRoot = TEST_VAULT_ROOT;
 const dailyConfigPath = path.join(vaultRoot, ".obsidian", "daily-notes.json");
 
 function readJson(filePath, fallback) {
@@ -30,6 +31,14 @@ const dailyFolder = normalizeVaultPath(String(dailyConfig.folder || "").trim());
 
 function normalizeVaultPath(value) {
   return String(value || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function absoluteVaultPath(vaultPath, label) {
+  const absolutePath = path.resolve(vaultRoot, vaultPath);
+  if (!isPathInside(vaultRoot, absolutePath)) {
+    throw new Error(`${label} escapes the test vault: ${vaultPath}`);
+  }
+  return absolutePath;
 }
 
 function pad2(value) {
@@ -80,7 +89,7 @@ function isDailyNotePath(vaultPath) {
 function walkMarkdownFiles(dir, result = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === ".git" || entry.name === "node_modules") continue;
-    if (entry.name === ".obsidian" || entry.name === "Archive") continue;
+    if ([".obsidian", "Archive", "_archive", "Plugin Development"].includes(entry.name)) continue;
     if (entry.name.startsWith(".") && dir === vaultRoot) continue;
     const absolutePath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
@@ -118,7 +127,7 @@ function isCalendarTaskLine(line) {
 }
 
 function ensureDailyNote(vaultPath, dateKey) {
-  const absolutePath = path.join(vaultRoot, vaultPath);
+  const absolutePath = absoluteVaultPath(vaultPath, "Daily-note target");
   if (fs.existsSync(absolutePath)) return absolutePath;
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   const title = path.basename(vaultPath, ".md");
@@ -143,7 +152,7 @@ function appendLines(existingContent, lines) {
 
 function collectSourceFiles() {
   if (explicitSources.length > 0) {
-    return explicitSources.map((source) => path.join(vaultRoot, source));
+    return explicitSources.map((source) => absoluteVaultPath(source, "Migration source"));
   }
   return walkMarkdownFiles(vaultRoot).filter((absolutePath) => {
     const vaultPath = normalizeVaultPath(path.relative(vaultRoot, absolutePath));
@@ -196,7 +205,9 @@ const createdTargets = [];
 
 for (const [targetPath, items] of targetAdds.entries()) {
   const dateKey = extractDateFromTaskLine(items[0]?.line || "");
-  const absoluteTarget = apply ? ensureDailyNote(targetPath, dateKey) : path.join(vaultRoot, targetPath);
+  const absoluteTarget = apply
+    ? ensureDailyNote(targetPath, dateKey)
+    : absoluteVaultPath(targetPath, "Daily-note target");
   const existingContent = fs.existsSync(absoluteTarget) ? fs.readFileSync(absoluteTarget, "utf8") : "";
   const existingIdentities = new Set(
     existingContent

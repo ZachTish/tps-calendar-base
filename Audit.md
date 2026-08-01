@@ -1,7 +1,7 @@
 # TPS-Calendar-Base (Dev) — Audit
 
 Scope
-- Reviewed files: [`src/main.ts`](/Users/zachtisherman/TishOS%20v0.1/.obsidian/plugins/TPS-Calendar-Base%20(Dev)/src/main.ts), [`src/tps-controller-api.ts`](/Users/zachtisherman/TishOS%20v0.1/.obsidian/plugins/TPS-Calendar-Base%20(Dev)/src/tps-controller-api.ts), [`src/services/new-event-service.ts`](/Users/zachtisherman/TishOS%20v0.1/.obsidian/plugins/TPS-Calendar-Base%20(Dev)/src/services/new-event-service.ts), [`src/utils/task-target-path.ts`](/Users/zachtisherman/TishOS%20v0.1/.obsidian/plugins/TPS-Calendar-Base%20(Dev)/src/utils/task-target-path.ts).
+- Reviewed files: [`src/main.ts`](src/main.ts), [`src/tps-controller-api.ts`](src/tps-controller-api.ts), [`src/services/new-event-service.ts`](src/services/new-event-service.ts), [`src/utils/task-target-path.ts`](src/utils/task-target-path.ts).
 
 Where issues are
 - High: Multiple plugin integrations are still resolved by manual legacy-id probing and permissive casts; a single contract mismatch can fail event creation without a clear error.
