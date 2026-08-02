@@ -7599,7 +7599,7 @@ export class CalendarView extends BasesView {
       const { file, content } = source;
       const lines = content.split(/\r\n|\n|\r/u);
       const documentLines = this.scanInlineTaskDocument(content, lines);
-      if (!documentLines) return [];
+      if (!documentLines) continue;
       const cache = this.app.metadataCache.getFileCache(file);
       const frontmatter = cache?.frontmatter as Record<string, any> | undefined;
       const colorSource = this.plugin.settings.noteEventColorSource || "frontmatter";

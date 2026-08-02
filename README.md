@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.4.2
+
+- A throwing or malformed GCM document scan now suppresses task rows only from that one source note. Valid scheduled tasks already collected from every other note remain visible instead of the whole task layer being cleared.
+- The protected-Markdown safety boundary remains unchanged: the affected source still fails closed, task-shaped YAML/frontmatter and fenced, indented, HTML, or comment content is never revived through a fallback parser, and the existing deduplicated diagnostic remains available.
+- Two-source regressions cover both thrown scans and invalid physical-line descriptors across repeated refreshes. This backward-compatible correctness patch changes no settings, commands, Base definitions, task syntax, plugin APIs, or note data; minimum supported Obsidian remains 1.10.0.
+- Validation passed all 160 declared tests, TypeScript, the three containment checks, a separate production-mode build, byte-for-byte test-runtime artifact verification, and reloaded Obsidian 1.12.7 QA. The scheduled-task fixture remained visible after reload; the temporary fixture was moved directly to `_archive`, and production was not accessed.
+
 ## 0.4.1
 
 - Inline scheduled-task discovery now uses GCM's document-aware line-metadata scanner before parsing any checkbox row. Task-shaped examples in YAML frontmatter and fenced, indented, HTML, or comment blocks no longer appear as Calendar events; valid nested tasks retain their physical line identity and custom Base formulas.
@@ -153,7 +160,7 @@ Canonical source, tests, and Git metadata live in this repository at `Obsidian P
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.4.1` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.4.2` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 
@@ -208,6 +215,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Notes that only contain scheduled task lines are not promoted to note-level calendar events unless the note itself has the configured start/scheduled frontmatter field. This keeps storage notes such as calendar task inboxes from appearing as a single scheduled note while preserving their individual task events.
 - If a storage note also has note-level calendar frontmatter that matches an inline scheduled task in the same file and time slot, Calendar suppresses the duplicate note-level event so clicks keep the task-line navigation target.
 - Reads Markdown through Obsidian's cached-read API, then iterates only the physical content lines admitted by GCM's CommonMark-aware document scanner. Frontmatter plus fenced, indented, HTML, and comment blocks cannot synthesize task events. Calendar retains the complete physical line array only to resolve TPS footnote metadata, and it does not trust a possibly stale metadata-cache negative to hide a task-bearing file.
+- A scanner failure or malformed descriptor skips only that source note. Other valid task sources continue rendering, while the failed source remains closed and emits the existing deduplicated diagnostic.
 - `initialCreateMode` controls whether calendar range creates:
   - note events (default behavior), or
   - task items.

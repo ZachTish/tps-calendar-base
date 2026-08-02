@@ -586,6 +586,71 @@ test("ordinary inline task synthesis rejects malformed scanDocument coordinates"
   assert.match(globalThis.__calendarFormulaNotices[0], /invalid physical-line descriptor/i);
 });
 
+test("inline task synthesis isolates throwing and malformed document scans by source", async () => {
+  const cases = [
+    {
+      name: "throwing",
+      fail(scanDocument) {
+        return (content) => {
+          if (content.includes("BAD SCAN")) throw new Error("scanner exploded");
+          return scanDocument(content);
+        };
+      },
+      notice: /scanner exploded/i,
+    },
+    {
+      name: "malformed",
+      fail(scanDocument) {
+        return (content) => scanDocument(content).map((line) => content.includes("BAD SCAN")
+          ? { ...line, start: line.start + 1 }
+          : line);
+      },
+      notice: /invalid physical-line descriptor/i,
+    },
+  ];
+
+  for (const scenario of cases) {
+    globalThis.__calendarFormulaNotices.length = 0;
+    const good = createFile(
+      `Inbox/${scenario.name} Good.md`,
+      "- [ ] Valid task [scheduled:: 2026-08-04]",
+    );
+    const bad = createFile(
+      `Inbox/${scenario.name} Bad.md`,
+      "- [ ] BAD SCAN [scheduled:: 2026-08-04]",
+    );
+    const goodAfter = createFile(
+      `Inbox/${scenario.name} Good After.md`,
+      "- [ ] Valid later task [scheduled:: 2026-08-04]",
+    );
+    const lineMetadata = makeLineMetadataApi();
+    lineMetadata.scanDocument = scenario.fail(lineMetadata.scanDocument);
+    const view = createBareView({ lineMetadata, markdownFiles: [good, bad, goodAfter] });
+    Object.assign(view, {
+      startDateProp: "note.scheduled",
+      endDateProp: null,
+      titleProp: null,
+      statusField: null,
+      priorityField: null,
+      allDayProperty: null,
+    });
+    await view.prepareFormulaRuntime();
+
+    const firstEntries = await view.collectInlineScheduledTaskEntries();
+    const secondEntries = await view.collectInlineScheduledTaskEntries();
+    assert.equal(firstEntries.length, 2, `${scenario.name}: a failed source does not erase or stop valid sources`);
+    assert.equal(secondEntries.length, 2, `${scenario.name}: repeat refresh preserves both valid sources`);
+    assert.deepEqual(
+      firstEntries.map((entry) => entry.entry.inlineTask.file.path),
+      [good.path, goodAfter.path],
+    );
+    assert.match(firstEntries[0].title, /Valid task/);
+    assert.match(firstEntries[1].title, /Valid later task/);
+    assert.equal(globalThis.__calendarFormulaNotices.length, 1, `${scenario.name}: diagnostics stay deduplicated`);
+    assert.match(globalThis.__calendarFormulaNotices[0], scenario.notice);
+  }
+});
+
 test("ordinary inline task synthesis fails closed when parseLine throws", async () => {
   globalThis.__calendarFormulaNotices.length = 0;
   const lineMetadata = makeLineMetadataApi();
