@@ -220,6 +220,31 @@ function makeLineMetadataApi(version = 1) {
     }
     return source.replace(/(?:^|\s)#[\p{L}\p{N}_/-]+/gu, " ").replace(/\s+/gu, " ").trim();
   };
+  const scanDocument = (content) => {
+    const source = String(content ?? "");
+    const lines = [];
+    const newline = /\r\n|\n|\r/gu;
+    let start = 0;
+    let match;
+    while ((match = newline.exec(source)) !== null) {
+      lines.push({
+        index: lines.length,
+        lineNumber: lines.length + 1,
+        text: source.slice(start, match.index),
+        start,
+        end: match.index,
+      });
+      start = match.index + match[0].length;
+    }
+    lines.push({
+      index: lines.length,
+      lineNumber: lines.length + 1,
+      text: source.slice(start),
+      start,
+      end: source.length,
+    });
+    return lines;
+  };
   const api = {
     version,
     readInlineFields,
@@ -229,6 +254,7 @@ function makeLineMetadataApi(version = 1) {
     parseTags,
     getDisplayTitle,
     parseLine: (line) => ({ fields: readInlineFields(line), tags: readTags(line), displayTitle: getDisplayTitle(line) }),
+    scanDocument,
   };
   return api;
 }
@@ -316,6 +342,7 @@ function createBareView({ api = null, lineMetadata = undefined, baseDefinition =
   view.formulaSourceId = "";
   view.formulaThisValue = {};
   view.formulaRuntimeFailure = null;
+  view.lineMetadataRuntimeFailure = null;
   view.formulaNow = new Date("2026-08-01T00:00:00.000Z");
   view.reportedFormulaDiagnostics = new Set();
   view.getMinimumEventDurationMinutes = () => 30;
@@ -377,6 +404,11 @@ test("rejects missing and version-mismatched APIs without accepting an evaluator
     false,
     "a partial line-parser surface is not silently accepted",
   );
+  assert.equal(
+    formulaUtility.resolveCalendarLineMetadataApi({ ...makeLineMetadataApi(), scanDocument: undefined }).ok,
+    false,
+    "the document-aware scanner is a required line-metadata capability",
+  );
 });
 
 test("Calendar consumes the real GCM v1 provider for bracket filters and typed Date, Duration, Link, and List values", async () => {
@@ -434,6 +466,7 @@ test("ordinary non-formula calendars do not compile or create formula sessions",
   const endDate = new Date("2026-08-02T11:00:00Z");
   const ordinary = view.createExternalCalendarEntry({ id: "plain", uid: "plain", title: "Plain", description: "", startDate, endDate, isAllDay: false });
   assert.equal(view.formulaEvaluationEnabled, false);
+  assert.equal(view.lineMetadataApi?.version, 1, "ordinary task calendars retain the shared line-metadata provider");
   assert.equal(calls.compile.length, 0);
   assert.equal(calls.contexts.length, 0);
   assert.equal(ordinary.startDate.getTime(), startDate.getTime());
@@ -459,6 +492,195 @@ test("formula-driven line rows require the exact shared line-metadata contract",
   assert.equal(calls.compile.length, 0, "Calendar does not compile against an incomplete cross-plugin contract");
   assert.deepEqual(await view.collectInlineScheduledTaskEntries(), [], "regex parsing is not used as a formula fallback");
   assert.match(globalThis.__calendarFormulaNotices.at(-1), /line metadata API is unavailable/i);
+});
+
+test("ordinary inline task synthesis fails closed once when line metadata is unavailable", async () => {
+  globalThis.__calendarFormulaNotices.length = 0;
+  const source = createFile("Inbox/No Metadata.md", "- [ ] Must not fall back [scheduled:: 2026-08-04]");
+  const view = createBareView({ lineMetadata: null, markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: null,
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+  });
+  await view.prepareFormulaRuntime();
+
+  assert.equal(view.formulaEvaluationEnabled, false);
+  assert.equal(view.lineMetadataRuntimeFailure.code, "line-metadata-api-missing");
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.equal(globalThis.__calendarFormulaNotices.length, 1, "the unavailable-contract diagnostic is deduplicated");
+  assert.match(globalThis.__calendarFormulaNotices[0], /line metadata API is unavailable/i);
+});
+
+test("ordinary inline task synthesis fails closed when scanDocument throws", async () => {
+  globalThis.__calendarFormulaNotices.length = 0;
+  const lineMetadata = makeLineMetadataApi();
+  lineMetadata.scanDocument = () => {
+    throw new Error("scanner exploded");
+  };
+  const source = createFile("Inbox/Throwing Scanner.md", "- [ ] Unsafe task [scheduled:: 2026-08-04]");
+  const view = createBareView({ lineMetadata, markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: null,
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+  });
+  await view.prepareFormulaRuntime();
+
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.equal(globalThis.__calendarFormulaNotices.length, 1, "scanner failure diagnostics are deduplicated");
+  assert.match(globalThis.__calendarFormulaNotices[0], /scanner exploded/i);
+});
+
+test("ordinary inline task synthesis rejects non-array scanDocument output", async () => {
+  globalThis.__calendarFormulaNotices.length = 0;
+  const lineMetadata = makeLineMetadataApi();
+  lineMetadata.scanDocument = () => ({ index: 0 });
+  const source = createFile("Inbox/Invalid Scanner Result.md", "- [ ] Unsafe task [scheduled:: 2026-08-04]");
+  const view = createBareView({ lineMetadata, markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: null,
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+  });
+  await view.prepareFormulaRuntime();
+
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.equal(globalThis.__calendarFormulaNotices.length, 1);
+  assert.match(globalThis.__calendarFormulaNotices[0], /scanDocument returned an invalid result/i);
+});
+
+test("ordinary inline task synthesis rejects malformed scanDocument coordinates", async () => {
+  globalThis.__calendarFormulaNotices.length = 0;
+  const lineMetadata = makeLineMetadataApi();
+  const physicalScan = lineMetadata.scanDocument;
+  lineMetadata.scanDocument = (content) => physicalScan(content).map((line) => ({
+    ...line,
+    start: line.start + 1,
+  }));
+  const source = createFile("Inbox/Invalid Scanner Coordinates.md", "- [ ] Unsafe task [scheduled:: 2026-08-04]");
+  const view = createBareView({ lineMetadata, markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: null,
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+  });
+  await view.prepareFormulaRuntime();
+
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.equal(globalThis.__calendarFormulaNotices.length, 1);
+  assert.match(globalThis.__calendarFormulaNotices[0], /invalid physical-line descriptor/i);
+});
+
+test("ordinary inline task synthesis fails closed when parseLine throws", async () => {
+  globalThis.__calendarFormulaNotices.length = 0;
+  const lineMetadata = makeLineMetadataApi();
+  lineMetadata.parseLine = () => {
+    throw new Error("line parser exploded");
+  };
+  const source = createFile("Inbox/Throwing Line Parser.md", "- [ ] Unsafe task [scheduled:: 2026-08-04]");
+  const view = createBareView({ lineMetadata, markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: null,
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+  });
+  await view.prepareFormulaRuntime();
+
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.equal(globalThis.__calendarFormulaNotices.length, 1, "parse failure diagnostics are deduplicated");
+  assert.match(globalThis.__calendarFormulaNotices[0], /line parser exploded/i);
+});
+
+test("ordinary inline task synthesis rejects invalid parseLine output", async () => {
+  globalThis.__calendarFormulaNotices.length = 0;
+  const lineMetadata = makeLineMetadataApi();
+  lineMetadata.parseLine = () => ({ fields: null, tags: [], displayTitle: "Unsafe task" });
+  const source = createFile("Inbox/Invalid Line Parser Result.md", "- [ ] Unsafe task [scheduled:: 2026-08-04]");
+  const view = createBareView({ lineMetadata, markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: null,
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+  });
+  await view.prepareFormulaRuntime();
+
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.equal(globalThis.__calendarFormulaNotices.length, 1);
+  assert.match(globalThis.__calendarFormulaNotices[0], /parseLine returned an invalid result/i);
+});
+
+test("ordinary task discovery trusts scanDocument boundaries while retaining full-document footnote metadata", async () => {
+  const content = [
+    "---",
+    "kind: test",
+    "fake: - [ ] Frontmatter task [scheduled:: 2026-08-05]",
+    "---",
+    "",
+    "```md",
+    "- [ ] Fenced task [scheduled:: 2026-08-05]",
+    "```",
+    "",
+    "    - [ ] Indented task [scheduled:: 2026-08-05]",
+    "",
+    "<!--",
+    "- [ ] Comment task [scheduled:: 2026-08-05]",
+    "-->",
+    "- [ ] Visible task [scheduled:: 2026-08-05] [^tps-inline:calendar-qa]",
+    "[^tps-inline:calendar-qa]: %7B%22externalId%22%3A%22qa-event%22%7D",
+  ].join("\n");
+  const source = createFile("Inbox/Scanner.md", content);
+  const lineMetadata = makeLineMetadataApi();
+  const physicalScan = lineMetadata.scanDocument;
+  const scanCalls = [];
+  lineMetadata.scanDocument = (document) => {
+    scanCalls.push(document);
+    return physicalScan(document).filter(({ index }) => index === 14 || index === 15);
+  };
+  const view = createBareView({ lineMetadata, markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: null,
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+  });
+  await view.prepareFormulaRuntime();
+  const entries = await view.collectInlineScheduledTaskEntries();
+
+  assert.equal(view.formulaEvaluationEnabled, false);
+  assert.equal(scanCalls.length, 1);
+  assert.equal(scanCalls[0], content);
+  assert.equal(entries.length, 1, "task-shaped text outside the provider's eligible line set is never synthesized");
+  assert.match(entries[0].title, /Visible task/);
+  assert.equal(entries[0].entry.inlineTask.lineNumber, 14, "the provider's physical index remains the update identity");
+  assert.equal(
+    entries[0].entry.inlineTask.inlineProperties.get("externalid"),
+    "qa-event",
+    "footnote metadata is still resolved from the complete physical document",
+  );
 });
 
 test("synthetic task sessions expose row-first, note, file, this, task, and 1-based line context", async () => {
@@ -559,7 +781,7 @@ test("formula date, dependency, status, priority, all-day, and duration drive an
 test("inline task collection isolates failed sources and reuses only matching path-plus-mtime cache entries", async () => {
   const good = createFile("Inbox/Good.md", "- [ ] Good [scheduled:: 2026-08-05]");
   const bad = createFile("Inbox/Bad.md", "- [ ] Bad [scheduled:: 2026-08-05]");
-  const view = createBareView({ markdownFiles: [good, bad] });
+  const view = createBareView({ lineMetadata: makeLineMetadataApi(), markdownFiles: [good, bad] });
   Object.assign(view, {
     startDateProp: "note.scheduled",
     endDateProp: null,
@@ -569,6 +791,7 @@ test("inline task collection isolates failed sources and reuses only matching pa
     allDayProperty: null,
     formulaEvaluationEnabled: false,
   });
+  await view.prepareFormulaRuntime();
   const reads = new Map();
   view.app.vault.cachedRead = async (file) => {
     reads.set(file.path, (reads.get(file.path) || 0) + 1);

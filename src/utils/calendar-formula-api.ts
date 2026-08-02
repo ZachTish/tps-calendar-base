@@ -42,6 +42,18 @@ export type CalendarLineMetadataField = {
   value: string;
 };
 
+export type CalendarDocumentLine = {
+  /** Zero-based physical line index in the source document. */
+  readonly index: number;
+  /** One-based physical line number in the source document. */
+  readonly lineNumber: number;
+  readonly text: string;
+  /** UTF-16 source offset at the start of the physical line. */
+  readonly start: number;
+  /** UTF-16 source offset immediately after the line text, before its newline. */
+  readonly end: number;
+};
+
 export type CalendarLineMetadataApi = {
   version: number;
   readInlineFields: (line: string) => CalendarLineMetadataField[];
@@ -55,6 +67,7 @@ export type CalendarLineMetadataApi = {
     tags: string[];
     displayTitle: string;
   };
+  scanDocument: (content: string) => readonly CalendarDocumentLine[];
 };
 
 export type CalendarLineMetadataApiResolution =
@@ -137,6 +150,7 @@ export function resolveCalendarLineMetadataApi(candidate: unknown): CalendarLine
     || typeof api.parseTags !== "function"
     || typeof api.getDisplayTitle !== "function"
     || typeof api.parseLine !== "function"
+    || typeof api.scanDocument !== "function"
   ) {
     return {
       ok: false,

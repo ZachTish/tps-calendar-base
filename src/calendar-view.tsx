@@ -117,6 +117,7 @@ import {
   type CalendarFormulaApi,
   type CalendarFormulaDefinitions,
   type CalendarFormulaSession,
+  type CalendarDocumentLine,
   type CalendarLineMetadataApi,
   type CalendarLineMetadataField,
 } from "./utils/calendar-formula-api";
@@ -517,6 +518,7 @@ export class CalendarView extends BasesView {
   private formulaSourceId = "";
   private formulaThisValue: Record<string, unknown> = {};
   private formulaRuntimeFailure: { code: string; message: string } | null = null;
+  private lineMetadataRuntimeFailure: { code: string; message: string } | null = null;
   private formulaNow = new Date();
   private formulaEvaluationEnabled = false;
   private readonly reportedFormulaDiagnostics = new Set<string>();
@@ -7581,6 +7583,13 @@ export class CalendarView extends BasesView {
   }
 
   private async collectInlineScheduledTaskEntries(): Promise<CalendarEntry[]> {
+    if (!this.lineMetadataApi) {
+      this.reportLineMetadataDiagnostic(this.lineMetadataRuntimeFailure || {
+        code: "line-metadata-api-missing",
+        message: "TPS Global Context Menu line metadata API is unavailable",
+      });
+      return [];
+    }
     const scheduledKey = this.getNoteField(this.startDateProp) || this.plugin.settings.startProperty || "scheduled";
     const durationKey = this.getNoteField(this.endDateProp) || this.plugin.settings.endProperty || "timeEstimate";
     const entries: CalendarEntry[] = [];
@@ -7588,15 +7597,24 @@ export class CalendarView extends BasesView {
     for (const source of sources) {
       if (!source) continue;
       const { file, content } = source;
-      const lines = content.split(/\r?\n/);
+      const lines = content.split(/\r\n|\n|\r/u);
+      const documentLines = this.scanInlineTaskDocument(content, lines);
+      if (!documentLines) return [];
       const cache = this.app.metadataCache.getFileCache(file);
       const frontmatter = cache?.frontmatter as Record<string, any> | undefined;
       const colorSource = this.plugin.settings.noteEventColorSource || "frontmatter";
       const colorTarget = this.plugin.settings.noteEventFrontmatterColorTarget || "both";
       const applyColorToCard = colorTarget === "card" || colorTarget === "both";
       const footnoteMetadata = this.parseInlineMetadataFootnotes(lines);
-      for (let i = 0; i < lines.length; i++) {
-        const task = this.parseInlineScheduledTask(file, i, lines[i], scheduledKey, durationKey, footnoteMetadata);
+      for (const documentLine of documentLines) {
+        const task = this.parseInlineScheduledTask(
+          file,
+          documentLine.index,
+          documentLine.text,
+          scheduledKey,
+          durationKey,
+          footnoteMetadata,
+        );
         if (!task) continue;
         const entry = this.createInlineTaskBasesEntry(task);
         const startResolution = this.resolveEntryStartDate(entry, frontmatter);
@@ -7696,6 +7714,67 @@ export class CalendarView extends BasesView {
     return entries;
   }
 
+  private scanInlineTaskDocument(
+    content: string,
+    physicalLines: readonly string[],
+  ): readonly CalendarDocumentLine[] | null {
+    const api = this.lineMetadataApi;
+    if (!api) return null;
+
+    let scanned: unknown;
+    try {
+      scanned = api.scanDocument(content);
+    } catch (error) {
+      this.reportLineMetadataDiagnostic({
+        code: "line-metadata-scan-failed",
+        message: error instanceof Error ? error.message : String(error || "Document scan failed"),
+      });
+      return null;
+    }
+
+    if (!Array.isArray(scanned)) {
+      this.reportLineMetadataDiagnostic({
+        code: "line-metadata-scan-invalid",
+        message: "TPS line metadata scanDocument returned an invalid result",
+      });
+      return null;
+    }
+
+    let previousIndex = -1;
+    let previousEnd = -1;
+    for (const candidate of scanned as unknown[]) {
+      const line = candidate as Partial<CalendarDocumentLine> | null;
+      const valid = Boolean(
+        line
+        && Number.isInteger(line.index)
+        && Number.isInteger(line.lineNumber)
+        && typeof line.text === "string"
+        && Number.isInteger(line.start)
+        && Number.isInteger(line.end)
+        && (line.index as number) > previousIndex
+        && line.lineNumber === (line.index as number) + 1
+        && (line.index as number) < physicalLines.length
+        && physicalLines[line.index as number] === line.text
+        && (line.start as number) >= 0
+        && (line.end as number) >= (line.start as number)
+        && (line.start as number) >= previousEnd
+        && (line.end as number) <= content.length
+        && content.slice(line.start as number, line.end as number) === line.text
+      );
+      if (!valid) {
+        this.reportLineMetadataDiagnostic({
+          code: "line-metadata-scan-invalid",
+          message: "TPS line metadata scanDocument returned an invalid physical-line descriptor",
+        });
+        return null;
+      }
+      const validLine = line as CalendarDocumentLine;
+      previousIndex = validLine.index;
+      previousEnd = validLine.end;
+    }
+    return scanned as CalendarDocumentLine[];
+  }
+
   private async readInlineTaskSources(
     files: readonly TFile[],
   ): Promise<Array<{ file: TFile; content: string } | null>> {
@@ -7744,11 +7823,36 @@ export class CalendarView extends BasesView {
   ): InlineScheduledTask | null {
     const taskMatch = line.match(/^\s*[-*]\s+\[([^\]]*)\]\s+(.+)$/);
     if (!taskMatch) return null;
-    if (this.formulaEvaluationEnabled && !this.lineMetadataApi) return null;
-    const parsedLine = this.formulaEvaluationEnabled
-      ? this.lineMetadataApi?.parseLine(line)
-      : null;
-    const props = this.parseInlineDataviewProperties(line, footnoteMetadata, parsedLine?.fields);
+    if (!this.lineMetadataApi) {
+      this.reportLineMetadataDiagnostic(this.lineMetadataRuntimeFailure || {
+        code: "line-metadata-api-missing",
+        message: "TPS Global Context Menu line metadata API is unavailable",
+      });
+      return null;
+    }
+    let parsedLine: ReturnType<CalendarLineMetadataApi["parseLine"]>;
+    try {
+      parsedLine = this.lineMetadataApi.parseLine(line);
+    } catch (error) {
+      this.reportLineMetadataDiagnostic({
+        code: "line-metadata-parse-failed",
+        message: error instanceof Error ? error.message : String(error || "Line metadata parsing failed"),
+      });
+      return null;
+    }
+    if (
+      !parsedLine
+      || !Array.isArray(parsedLine.fields)
+      || !Array.isArray(parsedLine.tags)
+      || typeof parsedLine.displayTitle !== "string"
+    ) {
+      this.reportLineMetadataDiagnostic({
+        code: "line-metadata-parse-invalid",
+        message: "TPS line metadata parseLine returned an invalid result",
+      });
+      return null;
+    }
+    const props = this.parseInlineDataviewProperties(line, footnoteMetadata, parsedLine.fields);
     const scheduledValue = props.get(scheduledKey.toLowerCase()) || props.get("scheduled") || "";
     // A formula start may derive its value from any row/note/task field, so a
     // checkbox line cannot be rejected before its formula session is evaluated.
@@ -7761,19 +7865,17 @@ export class CalendarView extends BasesView {
       file,
       lineNumber,
       line,
-      title: parsedLine?.displayTitle || this.cleanInlineTaskTitle(taskMatch[2]),
+      title: parsedLine.displayTitle || "Task",
       scheduledKey,
       scheduledValue,
       durationKey,
       durationMinutes,
       inlineProperties: props,
-      inlineFields: parsedLine?.fields ?? Array.from(props, ([key, value]) => ({ key, value })),
+      inlineFields: parsedLine.fields,
       checkboxState,
       status,
       completed: this.isDoneStatusValue(status),
-      tags: parsedLine?.tags ?? Array.from(new Set(
-        Array.from(line.matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gu)).map((match) => match[1].toLowerCase()),
-      )),
+      tags: parsedLine.tags,
     };
   }
 
@@ -7906,18 +8008,21 @@ export class CalendarView extends BasesView {
     canonicalFields?: CalendarLineMetadataField[],
   ): Map<string, string> {
     const props = new Map<string, string>();
-    if (this.formulaEvaluationEnabled) {
-      for (const field of canonicalFields || []) {
+    if (canonicalFields) {
+      for (const field of canonicalFields) {
         const key = String(field?.key || "").trim().toLowerCase();
         if (!key || props.has(key)) continue;
         props.set(key, String(field?.value ?? "").trim());
       }
-      return props;
-    }
-    const regex = /\[([^\[\]:]+)::\s*([^\]]+)\]/g;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(line)) !== null) {
-      props.set(match[1].trim().toLowerCase(), match[2].trim());
+    } else {
+      // Mutation-time line relocation still needs to inspect the current text
+      // before a provider-backed row exists. Task synthesis never enters this
+      // compatibility path: it always supplies canonical provider fields.
+      const regex = /\[([^\[\]:]+)::\s*([^\]]+)\]/g;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(line)) !== null) {
+        props.set(match[1].trim().toLowerCase(), match[2].trim());
+      }
     }
     this.mergeEncodedInlineMetadata(props, props.get("tpsinlineprops") || props.get("tps-inline-props") || "");
     props.delete("tpsinlineprops");
@@ -8794,17 +8899,17 @@ export class CalendarView extends BasesView {
 
   private async prepareFormulaRuntime(): Promise<void> {
     const baseFile = this.resolveContainerLeafFile();
+    this.formulaSourceId = baseFile?.path || "calendar:unresolved-base";
     let parsedDefinition: unknown = null;
     try {
       if (baseFile) {
         parsedDefinition = parseYaml(await this.app.vault.cachedRead(baseFile));
       }
     } catch (error) {
+      this.resolveLineMetadataRuntime(this.getGcmApi()?.lineMetadata);
       this.formulaDefinitions = {};
       this.formulaApi = null;
-      this.lineMetadataApi = null;
       this.compiledFormulaSet = null;
-      this.formulaSourceId = baseFile?.path || "calendar:unresolved-base";
       this.formulaThisValue = {};
       this.formulaEvaluationEnabled = [
         this.startDateProp,
@@ -8822,7 +8927,6 @@ export class CalendarView extends BasesView {
     }
 
     this.formulaDefinitions = extractCalendarFormulaDefinitions(parsedDefinition);
-    this.formulaSourceId = baseFile?.path || "calendar:unresolved-base";
     this.formulaEvaluationEnabled = Object.keys(this.formulaDefinitions).length > 0
       || [
         this.startDateProp,
@@ -8839,41 +8943,36 @@ export class CalendarView extends BasesView {
           return false;
         }
       });
+    const gcm = this.getGcmApi();
+    this.resolveLineMetadataRuntime(gcm?.lineMetadata);
     if (!this.formulaEvaluationEnabled) {
       this.formulaApi = null;
-      this.lineMetadataApi = null;
       this.compiledFormulaSet = null;
       this.formulaThisValue = {};
       this.formulaRuntimeFailure = null;
       return;
     }
     this.formulaThisValue = this.buildFormulaThisValue();
-    const gcm = this.getGcmApi();
     const resolution = resolveCalendarFormulaApi(gcm?.formulas);
     if (!resolution.ok) {
       this.formulaApi = null;
-      this.lineMetadataApi = null;
       this.compiledFormulaSet = null;
       this.formulaRuntimeFailure = resolution;
       return;
     }
 
-    const lineMetadataResolution = resolveCalendarLineMetadataApi(gcm?.lineMetadata);
-    if (!lineMetadataResolution.ok) {
+    if (!this.lineMetadataApi) {
       this.formulaApi = null;
-      this.lineMetadataApi = null;
       this.compiledFormulaSet = null;
-      this.formulaRuntimeFailure = lineMetadataResolution;
-      this.reportFormulaDiagnostic({
-        formula: "line-metadata",
-        code: lineMetadataResolution.code,
-        message: lineMetadataResolution.message,
-      });
+      this.formulaRuntimeFailure = this.lineMetadataRuntimeFailure || {
+        code: "line-metadata-api-missing",
+        message: "TPS Global Context Menu line metadata API is unavailable",
+      };
+      this.reportLineMetadataDiagnostic(this.formulaRuntimeFailure);
       return;
     }
 
     this.formulaApi = resolution.api;
-    this.lineMetadataApi = lineMetadataResolution.api;
     try {
       this.compiledFormulaSet = this.formulaApi.compile(
         this.formulaDefinitions,
@@ -8887,6 +8986,34 @@ export class CalendarView extends BasesView {
         message: error instanceof Error ? error.message : String(error || "Formula compilation failed"),
       };
     }
+  }
+
+  private resolveLineMetadataRuntime(candidate: unknown): void {
+    const resolution = resolveCalendarLineMetadataApi(candidate);
+    if (resolution.ok) {
+      this.lineMetadataApi = resolution.api;
+      this.lineMetadataRuntimeFailure = null;
+      return;
+    }
+    this.lineMetadataApi = null;
+    this.lineMetadataRuntimeFailure = resolution;
+  }
+
+  private reportLineMetadataDiagnostic(result: {
+    code?: string;
+    message?: string;
+  }): void {
+    const code = String(result.code || "line-metadata-error");
+    const key = `${this.formulaSourceId}\u0000line-metadata\u0000${code}`;
+    if (this.reportedFormulaDiagnostics.has(key)) return;
+    this.reportedFormulaDiagnostics.add(key);
+    const message = result.message || "TPS line metadata processing failed";
+    logger.warn("[CalendarView] TPS line metadata unavailable", {
+      basePath: this.formulaSourceId,
+      code,
+      message,
+    });
+    new Notice(`Calendar could not read TPS line items: ${message}`);
   }
 
   private reportFormulaDiagnostic(result: {
@@ -9988,6 +10115,7 @@ export class CalendarView extends BasesView {
       this.lineMetadataApi = null;
       this.compiledFormulaSet = null;
       this.formulaRuntimeFailure = null;
+      this.lineMetadataRuntimeFailure = null;
       this.reportedFormulaDiagnostics.clear();
       this.scheduleRefresh(0, true);
     });

@@ -1,5 +1,11 @@
 # TPS Calendar Base
 
+## 0.4.1
+
+- Inline scheduled-task discovery now uses GCM's document-aware line-metadata scanner before parsing any checkbox row. Task-shaped examples in YAML frontmatter and fenced, indented, HTML, or comment blocks no longer appear as Calendar events; valid nested tasks retain their physical line identity and custom Base formulas.
+- Calendar removed its raw regex title, field, and tag fallback from synthesized task discovery. A missing, incompatible, throwing, or malformed GCM scanner fails inline-task rows closed with one deduplicated diagnostic, while native note events and external calendar events remain independent.
+- Existing settings, Base definitions, formulas, task lines, and minimum Obsidian 1.10.0 remain unchanged. No migration is required. Install TPS Global Context Menu 1.17.0 before this coordinated patch.
+
 ## 0.4.0
 
 - Calendar now evaluates top-level Base formulas for synthesized checkbox-task rows and external calendar records through TPS Global Context Menu's supported version-1 formula API. Formula-backed start/end or duration, title, status, priority, all-day state, and filters use the same compiled semantics as TPS Table, TPS List, and TPS Kanban.
@@ -147,7 +153,7 @@ Canonical source, tests, and Git metadata live in this repository at `Obsidian P
 
 BRAT 2.2.0 or newer can install and update the public `ZachTish/tps-calendar-base` repository without a GitHub token. Add that repository path as a beta plugin and track `Latest` to receive the highest semantic-version release.
 
-Release `0.3.8` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
+Release `0.4.1` is self-contained for fresh BRAT installs: the build combines `main.css` and `styles-ui.css` into the standard release `styles.css`, so runtime styling does not depend on an extra file BRAT does not download. `styles-ui.css` remains a maintained build input and legacy deployment artifact.
 
 ## Mobile modal contract
 
@@ -170,7 +176,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 ### Base formulas on synthetic records
 
 - Top-level Base `formulas:` can drive Calendar's configured start, end/duration, title, status, priority, all-day property, and filter expressions for checkbox tasks and external records. Native note rows continue to use Obsidian's own formula results.
-- Calendar uses only TPS Global Context Menu's exact `plugin.api.formulas` version 1 and `plugin.api.lineMetadata` version 1 contracts. A formula-bearing synthetic view fails closed if either required API is absent or incompatible; ordinary non-formula Calendar views remain fully standalone.
+- Calendar uses only TPS Global Context Menu's exact `plugin.api.formulas` version 1 and `plugin.api.lineMetadata` version 1 contracts. Formula-bearing synthetic views fail closed if either required API is absent or incompatible. Inline checkbox-task synthesis also requires line metadata's document-aware `scanDocument` capability even when no formulas are configured; missing, incompatible, throwing, or malformed scanner results suppress task synthesis with one deduplicated diagnostic instead of reviving Calendar's legacy regex scan. Native note and external-calendar rows remain available independently.
 - Checkbox-task contexts expose inline fields as row-first bare names plus `row`, containing-note frontmatter as `note`, source identity as `file`, the Base host as `this`, checkbox structure as `task`, and one-based physical-line metadata as `line`. Structural identity stays available through `row.kind`, `row.itemKind`, and `row.itemType`; additive identities are available in `row.kinds`, while `row.explicitKind` contains only the line's explicit Kind value.
 - Persisted inline Markdown values remain strings because a line has no authoritative Base property schema. Formulas should convert deliberately, for example `number(points)`, `date(scheduled)`, `allDay == "true"`, `labels.split(",")`, or `link(owner)`. `list(value)` wraps one scalar and does not parse comma or bracket syntax.
 - Formula-backed fields are computed and therefore read-only. If a creation, drag, or resize operation would have to write the configured formula start field, Calendar refuses the mutation and directs the user to a view with a writable property.
@@ -201,7 +207,7 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Recurring or repeated task items remain separate checkbox instances. Each occurrence can carry its own hidden associated-note path; Calendar does not infer or retarget an association from the task title.
 - Notes that only contain scheduled task lines are not promoted to note-level calendar events unless the note itself has the configured start/scheduled frontmatter field. This keeps storage notes such as calendar task inboxes from appearing as a single scheduled note while preserving their individual task events.
 - If a storage note also has note-level calendar frontmatter that matches an inline scheduled task in the same file and time slot, Calendar suppresses the duplicate note-level event so clicks keep the task-line navigation target.
-- Reads Markdown through Obsidian's cached-read API before parsing supported checkbox task lines; Calendar does not trust a possibly stale metadata-cache negative to hide a task-bearing file.
+- Reads Markdown through Obsidian's cached-read API, then iterates only the physical content lines admitted by GCM's CommonMark-aware document scanner. Frontmatter plus fenced, indented, HTML, and comment blocks cannot synthesize task events. Calendar retains the complete physical line array only to resolve TPS footnote metadata, and it does not trust a possibly stale metadata-cache negative to hide a task-bearing file.
 - `initialCreateMode` controls whether calendar range creates:
   - note events (default behavior), or
   - task items.
@@ -398,7 +404,7 @@ src/
 | Plugin | Relationship |
 |--------|-------------|
 | TPS-Controller | Reads iCal config; shares 4 service files (to be consolidated) |
-| TPS-GCM | Optional shared formula, canonical line-metadata, and versioned configuration APIs for synthetic Calendar records; non-formula views remain independent |
+| TPS-GCM | Required canonical line-metadata/document-scan API for inline checkbox-task synthesis; optional shared formula and versioned configuration APIs for other Calendar behavior |
 | TPS-Notifier | Independent |
 | TPS-NNC | Independent |
 
