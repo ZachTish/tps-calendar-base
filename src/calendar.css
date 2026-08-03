@@ -484,6 +484,14 @@ body.is-tablet .bases-calendar-wrapper .tps-calendar-day-marker-overlay,
   opacity: 0.96 !important;
 }
 
+.bases-calendar-wrapper .fc .fc-timegrid-event.bases-calendar-event:not(.has-explicit-display-interval) {
+  min-height: var(--tps-calendar-fallback-event-height, 20px) !important;
+}
+
+.bases-calendar-wrapper .fc .fc-timegrid-event.bases-calendar-event.has-explicit-display-interval {
+  min-height: 0 !important;
+}
+
 .fc .fc-event.bases-calendar-event:not(.is-external):not(.is-archived-external-placeholder) .bases-calendar-event-content {
   justify-content: center !important;
   padding: 1px 4px 1px 3px !important;

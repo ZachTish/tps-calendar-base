@@ -13,6 +13,20 @@ export function resolveShowNowIndicator(
   return globalValue !== false;
 }
 
+export function resolveCalendarMinEventHeight(
+  viewValue: unknown,
+  globalValue: unknown,
+  fallback = 20,
+): number {
+  for (const candidate of [viewValue, globalValue, fallback]) {
+    if (candidate === null || candidate === undefined || candidate === "") continue;
+    const parsed = typeof candidate === "number" ? candidate : Number(String(candidate).trim());
+    if (!Number.isFinite(parsed)) continue;
+    return Math.max(0, Math.min(120, Math.round(parsed)));
+  }
+  return 20;
+}
+
 export interface CalendarViewPersistenceConfig {
   name?: string | null;
 }

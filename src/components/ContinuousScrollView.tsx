@@ -314,6 +314,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
             editable={allowEdit}
             eventStartEditable={allowEdit}
             eventDurationEditable={allowEdit && !!onEventResize}
+            eventMinHeight={0}
             selectable={allowSelect}
             selectMirror={allowSelect}
             selectLongPressDelay={isMobile ? 600 : 300}

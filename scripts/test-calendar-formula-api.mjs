@@ -392,6 +392,8 @@ function createBareView({
   view.normalizeCssColorValue = (input) => input || "";
   view.resolveFrontmatterEventColor = () => null;
   view.getStatusCssClasses = () => [];
+  view.primaryDurationMinutes = null;
+  view.useEndDuration = true;
   return view;
 }
 
@@ -1217,6 +1219,7 @@ test("formula date, dependency, status, priority, all-day, and duration drive an
     api,
     markdownFiles: [source],
     baseDefinition: { formulas: { start: "date(row.due)", duration: 'duration("90m")', status: '"working"', priority: '"urgent"', allDay: "false", title: "row.title + formula.status" } },
+    frontmatterByPath: { [source.path]: { duration: 5 } },
   });
   Object.assign(view, {
     startDateProp: "formula.start",
@@ -1238,6 +1241,172 @@ test("formula date, dependency, status, priority, all-day, and duration drive an
   assert.equal(entries[0].priority, "urgent");
   assert.equal(entries[0].forceAllDay, false, "an explicit false all-day formula overrides midnight heuristics");
   assert.equal(entries[0].title, "Formula task (working)");
+});
+
+test("literal task estimates remain row-owned and preserve distinct rendered intervals", async () => {
+  const source = createFile("Inbox/Task Durations.md", [
+    "- [ ] Fifteen [scheduled:: 2026-08-05 09:00:00] [timeEstimate:: 15]",
+    "- [ ] Forty-five [scheduled:: 2026-08-05 10:00:00] [TimeEstimate:: 45m]",
+    "- [ ] Ninety [scheduled:: 2026-08-05 11:00:00] [timeEstimate:: 1h 30m]",
+    "- [ ] Hidden sixty <!-- [scheduled:: 2026-08-05 13:00:00] [timeEstimate:: 60] -->",
+    "- [ ] Missing [scheduled:: 2026-08-05 15:00:00]",
+  ].join("\n"));
+  const view = createBareView({
+    lineMetadata: makeLineMetadataApi(),
+    markdownFiles: [source],
+    frontmatterByPath: { [source.path]: { timeEstimate: 5 } },
+  });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: "note.timeEstimate",
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+    useEndDuration: true,
+  });
+  await view.prepareFormulaRuntime();
+
+  const entries = await view.collectInlineScheduledTaskEntries();
+  assert.equal(entries.length, 5);
+  assert.deepEqual(
+    entries.map((entry) => (entry.endDate.getTime() - entry.startDate.getTime()) / 60000),
+    [15, 45, 90, 60, 30],
+    "the containing note cannot replace or supply a task-line estimate",
+  );
+  assert.deepEqual(
+    entries.map((entry) => entry.hasExplicitDisplayInterval),
+    [true, true, true, true, false],
+    "only the missing estimate receives the readability fallback",
+  );
+
+  view.primaryDurationMinutes = 75;
+  assert.deepEqual(
+    (await view.collectInlineScheduledTaskEntries())
+      .map((entry) => (entry.endDate.getTime() - entry.startDate.getTime()) / 60000),
+    [75, 75, 75, 75, 75],
+    "the documented per-view fixed duration applies consistently to task rows",
+  );
+});
+
+test("a configured task duration field wins and remains synchronized with canonical timeEstimate", async () => {
+  const line = "- [ ] Custom duration [scheduled:: 2026-08-05 09:00:00] [duration:: 55] [timeEstimate:: 15] [tpsId:: custom-duration-1]";
+  const source = createFile("Inbox/Custom Task Duration.md", `${line}\n`);
+  const view = createBareView({
+    lineMetadata: makeLineMetadataApi(),
+    markdownFiles: [source],
+    frontmatterByPath: { [source.path]: { duration: 5, timeEstimate: 10 } },
+  });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: "note.duration",
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: "note.allDay",
+    useEndDuration: true,
+  });
+  await view.prepareFormulaRuntime();
+
+  const entries = await view.collectInlineScheduledTaskEntries();
+  assert.equal(entries.length, 1);
+  assert.equal(
+    (entries[0].endDate.getTime() - entries[0].startDate.getTime()) / 60000,
+    55,
+    "the configured row field wins over both canonical and containing-note values",
+  );
+
+  const task = view.parseInlineScheduledTask(source, 0, line, "scheduled", "duration", new Map());
+  assert.ok(task);
+  view.app.vault.process = async (file, mutator) => {
+    file.contents = mutator(file.contents);
+  };
+  await view.updateInlineScheduledTask(
+    task,
+    new Date(2026, 7, 5, 10, 0, 0),
+    new Date(2026, 7, 5, 11, 10, 0),
+    false,
+  );
+  assert.match(source.contents, /\[timeEstimate:: 70\]/u);
+  assert.match(source.contents, /\[duration:: 70\]/u);
+
+  await view.updateInlineScheduledTask(task, new Date(2026, 7, 6, 0, 0, 0), undefined, true);
+  assert.match(source.contents, /\[allDay:: true\]/u);
+  assert.doesNotMatch(source.contents, /\[timeEstimate::/iu);
+  assert.doesNotMatch(source.contents, /\[duration::/iu);
+});
+
+test("task end-datetime views use a row end and fall back to canonical timeEstimate", async () => {
+  const source = createFile("Inbox/Task Ends.md", [
+    "- [ ] Explicit wins [scheduled:: 2026-08-06 09:00:00] [end:: 2026-08-06 10:00:00] [timeEstimate:: 90]",
+    "- [ ] Estimate fallback [scheduled:: 2026-08-06 11:00:00] [timeEstimate:: 45]",
+    "- [ ] End only [scheduled:: 2026-08-06 13:00:00] [end:: 2026-08-06 14:20:00]",
+    "- [ ] Invalid end [scheduled:: 2026-08-06 15:00:00] [end:: 2026-08-06 14:00:00] [timeEstimate:: 25]",
+  ].join("\n"));
+  const view = createBareView({ lineMetadata: makeLineMetadataApi(), markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: "note.end",
+    titleProp: null,
+    statusField: null,
+    priorityField: null,
+    allDayProperty: null,
+    useEndDuration: false,
+  });
+  await view.prepareFormulaRuntime();
+
+  const entries = await view.collectInlineScheduledTaskEntries();
+  assert.deepEqual(
+    entries.map((entry) => (entry.endDate.getTime() - entry.startDate.getTime()) / 60000),
+    [60, 45, 80, 25],
+  );
+  assert.ok(entries.every((entry) => entry.hasExplicitDisplayInterval));
+});
+
+test("task resize keeps canonical minutes separate from an explicit end datetime", async () => {
+  const line = "- [ ] Resize me [scheduled:: 2026-08-07 09:00:00] [timeEstimate:: 30] [end:: 2026-08-07 09:30:00] [tpsId:: resize-1]";
+  const source = createFile("Inbox/Resize Task.md", `${line}\n`);
+  const view = createBareView({ lineMetadata: makeLineMetadataApi(), markdownFiles: [source] });
+  Object.assign(view, {
+    startDateProp: "note.scheduled",
+    endDateProp: "note.end",
+    allDayProperty: "note.allDay",
+    useEndDuration: false,
+  });
+  await view.prepareFormulaRuntime();
+  const task = view.parseInlineScheduledTask(source, 0, line, "scheduled", "end", new Map());
+  assert.ok(task);
+  view.app.vault.process = async (file, mutator) => {
+    file.contents = mutator(file.contents);
+  };
+
+  await view.updateInlineScheduledTask(
+    task,
+    new Date(2026, 7, 7, 10, 0, 0),
+    new Date(2026, 7, 7, 11, 30, 0),
+    false,
+  );
+  assert.match(source.contents, /\[scheduled:: 2026-08-07 10:00:00\]/u);
+  assert.match(source.contents, /\[timeEstimate:: 90\]/u);
+  assert.match(source.contents, /\[end:: 2026-08-07 11:30:00\]/u);
+  assert.doesNotMatch(source.contents, /\[end:: 90\]/u);
+
+  await view.updateInlineScheduledTask(task, new Date(2026, 7, 8, 0, 0, 0), undefined, true);
+  assert.match(source.contents, /\[scheduled:: 2026-08-08\]/u);
+  assert.match(source.contents, /\[allDay:: true\]/u);
+  assert.doesNotMatch(source.contents, /\[timeEstimate::/iu);
+  assert.doesNotMatch(source.contents, /\[end::/iu);
+
+  await view.updateInlineScheduledTask(
+    task,
+    new Date(2026, 7, 8, 10, 0, 0),
+    new Date(2026, 7, 8, 10, 40, 0),
+    false,
+  );
+  assert.match(source.contents, /\[scheduled:: 2026-08-08 10:00:00\]/u);
+  assert.match(source.contents, /\[timeEstimate:: 40\]/u);
+  assert.match(source.contents, /\[end:: 2026-08-08 10:40:00\]/u);
+  assert.doesNotMatch(source.contents, /\[allDay::/iu);
 });
 
 test("inline task collection isolates failed sources and reuses only matching path-plus-mtime cache entries", async () => {

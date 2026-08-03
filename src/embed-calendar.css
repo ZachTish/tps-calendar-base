@@ -419,10 +419,6 @@
   padding: 1px 4px !important;
 }
 
-.bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-timegrid-event.bases-calendar-event {
-  min-height: 18px !important;
-}
-
 .bases-calendar-container--embedded .bases-calendar-wrapper.bases-calendar-embedded .fc .fc-event.bases-calendar-event .bases-calendar-event-content {
   min-height: 0 !important;
 }

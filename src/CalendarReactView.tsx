@@ -291,6 +291,8 @@ export interface CalendarEntry {
   entry: BasesEntry;
   startDate: Date;
   endDate?: Date;
+  /** True when the source supplied a real duration/end instead of Calendar's readability fallback. */
+  hasExplicitDisplayInterval?: boolean;
   title?: string;
   forceAllDay?: boolean;
   isGhost?: boolean;
@@ -2810,13 +2812,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         element.addEventListener("mousemove", hoverMoveHandler);
 
       }
-      if (!event.allDay) {
-        const eventMinHeight = event.extendedProps.minEventHeight as number | undefined;
-        if (typeof eventMinHeight === "number" && Number.isFinite(eventMinHeight) && eventMinHeight > 0) {
-          element.style.minHeight = `${eventMinHeight}px`;
-        }
-      }
-
 	      const contextMenuHandler = (e: MouseEvent) => {
 	        suppressEntryClickUntilRef.current = Date.now() + 800;
 	        e.preventDefault();
@@ -3692,6 +3687,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         "--tps-calendar-embedded-height": `${computedEmbedCalendarHeight}px`,
         "--tps-allday-event-height": `${isEmbedMode ? Math.min(allDayEventHeight, 20) : allDayEventHeight}px`,
         "--tps-allday-max-rows": `${resolvedAllDayMaxRows}`,
+        "--tps-calendar-fallback-event-height": `${minEventHeight}px`,
         "--tps-completed-event-opacity": `${pastEventOpacity / 100}`,
         "--tps-past-event-opacity": `${pastEventOpacity / 100}`,
         "--tps-event-font-size": eventFontSize === "small" ? "var(--font-ui-smaller)" : eventFontSize === "large" ? "var(--font-ui-medium)" : "var(--font-ui-small)",
@@ -3939,6 +3935,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               editable={allowEdit}
               eventStartEditable={allowEdit}
               eventDurationEditable={allowEdit && !!onEventResize}
+              eventMinHeight={0}
               events={eventsWithExternalDropPreview}
               eventContent={(info) => { return renderEventContent(info); }}
               eventClick={handleEventClick}

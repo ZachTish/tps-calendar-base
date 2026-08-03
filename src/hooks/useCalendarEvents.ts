@@ -106,6 +106,8 @@ export function useCalendarEvents({
       const eventEnd = interval.end;
 
       const classNames = ["bases-calendar-event", ...(calEntry.cssClasses || [])];
+      const hasExplicitDisplayInterval = calEntry.hasExplicitDisplayInterval === true;
+      if (hasExplicitDisplayInterval) classNames.push("has-explicit-display-interval");
       const isAuxiliaryDate = !!calEntry.isAuxiliaryDate;
       const isArchivedExternalPlaceholder = !!calEntry.isArchivedExternalPlaceholder;
       const explicitColor = isArchivedExternalPlaceholder
@@ -164,7 +166,11 @@ export function useCalendarEvents({
           auxiliaryDateEntries: calEntry.auxiliaryDateEntries,
           status: calEntry.status,
           priorityColor: explicitColor === "transparent" ? "" : explicitColor,
-          minEventHeight: isAuxiliaryDate ? 0 : minEventHeight,
+          // A minimum on FullCalendar's outer event box changes its geometric
+          // duration. Keep it only for fallback instants that have no authored
+          // end/duration; explicit intervals must retain FullCalendar's height.
+          minEventHeight: isAuxiliaryDate || hasExplicitDisplayInterval ? 0 : minEventHeight,
+          hasExplicitDisplayInterval,
           isExternal: calEntry.isExternal,
           isArchivedExternalPlaceholder,
           archivedExternalCount: calEntry.archivedExternalCount,

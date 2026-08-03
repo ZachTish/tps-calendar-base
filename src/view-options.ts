@@ -197,11 +197,11 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
           step: 5,
         },
         {
-          displayName: "Minimum event height",
+          displayName: "Fallback event height",
           type: "text",
           key: "minEventHeight",
-          default: String(plugin?.settings?.minEventHeight || 20),
-          placeholder: "20",
+          default: String(plugin?.settings?.minEventHeight ?? 20),
+          placeholder: "Used only when no duration or end is set",
         },
         {
           displayName: "Show now indicator",

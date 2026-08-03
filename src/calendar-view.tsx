@@ -108,6 +108,7 @@ import {
 } from "./utils/daily-note-creation";
 import {
   isCalendarViewPersistenceTargetCurrent,
+  resolveCalendarMinEventHeight,
   resolveShowNowIndicator,
   snapshotCalendarDateKey,
 } from "./utils/view-config";
@@ -447,7 +448,7 @@ export class CalendarView extends BasesView {
     propId: BasesPropertyId,
     frontmatter: Record<string, any> | undefined,
   ): number | null {
-    const fieldName = this.getNoteField(propId);
+    const fieldName = isCalendarFormulaProperty(propId) ? null : this.getNoteField(propId);
     if (fieldName) {
       const frontmatterDuration = this.parseDurationMinutesFromValue(
         this.getFrontmatterValueCaseInsensitive(frontmatter, fieldName),
@@ -513,6 +514,7 @@ export class CalendarView extends BasesView {
   private showHiddenHoursToggle: boolean = true;
   private useEndDuration: boolean = true; // true = duration field, false = end datetime field
   private defaultEventDuration: number = 30;
+  private minEventHeight: number = 20;
   private showNavButtons: boolean = true;
   private embeddedHeight: number = 520;
   private preserveEmbeddedDayCount: boolean = false;
@@ -1196,6 +1198,10 @@ export class CalendarView extends BasesView {
     this.noteEventVisibility = this.normalizeNoteEventVisibility(this.config.get("noteEventVisibility"));
 
     this.defaultEventDuration = (this.config.get("defaultEventDuration") as number) ?? 30;
+    this.minEventHeight = resolveCalendarMinEventHeight(
+      this.config.get("minEventHeight"),
+      this.plugin.settings.minEventHeight,
+    );
 
     const weekStartDayValue = this.plugin.settings.weekStartDay;
     this.weekStartDay = this.getWeekStartDay(weekStartDayValue || "monday");
@@ -1880,6 +1886,7 @@ export class CalendarView extends BasesView {
         const configuredDurationMinutes = this.getSourceDurationMinutes(startResolution.slot);
         if (configuredDurationMinutes !== null) {
           endDate = new Date(startDate.getTime() + configuredDurationMinutes * 60 * 1000);
+          hasExplicitEnd = true;
         } else if (!endDate) {
           // If no per-source duration is set, force a minimum event span.
           const minDurationMinutes = this.getMinimumEventDurationMinutes();
@@ -2010,6 +2017,7 @@ export class CalendarView extends BasesView {
             entry,
             startDate,
             endDate,
+            hasExplicitDisplayInterval: hasExplicitEnd,
             title,
             forceAllDay,
             isExternal: false, // Local notes are never external, even if synced.
@@ -5569,7 +5577,7 @@ export class CalendarView extends BasesView {
             dayHeaderShowDate={this.plugin.settings.dayHeaderShowDate}
             timeFormatSetting={this.plugin.settings.timeFormat}
             slotDurationMinutes={this.plugin.settings.slotDuration}
-            minEventHeight={this.plugin.settings.minEventHeight}
+            minEventHeight={this.minEventHeight}
             snapDurationMinutes={this.plugin.settings.snapDuration}
             snapCreateSelections={this.plugin.settings.snapCreateSelections !== false}
             createSnapDurationMinutes={this.plugin.settings.createSnapDuration || 15}
@@ -6260,6 +6268,7 @@ export class CalendarView extends BasesView {
       entry,
       startDate,
       endDate,
+      hasExplicitDisplayInterval: true,
       title: titleValue || extEvent.title,
       forceAllDay: allDay,
       isExternal: true,
@@ -7734,20 +7743,8 @@ export class CalendarView extends BasesView {
         const startResolution = this.resolveEntryStartDate(entry, frontmatter);
         if (!startResolution) continue;
         const startDate = startResolution.date;
-        let endDate: Date | undefined;
-        if (this.endDateProp) {
-          if (this.useEndDuration) {
-            const durationMinutes = this.resolveDurationMinutes(entry, this.endDateProp, frontmatter);
-            if (durationMinutes !== null && durationMinutes > 0) {
-              endDate = new Date(startDate.getTime() + durationMinutes * 60000);
-            }
-          } else {
-            endDate = extractDate(entry, this.endDateProp, this.getDailyNoteDateFormat()) ?? undefined;
-          }
-        }
-        if (!endDate) {
-          endDate = new Date(startDate.getTime() + this.getMinimumEventDurationMinutes() * 60000);
-        }
+        const taskInterval = this.resolveInlineTaskDisplayInterval(task, entry, startDate);
+        const endDate = taskInterval.endDate;
         const associatedFile = this.findExplicitAssociatedNoteForInlineTask(task).file;
         const associatedFrontmatter = associatedFile
           ? this.app.metadataCache.getFileCache(associatedFile)?.frontmatter as Record<string, any> | undefined
@@ -7814,6 +7811,7 @@ export class CalendarView extends BasesView {
           entry,
           startDate,
           endDate,
+          hasExplicitDisplayInterval: taskInterval.hasExplicitDisplayInterval,
           title,
           forceAllDay,
           status: statusValue,
@@ -7826,6 +7824,53 @@ export class CalendarView extends BasesView {
       }
     }
     return entries;
+  }
+
+  private resolveInlineTaskDisplayInterval(
+    task: InlineScheduledTask,
+    entry: BasesEntry,
+    startDate: Date,
+  ): { endDate: Date; hasExplicitDisplayInterval: boolean } {
+    const fixedDurationMinutes = this.getSourceDurationMinutes("start");
+    if (typeof fixedDurationMinutes === "number" && Number.isFinite(fixedDurationMinutes) && fixedDurationMinutes > 0) {
+      return {
+        endDate: new Date(startDate.getTime() + fixedDurationMinutes * 60000),
+        hasExplicitDisplayInterval: true,
+      };
+    }
+
+    if (this.endDateProp) {
+      if (this.useEndDuration) {
+        // Inline tasks are row-owned. Never let a storage/daily note's
+        // same-named frontmatter override the task's configured field.
+        const configuredDurationMinutes = this.resolveDurationMinutes(entry, this.endDateProp, undefined);
+        if (configuredDurationMinutes !== null && configuredDurationMinutes > 0) {
+          return {
+            endDate: new Date(startDate.getTime() + configuredDurationMinutes * 60000),
+            hasExplicitDisplayInterval: true,
+          };
+        }
+      } else {
+        const configuredEnd = extractDate(entry, this.endDateProp, this.getDailyNoteDateFormat());
+        if (configuredEnd && configuredEnd.getTime() > startDate.getTime()) {
+          return { endDate: configuredEnd, hasExplicitDisplayInterval: true };
+        }
+      }
+    }
+
+    // GCM's canonical task contract is elapsed minutes in timeEstimate. It is
+    // a valid fallback even when note events in this view use an end datetime.
+    if (task.durationMinutes !== undefined && task.durationMinutes > 0) {
+      return {
+        endDate: new Date(startDate.getTime() + task.durationMinutes * 60000),
+        hasExplicitDisplayInterval: true,
+      };
+    }
+
+    return {
+      endDate: new Date(startDate.getTime() + this.getMinimumEventDurationMinutes() * 60000),
+      hasExplicitDisplayInterval: false,
+    };
   }
 
   private scanInlineTaskDocument(
@@ -7971,7 +8016,9 @@ export class CalendarView extends BasesView {
     // A formula start may derive its value from any row/note/task field, so a
     // checkbox line cannot be rejected before its formula session is evaluated.
     if (!scheduledValue && !isCalendarFormulaProperty(this.startDateProp)) return null;
-    const durationRaw = props.get(durationKey.toLowerCase()) || props.get("timeestimate");
+    // timeEstimate is GCM's canonical task duration. The configured end field
+    // remains available independently through inlineProperties/entry.getValue.
+    const durationRaw = props.get("timeestimate");
     const durationMinutes = durationRaw ? this.parseDurationMinutesFromValue(durationRaw) ?? undefined : undefined;
     const checkboxState = normalizeGcmTaskCheckboxState(`[${taskMatch[1] || ""}]`);
     if (!checkboxState) return null;
@@ -8259,8 +8306,7 @@ export class CalendarView extends BasesView {
       values.set("done", task.completed);
       values.set("completed", task.completed);
     }
-    if (task.durationKey && task.durationMinutes != null) {
-      values.set(task.durationKey.toLowerCase(), task.durationMinutes);
+    if (task.durationMinutes != null) {
       values.set("timeestimate", task.durationMinutes);
     }
     const row = {
@@ -8357,8 +8403,21 @@ export class CalendarView extends BasesView {
     const scheduledValue = allDay
       ? `${newStart.getFullYear()}-${String(newStart.getMonth() + 1).padStart(2, "0")}-${String(newStart.getDate()).padStart(2, "0")}`
       : formatDateTimeForFrontmatter(newStart);
-    const durationValue = !allDay && newEnd && task.durationKey
+    const durationValue = !allDay && newEnd
       ? String(Math.max(1, Math.round((newEnd.getTime() - newStart.getTime()) / 60000)))
+      : null;
+    const configuredEndKey = this.endDateProp && !isCalendarFormulaProperty(this.endDateProp)
+      ? this.getNoteField(this.endDateProp)
+      : null;
+    const configuredAllDayKey = this.allDayProperty && !isCalendarFormulaProperty(this.allDayProperty)
+      ? this.getNoteField(this.allDayProperty)
+      : null;
+    const configuredEndIsCanonicalDuration = this.normalizeInlinePropertyIdentity(configuredEndKey || "")
+      === this.normalizeInlinePropertyIdentity("timeEstimate");
+    const configuredEndValue = !allDay && newEnd && configuredEndKey && !configuredEndIsCanonicalDuration
+      ? this.useEndDuration
+        ? durationValue
+        : formatDateTimeForFrontmatter(newEnd)
       : null;
     const patchState: { result: InlineTaskLinePatchResult | null } = { result: null };
 
@@ -8395,10 +8454,21 @@ export class CalendarView extends BasesView {
             return currentLine;
           }
           let nextLine = this.replaceOrAppendInlineProperty(currentLine, task.scheduledKey, scheduledValue);
-          if (allDay && task.durationKey) {
-            nextLine = this.removeInlineProperty(nextLine, task.durationKey);
-          } else if (durationValue && task.durationKey) {
-            nextLine = this.replaceOrAppendInlineProperty(nextLine, task.durationKey, durationValue);
+          if (allDay) {
+            nextLine = this.removeInlineProperty(nextLine, "timeEstimate");
+            if (configuredEndKey && !configuredEndIsCanonicalDuration) {
+              nextLine = this.removeInlineProperty(nextLine, configuredEndKey);
+            }
+          } else if (durationValue) {
+            nextLine = this.replaceOrAppendInlineProperty(nextLine, "timeEstimate", durationValue);
+            if (configuredEndKey && !configuredEndIsCanonicalDuration && configuredEndValue) {
+              nextLine = this.replaceOrAppendInlineProperty(nextLine, configuredEndKey, configuredEndValue);
+            }
+          }
+          if (configuredAllDayKey && allDay !== undefined) {
+            nextLine = allDay
+              ? this.replaceOrAppendInlineProperty(nextLine, configuredAllDayKey, "true")
+              : this.removeInlineProperty(nextLine, configuredAllDayKey);
           }
           return nextLine;
         },

@@ -74,6 +74,54 @@ test("done statuses normalize once and preserve event classification", async () 
   assert.deepEqual(events.map((event) => event.extendedProps.isPast), expected);
   assert.equal(trimCalls, doneStatuses.length);
 });
+
+test("explicit calendar intervals keep exact FullCalendar geometry", async () => {
+  const { useCalendarEvents } = await importBundled(
+    "../src/hooks/useCalendarEvents.ts",
+    [reactStub],
+  );
+  const explicit = calendarEntry(0, "open");
+  explicit.hasExplicitDisplayInterval = true;
+  const fallback = calendarEntry(1, "open");
+  fallback.hasExplicitDisplayInterval = false;
+
+  const { events } = useCalendarEvents({
+    entries: [explicit, fallback],
+    defaultEventDuration: 60,
+    minEventHeight: 20,
+    doneStatuses: [],
+  });
+
+  assert.equal(events[0].end.getTime() - events[0].start.getTime(), 30 * 60 * 1000);
+  assert.equal(events[0].extendedProps.minEventHeight, 0);
+  assert.ok(events[0].classNames.includes("has-explicit-display-interval"));
+  assert.equal(events[1].extendedProps.minEventHeight, 20);
+  assert.ok(!events[1].classNames.includes("has-explicit-display-interval"));
+
+  const reactSource = readFileSync(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
+  const continuousSource = readFileSync(new URL("../src/components/ContinuousScrollView.tsx", import.meta.url), "utf8");
+  const calendarCss = readFileSync(new URL("../src/calendar.css", import.meta.url), "utf8");
+  const embedCss = readFileSync(new URL("../src/embed-calendar.css", import.meta.url), "utf8");
+  assert.match(reactSource, /"--tps-calendar-fallback-event-height": `\$\{minEventHeight\}px`/u);
+  assert.match(reactSource, /<FullCalendar[\s\S]*?eventMinHeight=\{0\}/u);
+  assert.match(continuousSource, /<FullCalendar[\s\S]*?eventMinHeight=\{0\}/u);
+  assert.match(
+    calendarCss,
+    /\.fc-timegrid-event\.bases-calendar-event:not\(\.has-explicit-display-interval\)\s*\{\s*min-height:\s*var\(--tps-calendar-fallback-event-height,\s*20px\)\s*!important/u,
+  );
+  assert.match(
+    calendarCss,
+    /\.fc-timegrid-event\.bases-calendar-event\.has-explicit-display-interval\s*\{\s*min-height:\s*0\s*!important/u,
+  );
+  assert.doesNotMatch(
+    embedCss,
+    /\.fc-timegrid-event\.bases-calendar-event:not\(\.has-explicit-display-interval\)\s*\{[^}]*min-height/gu,
+  );
+  assert.doesNotMatch(
+    embedCss,
+    /\.fc-timegrid-event\.bases-calendar-event\s*\{\s*min-height:\s*18px\s*!important/u,
+  );
+});
 test("style-rule outputs and decisive short-circuiting stay stable", async () => {
   const { findStyleOverride } = await importBundled(
     "../src/services/style-rule-service.ts",
