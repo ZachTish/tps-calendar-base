@@ -976,12 +976,14 @@ test("reading-mode embedded calendars stay compact and preserve Bases chrome by 
   assert.match(embedCalendarCss, /\.fc \.fc-event\.bases-calendar-event\.is-past/);
   assert.match(calendarEventsHookSource, /isNonActive \? "is-non-active is-past" : ""/);
   assert.match(calendarViewSource, /private resolveInlineTaskStatus\(checkboxState: string\): string/);
+  assert.match(calendarViewSource, /return getGcmTaskStatusForCheckboxState\(this\.app, checkboxState\) \|\| "";/);
   assert.match(
     calendarViewSource,
     /const statusValue = isCalendarFormulaProperty\(this\.statusField\)[\s\S]*?: valueToString\(configuredStatus\) \|\| task\.status \|\| undefined/,
   );
-  assert.match(calendarViewSource, /completed: this\.isDoneStatusValue\(status\)/);
-  assert.match(calendarViewSource, /if \(marker === "-" \|\| marker === "~"\) return "wont-do"/);
+  assert.match(calendarViewSource, /completed: this\.classifyInlineTaskDoneStatus\(status\)/);
+  assert.match(calendarEventsHookSource, /isCalendarEntryNonActive\(calEntry, normalizedNonActiveStatuses\)/);
+  assert.doesNotMatch(calendarViewSource, /if \(marker === "-" \|\| marker === "~"\) return "wont-do"/);
   assert.match(calendarViewSource, /private buildNonActiveStatuses\(\): string\[\]/);
   assert.match(calendarViewSource, /getInactiveStatuses/);
   assert.match(calendarViewSource, /const statuses = new Set<string>\(\["complete", "completed", "done"]\)/);
@@ -1151,7 +1153,10 @@ test("calendar task clicks open an associated-note/source-line chooser", () => {
   assert.match(calendarViewSource, /taskLineContextMenuService\.addMenuItems\(/);
   assert.match(calendarViewSource, /lineNumber: lineIndex \+ 1/);
   assert.match(calendarViewSource, /rawLine: inlineTask\.line/);
-  assert.match(calendarViewSource, /checkboxToken: inlineTask\.checkboxState \|\| "\[ \]"/);
+  assert.match(calendarViewSource, /const checkboxToken = normalizeGcmTaskCheckboxState\(inlineTask\.checkboxState\)/);
+  assert.match(calendarViewSource, /!checkboxToken \|\| !getGcmTaskStatusForCheckboxState\(this\.app, checkboxToken\)/);
+  assert.match(calendarViewSource, /checkboxToken,/);
+  assert.doesNotMatch(calendarViewSource, /checkboxToken: inlineTask\.checkboxState \|\| "\[ \]"/);
   assert.match(calendarViewSource, /isCalendarTask: true/);
   assert.match(calendarViewSource, /calendarAllDay: this\.isInlineTaskCalendarAllDay\(inlineTask, calEntry\)/);
   assert.match(calendarViewSource, /\{ includeNoteActions: false \}/);
@@ -1205,7 +1210,7 @@ test("calendar inline task events expose the GCM task context contract", () => {
 });
 
 test("calendar inline task context menus cannot fall through to note rename actions", () => {
-  const contextMenuSource = calendarViewSource.match(/private showEntryContextMenu[\s\S]*?private isDoneStatus/)?.[0] || "";
+  const contextMenuSource = calendarViewSource.match(/private showEntryContextMenu[\s\S]*?private classifyInlineTaskDoneStatus/)?.[0] || "";
   const taskRouteSource = contextMenuSource.match(/const inlineTask[\s\S]*?if \(calEntry\?\.isArchivedExternalPlaceholder/)?.[0] || "";
 
   assert.match(taskRouteSource, /if \(calEntry && inlineTask && typeof inlineTask\.lineNumber === "number"\)/);
@@ -1218,12 +1223,13 @@ test("calendar inline task context menus cannot fall through to note rename acti
 
 test("calendar inline task events preserve checkbox states for event icons", () => {
   assert.match(calendarViewSource, /checkboxState: string/);
-  assert.match(calendarViewSource, /line\.match\(\/\^\\s\*\[-\*\]\\s\+\\\[\(\[\^\\\]\]\*\)\\\]\\s\+\(\.\+\)\$\/\)/);
+  assert.match(calendarViewSource, /normalizeGcmTaskCheckboxState\(`\[\$\{taskMatch\[1\] \|\| ""\}\]`\)/);
   assert.match(calendarViewSource, /iconName: this\.getInlineTaskCheckboxIconName\(task\.checkboxState\)/);
   assert.match(calendarViewSource, /\["checkboxstate", task\.checkboxState\]/);
   assert.match(calendarViewSource, /checkboxStatus: task\.status/);
-  assert.match(eventRendererSource, /getCheckboxStateIconName/);
   assert.match(eventRendererSource, /const inlineTask = \(\(props\.calendarEntry as any\)\?\.entry as any\)\?\.inlineTask/);
+  assert.match(eventRendererSource, /const iconName = typeof props\.iconName === "string" \? props\.iconName\.trim\(\) : ""/);
+  assert.doesNotMatch(eventRendererSource, /getCheckboxStateIconName/);
   assert.match(eventRendererSource, /const iconColor = inlineTask \? "" :/);
 });
 
@@ -1245,6 +1251,14 @@ test("calendar task drop confirmation labels the resolved task title", () => {
   assert.match(calendarViewSource, /`Task: \$\{taskLabel\}`/);
   assert.match(calendarViewSource, /private async resolveDraggedTaskLineInfo/);
   assert.match(calendarViewSource, /const title = this\.cleanInlineTaskTitle\(taskText\);/);
+});
+
+test("calendar task drops apply only canonical GCM status mappings", () => {
+  assert.match(calendarViewSource, /filterCheckboxState: string \| null/);
+  assert.match(calendarViewSource, /const filterCheckboxState = filterDefaults\.status\s+\? this\.getCheckboxStateForStatus\(filterDefaults\.status\)\s+: null;/);
+  assert.match(calendarViewSource, /if \(plan\.filterStatus && !plan\.filterCheckboxState\) \{[\s\S]*?Task drop blocked because Base status is unmapped[\s\S]*?Cannot schedule this task: GCM has no checkbox mapping/);
+  assert.match(calendarViewSource, /let next = plan\.filterCheckboxState[\s\S]*?current\.replace\([\s\S]*?`\$1\$\{plan\.filterCheckboxState\}\$2`\)[\s\S]*?: current;/);
+  assert.doesNotMatch(calendarViewSource, /Set checkbox state for Base status filter[\s\S]{0,120}\|\| "\[ \]"/);
 });
 
 test("calendar drag-created daily-note tasks append to the note body", async () => {
@@ -1358,7 +1372,8 @@ test("calendar reschedules the current task line atomically without dropping con
 test("calendar task titles stay plain and associations resolve hidden metadata before legacy links", async () => {
   assert.doesNotMatch(newEventServiceSource, /from "\.\.\/utils\/task-title-link"/);
   assert.match(newEventServiceSource, /const visibleTitle = String\(title \|\| this\.config\.defaultTitle \|\| "Untitled"\)/);
-  assert.match(newEventServiceSource, /const parts = \[`- \[ \] \$\{visibleTitle\}`]/);
+  assert.match(newEventServiceSource, /const parts = \[`- \$\{checkboxState\} \$\{visibleTitle\}`]/);
+  assert.doesNotMatch(newEventServiceSource, /const parts = \[`- \[ \] \$\{visibleTitle\}`]/);
   assert.doesNotMatch(calendarViewSource, /amendScheduledTaskLineTitleAsContextLink/);
   assert.match(taskAssociatedNoteSource, /associatedNotePath/);
   assert.match(taskAssociatedNoteSource, /extractAssociatedNotePathFromHiddenMetadata/);
@@ -1452,7 +1467,8 @@ test("calendar creation uses Base task filters as task defaults without leaking 
   assert.match(newEventServiceSource, /taskTags\?: string\[\]/);
   assert.match(newEventServiceSource, /taskStatus\?: string \| null/);
   assert.match(newEventServiceSource, /taskAssociatedNotePath\?: string \| null/);
-  assert.match(newEventServiceSource, /createTaskInDailyNote\(taskTitle, start, end, taskTags, taskOverrides, resolvedTaskTargetPath, options\?\.allDay\)/);
+  assert.match(newEventServiceSource, /this\.createTaskInDailyNote\([\s\S]*?taskTitle,[\s\S]*?taskCheckboxState,[\s\S]*?\)/);
+  assert.match(newEventServiceSource, /getGcmTaskCheckboxStateForStatus\(/);
   assert.match(newEventServiceSource, /normalized === "associatednotepath"/);
   assert.match(newEventServiceSource, /private async ensureTaskTargetFile\(rawPath: string\): Promise<TFile>/);
   assert.match(newEventServiceSource, /normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\)/);

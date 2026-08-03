@@ -2090,7 +2090,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         });
       popover
         .querySelectorAll<HTMLElement>(
-          "li.task-list-item.is-checked, li.task-list-item[data-task='x'], li.task-list-item[data-task='X'], .task-list-item.is-checked"
+          "li.task-list-item, .task-list-item"
         )
         .forEach((row) => {
           row.style.removeProperty("visibility");

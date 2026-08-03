@@ -12,6 +12,7 @@ import {
   normalizeCalendarDisplayInterval,
 } from "../utils/calendar-display-interval";
 import { countVisibleCalendarDisplayIntervals } from "../utils/calendar-visible-count";
+import { isCalendarEntryNonActive } from "../utils/calendar-entry-status";
 
 const formatAllDayDateKey = (date: Date): string => {
   const year = date.getFullYear();
@@ -124,8 +125,7 @@ export function useCalendarEvents({
       // Dim events that are in a non-active state (complete / wont-do / configured equivalent).
       // Time-based past detection is intentionally not used: an incomplete past event
       // should remain fully visible so the user notices it still needs attention.
-      const statusNormalized = String(calEntry.status ?? "").trim().toLowerCase();
-      const isNonActive = normalizedNonActiveStatuses.includes(statusNormalized);
+      const isNonActive = isCalendarEntryNonActive(calEntry, normalizedNonActiveStatuses);
 
       const baseTitle = calEntry.title || calEntry.entry?.file?.basename || "Untitled";
       const title = calEntry.isGhost ? `${baseTitle} (upcoming)` : baseTitle;

@@ -12,6 +12,22 @@ export interface GcmEventsApi {
   onCalendarRefresh?: (callback: (paths: string[], payload?: Record<string, unknown>) => void) => GcmEventUnregister;
 }
 
+export interface GcmTaskCheckboxesApi {
+  version: number;
+  contract: 'ordered-strict-v1';
+  getMappings: () => readonly GcmTaskCheckboxMapping[];
+  stateForStatus: (status: unknown) => unknown;
+  statusForState: (state: unknown) => unknown;
+}
+
+export interface GcmTaskCheckboxMapping {
+  checkboxState: string;
+  statuses: readonly string[];
+  toggleTargetStatus?: string;
+  icon?: string;
+  label?: string;
+}
+
 export interface GcmApi {
   services?: {
     frontmatter?: {
@@ -19,6 +35,11 @@ export interface GcmApi {
         file: TFile,
         mutator: (frontmatter: Record<string, unknown>) => void | Promise<void>,
       ) => Promise<unknown>;
+    };
+    status?: {
+      getStatusPropertyKey?: () => unknown;
+      getRelationalStatusPropertyKey?: () => unknown;
+      isDoneStatus?: (status: unknown) => unknown;
     };
   };
   status?: {
@@ -40,6 +61,7 @@ export interface GcmApi {
   completedCheckboxes?: {
     revealForFile?: (filePath: string, lineNumber?: number) => void;
   };
+  taskCheckboxes?: GcmTaskCheckboxesApi;
   identity?: {
     internalIdKey?: string;
     externalIdKey?: string;
@@ -61,6 +83,7 @@ type GcmApiListener = (api: GcmApi | null, previousApi: GcmApi | null) => void;
 
 interface GcmApiRegistryState {
   api: GcmApi | null;
+  taskCheckboxesVersion: number | null;
   installed: boolean;
   installToken: symbol | null;
   listeners: Set<GcmApiListener>;
@@ -69,13 +92,24 @@ interface GcmApiRegistryState {
 const GCM_PLUGIN_ID = 'tps-global-context-menu';
 const CALENDAR_PLUGIN_ID = 'tps-calendar-base';
 const GCM_CONFIGURATION_API_VERSION = 1;
+const GCM_TASK_CHECKBOXES_API_VERSION = 1;
+const GCM_TASK_CHECKBOXES_CONTRACT = 'ordered-strict-v1';
 const gcmApiRegistries = new WeakMap<App, GcmApiRegistryState>();
+type GcmTaskCheckboxSnapshot = {
+  api: GcmTaskCheckboxesApi;
+  mappings: readonly GcmTaskCheckboxMapping[];
+};
+const gcmTaskCheckboxSnapshotCache = new WeakMap<
+  GcmTaskCheckboxesApi,
+  { source: readonly GcmTaskCheckboxMapping[]; snapshot: GcmTaskCheckboxSnapshot | null }
+>();
 
 function getGcmRegistryState(app: App): GcmApiRegistryState {
   let state = gcmApiRegistries.get(app);
   if (!state) {
     state = {
       api: null,
+      taskCheckboxesVersion: null,
       installed: false,
       installToken: null,
       listeners: new Set<GcmApiListener>(),
@@ -117,6 +151,9 @@ function acceptGcmApiPayload(app: App, payload: unknown): void {
   }
   const previousApi = state.api;
   state.api = nextApi;
+  state.taskCheckboxesVersion = nextApi
+    ? Number(record.taskCheckboxesVersion) || null
+    : null;
   notifyGcmApiListeners(state, nextApi, previousApi);
 }
 
@@ -141,6 +178,7 @@ export function installGcmApiRegistry(owner: EventOwner, app: App): void {
     const current = gcmApiRegistries.get(app);
     if (!current || current.installToken !== installToken) return;
     current.api = null;
+    current.taskCheckboxesVersion = null;
     current.installed = false;
     current.installToken = null;
     current.listeners.clear();
@@ -199,6 +237,158 @@ export function getGcmStatusOptions(app: App): string[] {
   } catch {
     return [];
   }
+}
+
+function getGcmTaskCheckboxesApi(app: App): GcmTaskCheckboxesApi | null {
+  const registry = gcmApiRegistries.get(app);
+  if (registry?.taskCheckboxesVersion !== GCM_TASK_CHECKBOXES_API_VERSION) return null;
+  const taskCheckboxes = getGcmApi(app)?.taskCheckboxes;
+  return taskCheckboxes?.version === GCM_TASK_CHECKBOXES_API_VERSION
+    && taskCheckboxes.contract === GCM_TASK_CHECKBOXES_CONTRACT
+    && typeof taskCheckboxes.getMappings === 'function'
+    && typeof taskCheckboxes.stateForStatus === 'function'
+    && typeof taskCheckboxes.statusForState === 'function'
+    ? taskCheckboxes
+    : null;
+}
+
+export function normalizeGcmTaskCheckboxState(value: unknown): string | null {
+  const source = String(value ?? '');
+  const trimmed = source.trim();
+  const tokenMatch = trimmed.match(/^\[([^\]\r\n])\]$/u);
+  if (tokenMatch && tokenMatch[1].length === 1) {
+    return `[${tokenMatch[1] === 'X' ? 'x' : tokenMatch[1]}]`;
+  }
+  if (!trimmed) return null;
+  if (trimmed.length !== 1) return null;
+  return `[${trimmed === 'X' ? 'x' : trimmed}]`;
+}
+
+function normalizeGcmTaskStatus(value: unknown): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function readGcmTaskCheckboxSnapshot(app: App): GcmTaskCheckboxSnapshot | null {
+  const taskCheckboxes = getGcmTaskCheckboxesApi(app);
+  if (!taskCheckboxes) return null;
+  try {
+    const rawMappings = taskCheckboxes.getMappings();
+    if (!Array.isArray(rawMappings) || rawMappings.length === 0) return null;
+    const cached = gcmTaskCheckboxSnapshotCache.get(taskCheckboxes);
+    if (cached?.source === rawMappings) return cached.snapshot;
+    const mappings: GcmTaskCheckboxMapping[] = [];
+    const seenStates = new Set<string>();
+    for (const rawMapping of rawMappings) {
+      if (!rawMapping || typeof rawMapping !== 'object') {
+        gcmTaskCheckboxSnapshotCache.set(taskCheckboxes, { source: rawMappings, snapshot: null });
+        return null;
+      }
+      const candidate = rawMapping as unknown as Record<string, unknown>;
+      const checkboxState = normalizeGcmTaskCheckboxState(candidate.checkboxState);
+      if (!checkboxState || seenStates.has(checkboxState) || !Array.isArray(candidate.statuses)) {
+        gcmTaskCheckboxSnapshotCache.set(taskCheckboxes, { source: rawMappings, snapshot: null });
+        return null;
+      }
+      const statuses = candidate.statuses.map(normalizeGcmTaskStatus);
+      if (!statuses.length || statuses.some((entry) => !entry) || new Set(statuses).size !== statuses.length) {
+        gcmTaskCheckboxSnapshotCache.set(taskCheckboxes, { source: rawMappings, snapshot: null });
+        return null;
+      }
+      seenStates.add(checkboxState);
+      const toggleTargetStatus = normalizeGcmTaskStatus(candidate.toggleTargetStatus);
+      const icon = String(candidate.icon ?? '').trim();
+      const label = String(candidate.label ?? '').trim();
+      mappings.push({
+        checkboxState,
+        statuses,
+        ...(toggleTargetStatus ? { toggleTargetStatus } : {}),
+        ...(icon ? { icon } : {}),
+        ...(label ? { label } : {}),
+      });
+    }
+    const mappedStatuses = new Set(mappings.flatMap((mapping) => mapping.statuses));
+    if (mappings.some((mapping) => mapping.toggleTargetStatus && !mappedStatuses.has(mapping.toggleTargetStatus))) {
+      gcmTaskCheckboxSnapshotCache.set(taskCheckboxes, { source: rawMappings, snapshot: null });
+      return null;
+    }
+    for (const mapping of mappings) {
+      if (normalizeGcmTaskStatus(taskCheckboxes.statusForState(mapping.checkboxState)) !== mapping.statuses[0]) {
+        gcmTaskCheckboxSnapshotCache.set(taskCheckboxes, { source: rawMappings, snapshot: null });
+        return null;
+      }
+    }
+    const primaryStateByStatus = new Map<string, string>();
+    for (const mapping of mappings) {
+      for (const status of mapping.statuses) {
+        if (!primaryStateByStatus.has(status)) primaryStateByStatus.set(status, mapping.checkboxState);
+      }
+    }
+    for (const [mappedStatus, expectedState] of primaryStateByStatus) {
+      if (normalizeGcmTaskCheckboxState(taskCheckboxes.stateForStatus(mappedStatus)) !== expectedState) {
+        gcmTaskCheckboxSnapshotCache.set(taskCheckboxes, { source: rawMappings, snapshot: null });
+        return null;
+      }
+    }
+    const snapshot = { api: taskCheckboxes, mappings } satisfies GcmTaskCheckboxSnapshot;
+    gcmTaskCheckboxSnapshotCache.set(taskCheckboxes, { source: rawMappings, snapshot });
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+export function getGcmTaskCheckboxMappings(app: App): GcmTaskCheckboxMapping[] {
+  return (readGcmTaskCheckboxSnapshot(app)?.mappings ?? []).map((mapping) => ({
+    ...mapping,
+    statuses: [...mapping.statuses],
+  }));
+}
+
+function resolveGcmTaskCheckboxStateForStatus(
+  snapshot: GcmTaskCheckboxSnapshot,
+  status: unknown,
+): string | null {
+  const normalizedStatus = normalizeGcmTaskStatus(status);
+  if (!normalizedStatus) return null;
+  const expectedState = snapshot.mappings.find((mapping) =>
+    mapping.statuses.includes(normalizedStatus)
+  )?.checkboxState;
+  if (!expectedState) return null;
+  const rawState = snapshot.api.stateForStatus(normalizedStatus);
+  if (!String(rawState ?? '').trim()) return null;
+  const checkboxState = normalizeGcmTaskCheckboxState(rawState);
+  return checkboxState === expectedState ? checkboxState : null;
+}
+
+export function getGcmTaskCheckboxStateForStatus(app: App, status: unknown): string | null {
+  const snapshot = readGcmTaskCheckboxSnapshot(app);
+  if (!snapshot) return null;
+  try {
+    return resolveGcmTaskCheckboxStateForStatus(snapshot, status);
+  } catch {
+    return null;
+  }
+}
+
+export function getGcmTaskStatusForCheckboxState(app: App, state: unknown): string | null {
+  const snapshot = readGcmTaskCheckboxSnapshot(app);
+  const checkboxState = normalizeGcmTaskCheckboxState(state);
+  if (!snapshot || !checkboxState) return null;
+  const mapping = snapshot.mappings.find((entry) => entry.checkboxState === checkboxState);
+  if (!mapping) return null;
+  try {
+    const status = normalizeGcmTaskStatus(snapshot.api.statusForState(checkboxState));
+    return status === mapping.statuses[0] ? status : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getGcmTaskCheckboxIconForState(app: App, state: unknown): string | null {
+  const snapshot = readGcmTaskCheckboxSnapshot(app);
+  const checkboxState = normalizeGcmTaskCheckboxState(state);
+  if (!snapshot || !checkboxState) return null;
+  return snapshot.mappings.find((mapping) => mapping.checkboxState === checkboxState)?.icon || null;
 }
 
 export function isGcmInlinePropertyAllowed(app: App, key: string): boolean {

@@ -43,10 +43,7 @@ export function useEventRenderer({
       const archivedExternalCount = Number(props.archivedExternalCount || 0);
       const archivedExternalTooltip = String(props.archivedExternalTooltip || title).trim();
       const inlineTask = ((props.calendarEntry as any)?.entry as any)?.inlineTask;
-      const inlineTaskIconName = inlineTask
-        ? getCheckboxStateIconName(String(inlineTask.checkboxState ?? (inlineTask.completed ? "[x]" : "[ ]")))
-        : "";
-      const iconName = inlineTaskIconName || (typeof props.iconName === "string" ? props.iconName.trim() : "");
+      const iconName = typeof props.iconName === "string" ? props.iconName.trim() : "";
       const iconColor = inlineTask ? "" : typeof props.iconColor === "string" ? props.iconColor.trim() : "";
       const isAuxiliaryDate = !!props.isAuxiliaryDate;
       const auxiliaryDateTooltip = String(props.auxiliaryDateTooltip || title).trim();
@@ -288,18 +285,6 @@ function isTitleProperty(prop: BasesPropertyId): boolean {
     const normalized = String(prop).replace(/^note\./i, "").toLowerCase().replace(/[\s_.-]+/g, "");
     return normalized === "title";
   }
-}
-
-function getCheckboxStateIconName(rawState: string): string {
-  const raw = String(rawState ?? "").trim();
-  const state = raw.startsWith("[") && raw.endsWith("]") ? raw : `[${raw}]`;
-  const marker = state.slice(1, -1).trim().toLowerCase();
-  if (!marker) return "square";
-  if (marker === "x") return "square-check-big";
-  if (marker === "/" || marker === "\\" || marker === ">") return "square-play";
-  if (marker === "?" || marker === "!") return "square-help";
-  if (marker === "-" || marker === "~") return "square-minus";
-  return "square-dot";
 }
 
 const LeadingEventIcon: React.FC<{

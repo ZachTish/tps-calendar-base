@@ -71,6 +71,7 @@ function availablePayload(api) {
     timestamp: Date.now(),
     available: true,
     api,
+    taskCheckboxesVersion: api?.taskCheckboxes?.version ?? null,
   };
 }
 
@@ -160,22 +161,38 @@ test('registry supports late load, replacement, unload, and rejects spoofed or m
   owner.unload();
 });
 
-test('typed status, inline-property, and parent-link capabilities validate version, output, and failures', async () => {
+test('typed status, task-checkbox, inline-property, and parent-link capabilities validate version, output, and failures', async () => {
   const {
     getGcmParentLinkPolicy,
     getGcmStatusOptions,
+    getGcmTaskCheckboxIconForState,
+    getGcmTaskCheckboxStateForStatus,
+    getGcmTaskStatusForCheckboxState,
     installGcmApiRegistry,
     isGcmInlinePropertyAllowed,
+    normalizeGcmTaskCheckboxState,
   } = await loadRegistry();
   const workspace = createWorkspace();
   const app = { workspace };
   const owner = createOwner(workspace);
   installGcmApiRegistry(owner, app);
 
+  const mappings = Object.freeze([
+    Object.freeze({ checkboxState: '[ ]', statuses: Object.freeze(['todo']), toggleTargetStatus: 'complete', icon: 'square' }),
+    Object.freeze({ checkboxState: '[x]', statuses: Object.freeze(['complete']), toggleTargetStatus: 'todo', icon: 'square-check-big' }),
+    Object.freeze({ checkboxState: '[/]', statuses: Object.freeze(['working']), toggleTargetStatus: 'complete', icon: 'square-play' }),
+  ]);
   workspace.trigger('tps:gcm-api-changed', availablePayload({
     status: {
       values: [' todo ', '', null, 'complete'],
       getStatusOptions() { return this.values; },
+    },
+    taskCheckboxes: {
+      version: 1,
+      contract: 'ordered-strict-v1',
+      getMappings: () => mappings,
+      stateForStatus: (status) => status === 'working' ? '[/]' : status === 'complete' ? '[X]' : status === 'todo' ? '[ ]' : '',
+      statusForState: (state) => state === '[/]' ? 'working' : state === '[x]' ? 'complete' : state === '[ ]' ? 'todo' : '',
     },
     configuration: {
       version: 1,
@@ -188,6 +205,14 @@ test('typed status, inline-property, and parent-link capabilities validate versi
     },
   }));
   assert.deepEqual(getGcmStatusOptions(app), ['todo', 'complete']);
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'working'), '[/]');
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'complete'), '[x]');
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'unknown'), null);
+  assert.equal(getGcmTaskStatusForCheckboxState(app, '[/]'), 'working');
+  assert.equal(getGcmTaskStatusForCheckboxState(app, '[?]'), null);
+  assert.equal(getGcmTaskCheckboxIconForState(app, '[X]'), 'square-check-big');
+  assert.equal(normalizeGcmTaskCheckboxState(''), null);
+  assert.equal(normalizeGcmTaskCheckboxState('[😀]'), null);
   assert.equal(isGcmInlinePropertyAllowed(app, 'client'), true);
   assert.equal(isGcmInlinePropertyAllowed(app, 'private'), false);
   assert.deepEqual(getGcmParentLinkPolicy(app), {
@@ -197,7 +222,33 @@ test('typed status, inline-property, and parent-link capabilities validate versi
   });
 
   workspace.trigger('tps:gcm-api-changed', availablePayload({
+    taskCheckboxes: {
+      version: 1,
+      contract: 'ordered-strict-v1',
+      getMappings: () => mappings,
+      stateForStatus: (status) => {
+        const normalized = String(status || '').trim().toLowerCase();
+        return normalized === 'working' ? '[/]' : normalized === 'complete' ? '[x]' : '[ ]';
+      },
+      statusForState: (state) => state === '[/]' ? 'working' : state === '[x]' ? 'complete' : state === '[ ]' ? 'todo' : '',
+    },
+  }));
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, ' working '), '[/]');
+  assert.equal(
+    getGcmTaskCheckboxStateForStatus(app, 'not-configured'),
+    null,
+    'a provider fallback cannot map a status absent from the ordered snapshot',
+  );
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({
     status: { getStatusOptions: () => { throw new Error('not ready'); } },
+    taskCheckboxes: {
+      version: 1,
+      contract: 'ordered-strict-v1',
+      getMappings: () => [],
+      stateForStatus: () => '[custom]',
+      statusForState: () => { throw new Error('not ready'); },
+    },
     configuration: {
       version: 2,
       isInlinePropertyAllowed: () => true,
@@ -205,7 +256,33 @@ test('typed status, inline-property, and parent-link capabilities validate versi
     },
   }));
   assert.deepEqual(getGcmStatusOptions(app), []);
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'working'), null, 'malformed markers fail closed');
+  assert.equal(getGcmTaskStatusForCheckboxState(app, '[/]'), null, 'provider failures fail closed');
   assert.equal(isGcmInlinePropertyAllowed(app, 'client'), false, 'unknown configuration versions fail closed');
   assert.equal(getGcmParentLinkPolicy(app), null);
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({
+    taskCheckboxes: {
+      version: 2,
+      contract: 'ordered-strict-v1',
+      getMappings: () => mappings,
+      stateForStatus: () => '[x]',
+      statusForState: () => 'complete',
+    },
+  }));
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'complete'), null, 'unknown task-checkbox versions fail closed');
+  assert.equal(getGcmTaskStatusForCheckboxState(app, '[x]'), null);
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({
+    taskCheckboxes: {
+      version: 1,
+      contract: 'ordered-strict-v1',
+      getMappings: () => mappings,
+      stateForStatus: () => '[x]',
+      statusForState: (state) => state === '[x]' ? 'todo' : '',
+    },
+  }));
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'complete'), null, 'cross-method inconsistencies invalidate the snapshot');
+  assert.equal(getGcmTaskStatusForCheckboxState(app, '[x]'), null);
   owner.unload();
 });

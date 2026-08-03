@@ -33,6 +33,10 @@ import {
   ensureInternalIdInFrontmatter,
   getExternalId,
   getGcmApi,
+  getGcmTaskCheckboxIconForState,
+  getGcmTaskCheckboxStateForStatus,
+  getGcmTaskStatusForCheckboxState,
+  normalizeGcmTaskCheckboxState,
   onGcmApiChanged,
   registerCalendarRefresh,
   registerExplicitAction,
@@ -140,6 +144,14 @@ export const CalendarViewType = "calendar";
 const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
 const LEGACY_CONTEXT_DATE_CONFIG_KEY = "contextDateEnabled";
 const TPS_TASK_LINE_POINTER_DROP_EVENT = "tps-task-line-pointer-drop";
+const INLINE_TASK_COMPLETION_FILTER_KEYS = new Set([
+  "open",
+  "done",
+  "completed",
+  "taskopen",
+  "taskdone",
+  "taskcompleted",
+]);
 
 type StartDateSourceSlot = "start";
 type NoteEventVisibility = "all" | "hide-daily-notes" | "none";
@@ -166,8 +178,11 @@ type CalendarExternalDropPayload =
   | { type: "task"; filePath: string; line: number; rawLine?: string; checkboxState?: string; text?: string };
 type CalendarTaskDropPlan = {
   changes: string[];
+  sourceLineIndex: number | null;
+  sourceLine: string | null;
   filterTags: string[];
   filterStatus: string | null;
+  filterCheckboxState: string | null;
   scheduledKey: string;
   durationKey: string;
   scheduledValue: string;
@@ -187,7 +202,7 @@ type InlineScheduledTask = {
   inlineFields: CalendarLineMetadataField[];
   checkboxState: string;
   status: string;
-  completed: boolean;
+  completed: boolean | null;
   tags: string[];
 };
 type CalendarSyntheticFormulaState = {
@@ -4267,6 +4282,23 @@ export class CalendarView extends BasesView {
     allDay: boolean,
   ): Promise<void> {
     const plan = await this.buildCalendarTaskDropPlan(file, payload, start, allDay);
+    if (plan.filterStatus && !plan.filterCheckboxState) {
+      logger.warn('[CalendarView] Task drop blocked because Base status is unmapped', {
+        path: file.path,
+        line: payload.line,
+        status: plan.filterStatus,
+      });
+      new Notice(`Cannot schedule this task: GCM has no checkbox mapping for status "${plan.filterStatus}".`);
+      return;
+    }
+    if (plan.sourceLineIndex == null || !plan.sourceLine) {
+      logger.warn('[CalendarView] Task drop blocked because the source line could not be resolved exactly', {
+        path: file.path,
+        line: payload.line,
+      });
+      new Notice('Cannot schedule this task because its source line is no longer uniquely identifiable.');
+      return;
+    }
     const confirmed = await new Promise<boolean>((resolve) => {
       new CalendarTaskDropConfirmModal(this.app, plan.changes, resolve).open();
     });
@@ -4395,6 +4427,9 @@ export class CalendarView extends BasesView {
     const filterDefaults = this.extractTaskLineDefaultsFromFilters(filters);
     const taskLine = await this.resolveDraggedTaskLineInfo(file, payload);
     const taskLabel = taskLine?.title || String(payload.text || "").trim() || `${file.path}:${payload.line}`;
+    const filterCheckboxState = filterDefaults.status
+      ? this.getCheckboxStateForStatus(filterDefaults.status)
+      : null;
     const changes = [
       `Task: ${taskLabel}`,
       `Set [${scheduledKey}:: ${scheduledValue}].`,
@@ -4402,14 +4437,16 @@ export class CalendarView extends BasesView {
     if (!allDay) changes.push(`Set [${durationKey}:: ${durationMinutes}].`);
     for (const tag of filterDefaults.tags) changes.push(`Add Base filter tag #${tag}.`);
     if (filterDefaults.status) {
-      const checkbox = this.getCheckboxStateForStatus(filterDefaults.status);
-      changes.push(`Set checkbox state for Base status filter "${filterDefaults.status}"${checkbox ? ` to ${checkbox}` : ""}.`);
+      changes.push(`Set checkbox state for Base status filter "${filterDefaults.status}" to ${filterCheckboxState || '(unmapped)'}.`);
     }
 
     return {
       changes,
+      sourceLineIndex: taskLine?.lineIndex ?? null,
+      sourceLine: taskLine?.rawLine ?? null,
       filterTags: filterDefaults.tags,
       filterStatus: filterDefaults.status,
+      filterCheckboxState,
       scheduledKey,
       durationKey,
       scheduledValue,
@@ -4428,7 +4465,12 @@ export class CalendarView extends BasesView {
     const lineIndex = this.findDraggedTaskLineIndex(lines, payload);
     if (lineIndex < 0) return null;
     const rawLine = lines[lineIndex] || "";
-    const taskText = rawLine.replace(/^\s*(?:[-*+]|\d+[.)])\s+\[[^\]\r\n]*\]\s+/, "");
+    const taskMatch = rawLine.match(/^\s*(?:[-*+]|\d+[.)])\s+\[([^\]\r\n])\]\s+(.+)$/u);
+    const checkboxState = normalizeGcmTaskCheckboxState(`[${taskMatch?.[1] || ""}]`);
+    if (!taskMatch || !checkboxState || !getGcmTaskStatusForCheckboxState(this.app, checkboxState)) {
+      return null;
+    }
+    const taskText = taskMatch[2];
     const title = this.cleanInlineTaskTitle(taskText);
     if (!title) return null;
     return { lineIndex, rawLine, title };
@@ -4453,17 +4495,42 @@ export class CalendarView extends BasesView {
     payload: Extract<CalendarExternalDropPayload, { type: "task" }>,
     plan: CalendarTaskDropPlan,
   ): Promise<boolean> {
+    if (plan.filterStatus) {
+      const currentFilterCheckboxState = this.getCheckboxStateForStatus(plan.filterStatus);
+      if (!currentFilterCheckboxState || currentFilterCheckboxState !== plan.filterCheckboxState) return false;
+    }
     let changed = false;
     await this.app.vault.process(file, (content) => {
+      if (plan.filterStatus) {
+        const currentFilterCheckboxState = this.getCheckboxStateForStatus(plan.filterStatus);
+        if (!currentFilterCheckboxState || currentFilterCheckboxState !== plan.filterCheckboxState) return content;
+      }
       const newline = content.includes("\r\n") ? "\r\n" : "\n";
       const endsWithNewline = /\r?\n$/.test(content);
       const lines = content.split(/\r?\n/);
       if (endsWithNewline) lines.pop();
-      const index = this.findDraggedTaskLineIndex(lines, payload);
+      if (plan.sourceLineIndex == null || !plan.sourceLine) return content;
+      const index = this.resolveExactDraggedTaskLineRevisionIndex(
+        lines,
+        plan.sourceLineIndex,
+        plan.sourceLine,
+      );
       if (index < 0) return content;
       const current = lines[index] || "";
-      if (!/^\s*(?:[-*+]|\d+[.)])\s+\[[^\]\r\n]*\]\s+/.test(current)) return content;
-      let next = this.replaceOrAppendInlineProperty(current, plan.scheduledKey, plan.scheduledValue);
+      const taskMatch = current.match(/^\s*(?:[-*+]|\d+[.)])\s+\[([^\]\r\n])\]\s+/u);
+      const currentCheckboxState = normalizeGcmTaskCheckboxState(`[${taskMatch?.[1] || ""}]`);
+      if (!taskMatch || !currentCheckboxState || !getGcmTaskStatusForCheckboxState(this.app, currentCheckboxState)) {
+        return content;
+      }
+      let next = plan.filterCheckboxState
+        ? current.replace(/^(\s*(?:[-*+]|\d+[.)])\s+)\[[^\]\r\n]*\](\s+)/u, `$1${plan.filterCheckboxState}$2`)
+        : current;
+      if (plan.filterCheckboxState) {
+        for (const key of this.getWorkflowStatusInlineKeys()) {
+          next = this.removeInlineProperty(next, key);
+        }
+      }
+      next = this.replaceOrAppendInlineProperty(next, plan.scheduledKey, plan.scheduledValue);
       if (plan.allDay) {
         next = this.removeInlineProperty(next, plan.durationKey);
       } else if (plan.durationMinutes > 0) {
@@ -4471,9 +4538,6 @@ export class CalendarView extends BasesView {
       }
       for (const tag of plan.filterTags) {
         next = this.addInlineTaskTag(next, tag);
-      }
-      if (plan.filterStatus) {
-        next = this.setInlineTaskCheckboxForStatus(next, plan.filterStatus);
       }
       if (next === current) return content;
       lines[index] = next;
@@ -4488,19 +4552,37 @@ export class CalendarView extends BasesView {
     payload: Extract<CalendarExternalDropPayload, { type: "task" }>,
   ): number {
     const index = Math.max(0, Math.floor(Number(payload.line || 1)) - 1);
-    if (/^\s*(?:[-*+]|\d+[.)])\s+\[[^\]\r\n]*\]\s+/.test(lines[index] || "")) {
-      if (!payload.rawLine || lines[index] === payload.rawLine) return index;
-    }
     if (payload.rawLine) {
-      const exact = lines.findIndex((line) => line === payload.rawLine);
-      if (exact >= 0) return exact;
+      return this.resolveExactDraggedTaskLineRevisionIndex(lines, index, payload.rawLine);
     }
+    const current = lines[index] || "";
+    if (!/^\s*(?:[-*+]|\d+[.)])\s+\[[^\]\r\n]*\]\s+/.test(current)) return -1;
     const target = this.normalizeTaskTitleForMatch(payload.text || "");
     if (!target) return -1;
-    return lines.findIndex((line) =>
-      /^\s*(?:[-*+]|\d+[.)])\s+\[[^\]\r\n]*\]\s+/.test(line || "") &&
-      this.normalizeTaskTitleForMatch(this.cleanInlineTaskTitle(line.replace(/^\s*(?:[-*+]|\d+[.)])\s+\[[^\]\r\n]*\]\s+/, ""))) === target
+    const currentTitle = this.normalizeTaskTitleForMatch(
+      this.cleanInlineTaskTitle(current.replace(/^\s*(?:[-*+]|\d+[.)])\s+\[[^\]\r\n]*\]\s+/, "")),
     );
+    return currentTitle === target ? index : -1;
+  }
+
+  private resolveExactDraggedTaskLineRevisionIndex(
+    lines: readonly string[],
+    preferredIndex: number,
+    expectedLine: string,
+  ): number {
+    if (
+      Number.isInteger(preferredIndex)
+      && preferredIndex >= 0
+      && preferredIndex < lines.length
+      && lines[preferredIndex] === expectedLine
+    ) {
+      return preferredIndex;
+    }
+    const matches: number[] = [];
+    lines.forEach((line, index) => {
+      if (line === expectedLine) matches.push(index);
+    });
+    return matches.length === 1 ? matches[0] : -1;
   }
 
   private addInlineTaskTag(line: string, rawTag: string): string {
@@ -4519,26 +4601,33 @@ export class CalendarView extends BasesView {
       .replace(/^-+|-+$/gu, "");
   }
 
-  private setInlineTaskCheckboxForStatus(line: string, status: string): string {
-    const checkbox = this.getCheckboxStateForStatus(status);
-    if (!checkbox) return line;
-    return line.replace(/^(\s*(?:[-*+]|\d+[.)])\s+)\[[^\]\r\n]*\](\s+)/u, `$1${checkbox}$2`);
+  private getWorkflowStatusInlineKeys(): string[] {
+    const statusApi = getGcmApi(this.app)?.services?.status;
+    const workflowKey = String(statusApi?.getStatusPropertyKey?.() || '').trim();
+    const relationalKey = this.normalizeInlinePropertyIdentity(
+      String(statusApi?.getRelationalStatusPropertyKey?.() || ''),
+    );
+    const keys: string[] = [];
+    const seen = new Set<string>();
+    for (const key of [
+      workflowKey,
+      'status',
+      'taskStatus',
+      'task.status',
+      'task.checkboxStatus',
+      'checkboxStatus',
+    ]) {
+      const trimmed = String(key || '').trim();
+      const normalized = this.normalizeInlinePropertyIdentity(trimmed);
+      if (!trimmed || normalized === relationalKey || seen.has(normalized)) continue;
+      seen.add(normalized);
+      keys.push(trimmed);
+    }
+    return keys;
   }
 
   private getCheckboxStateForStatus(status: string): string | null {
-    const normalized = String(status || "").trim().toLowerCase();
-    if (!normalized) return null;
-    const stateForStatus = this.getGcmApi()?.taskCheckboxes?.stateForStatus;
-    if (typeof stateForStatus === "function") {
-      const state = String(stateForStatus(normalized) || "").trim();
-      if (state) return state;
-    }
-    if (normalized === "complete") return "[x]";
-    if (normalized === "working") return "[\\]";
-    if (normalized === "holding" || normalized === "question") return "[?]";
-    if (normalized === "wont-do" || normalized === "cancelled" || normalized === "canceled") return "[-]";
-    if (normalized === "todo" || normalized === "open") return "[ ]";
-    return null;
+    return getGcmTaskCheckboxStateForStatus(this.app, status);
   }
 
   private normalizeTaskTitleForMatch(value: string): string {
@@ -4970,6 +5059,17 @@ export class CalendarView extends BasesView {
       return;
     }
 
+    const checkboxToken = normalizeGcmTaskCheckboxState(task.checkboxState);
+    if (!checkboxToken || !getGcmTaskStatusForCheckboxState(this.app, checkboxToken)) {
+      logger.flowWarn("AssociatedTaskNote", "create:unavailable", {
+        path: task.file.path,
+        lineNumber: lineIndex + 1,
+        reason: "unmapped-checkbox-state",
+      });
+      new Notice("Task note creation is unavailable because this checkbox state is not mapped in GCM.");
+      return;
+    }
+
     logger.flow("AssociatedTaskNote", "create:start", {
       path: task.file.path,
       lineNumber: lineIndex + 1,
@@ -4981,7 +5081,7 @@ export class CalendarView extends BasesView {
         lineNumber: lineIndex + 1,
         rawLine: task.line,
         title: task.title,
-        checkboxToken: task.checkboxState || "[ ]",
+        checkboxToken,
         isCalendarTask: true,
       });
       logger.flow("AssociatedTaskNote", "create:done", {
@@ -5003,6 +5103,8 @@ export class CalendarView extends BasesView {
   private addGcmInlineTaskMenuItems(menu: Menu, inlineTask: InlineScheduledTask, calEntry: CalendarEntry): boolean {
     const taskLineContextMenuService = this.getGcmTaskLineContextMenuService();
     if (typeof taskLineContextMenuService?.addMenuItems !== "function") return false;
+    const checkboxToken = normalizeGcmTaskCheckboxState(inlineTask.checkboxState);
+    if (!checkboxToken || !getGcmTaskStatusForCheckboxState(this.app, checkboxToken)) return false;
 
     const lineIndex = Math.max(0, Math.floor(inlineTask.lineNumber));
     menu.addSeparator();
@@ -5014,7 +5116,7 @@ export class CalendarView extends BasesView {
         lineIndex,
         rawLine: inlineTask.line,
         title: inlineTask.title,
-        checkboxToken: inlineTask.checkboxState || "[ ]",
+        checkboxToken,
         isCalendarTask: true,
         calendarAllDay: this.isInlineTaskCalendarAllDay(inlineTask, calEntry),
       },
@@ -5689,15 +5791,17 @@ export class CalendarView extends BasesView {
     menu.showAtPosition({ x: evt.clientX, y: evt.clientY });
   }
 
-  private isDoneStatusValue(status: string | null | undefined): boolean {
-    const statusService = this.getGcmServices()?.status;
-    if (typeof statusService?.isDoneStatus === "function") {
-      return !!statusService.isDoneStatus(status);
-    }
-
+  private classifyInlineTaskDoneStatus(status: string | null | undefined): boolean | null {
     const normalized = String(status || "").trim().toLowerCase();
-    if (!normalized) return false;
-    return this.buildNonActiveStatuses().includes(normalized) || normalized === "done" || normalized === "completed";
+    if (!normalized) return null;
+    const statusService = this.getGcmServices()?.status;
+    if (typeof statusService?.isDoneStatus !== "function") return null;
+    try {
+      const classified = statusService.isDoneStatus(normalized);
+      return typeof classified === "boolean" ? classified : null;
+    } catch {
+      return null;
+    }
   }
 
   private getStatusTextStyle(status: string | null | undefined): string {
@@ -6421,6 +6525,9 @@ export class CalendarView extends BasesView {
     condition: { property: string; operator: string; value: unknown },
     evaluationState?: CalendarFilterEvaluationState,
   ): { applied: boolean; result: boolean } {
+    if (this.isUnavailableInlineTaskCompletionFilter(entry, condition.property)) {
+      return { applied: true, result: false };
+    }
     const actual = this.getEntryFilterValue(entry, condition.property);
     const formulaName = getCalendarFormulaName(condition.property)?.toLowerCase();
     const formulaState = (entry as any).tpsFormulaState as CalendarSyntheticFormulaState | undefined;
@@ -6553,6 +6660,13 @@ export class CalendarView extends BasesView {
       return current === target;
     }));
     return { applied: true, result: negative ? !matched : matched };
+  }
+
+  private isUnavailableInlineTaskCompletionFilter(entry: BasesEntry, property: string): boolean {
+    const task = (entry as any)?.inlineTask as InlineScheduledTask | undefined;
+    if (!task || task.completed !== null) return false;
+    const key = String(property || "").trim().toLowerCase().replace(/[\s_.-]+/g, "");
+    return INLINE_TASK_COMPLETION_FILTER_KEYS.has(key);
   }
 
   private getEntryFilterValue(entry: BasesEntry, property: string): unknown {
@@ -7821,7 +7935,7 @@ export class CalendarView extends BasesView {
     durationKey: string,
     footnoteMetadata?: Map<string, string>,
   ): InlineScheduledTask | null {
-    const taskMatch = line.match(/^\s*[-*]\s+\[([^\]]*)\]\s+(.+)$/);
+    const taskMatch = line.match(/^\s*[-*]\s+\[([^\]\r\n]*)\]\s+(.+)$/u);
     if (!taskMatch) return null;
     if (!this.lineMetadataApi) {
       this.reportLineMetadataDiagnostic(this.lineMetadataRuntimeFailure || {
@@ -7859,7 +7973,8 @@ export class CalendarView extends BasesView {
     if (!scheduledValue && !isCalendarFormulaProperty(this.startDateProp)) return null;
     const durationRaw = props.get(durationKey.toLowerCase()) || props.get("timeestimate");
     const durationMinutes = durationRaw ? this.parseDurationMinutesFromValue(durationRaw) ?? undefined : undefined;
-    const checkboxState = this.normalizeInlineTaskCheckboxState(taskMatch[1] || "");
+    const checkboxState = normalizeGcmTaskCheckboxState(`[${taskMatch[1] || ""}]`);
+    if (!checkboxState) return null;
     const status = this.resolveInlineTaskStatus(checkboxState);
     return {
       file,
@@ -7874,46 +7989,17 @@ export class CalendarView extends BasesView {
       inlineFields: parsedLine.fields,
       checkboxState,
       status,
-      completed: this.isDoneStatusValue(status),
+      completed: this.classifyInlineTaskDoneStatus(status),
       tags: parsedLine.tags,
     };
   }
 
-  private normalizeInlineTaskCheckboxState(rawState: string): string {
-    const source = String(rawState ?? "");
-    const wrapped = source.trim();
-    if (wrapped.startsWith("[") && wrapped.endsWith("]")) {
-      const marker = wrapped.slice(1, -1).trim();
-      return marker ? `[${marker}]` : "[ ]";
-    }
-    const marker = source.trim();
-    return marker ? `[${marker}]` : "[ ]";
-  }
-
   private resolveInlineTaskStatus(checkboxState: string): string {
-    const statusService = this.getGcmServices()?.status;
-    if (typeof statusService?.checkboxStateToStatus === "function") {
-      const mapped = statusService.checkboxStateToStatus(checkboxState);
-      if (mapped) return String(mapped).trim().toLowerCase();
-    }
-
-    const marker = this.normalizeInlineTaskCheckboxState(checkboxState).slice(1, -1).trim().toLowerCase();
-    if (!marker) return "todo";
-    if (marker === "x") return "complete";
-    if (marker === "/" || marker === "\\") return "working";
-    if (marker === "?" || marker === "!") return "holding";
-    if (marker === "-" || marker === "~") return "wont-do";
-    return marker;
+    return getGcmTaskStatusForCheckboxState(this.app, checkboxState) || "";
   }
 
   private getInlineTaskCheckboxIconName(rawState: string): string {
-    const marker = this.normalizeInlineTaskCheckboxState(rawState).slice(1, -1).trim().toLowerCase();
-    if (!marker) return "square";
-    if (marker === "x") return "square-check-big";
-    if (marker === "/" || marker === "\\" || marker === ">") return "square-play";
-    if (marker === "?" || marker === "!") return "square-help";
-    if (marker === "-" || marker === "~") return "square-minus";
-    return "square-dot";
+    return getGcmTaskCheckboxIconForState(this.app, rawState) || "square";
   }
 
   private findExternalEventForInlineTask(
@@ -8135,6 +8221,17 @@ export class CalendarView extends BasesView {
       inlineRow[normalized] = aggregate;
       for (const alias of group.aliases) inlineRow[alias] = aggregate;
     }
+    const derivedWorkflowFieldKeys = new Set(
+      ["checkboxStatus", "task.status", "task.checkboxStatus", "open", "done", "completed"]
+        .map((key) => String(key || "").trim().toLowerCase().replace(/[\s_.-]+/g, ""))
+        .filter(Boolean),
+    );
+    for (const key of Object.keys(inlineRow)) {
+      const normalized = key.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+      if (derivedWorkflowFieldKeys.has(normalized)) delete inlineRow[key];
+    }
+    const hasMappedWorkflowStatus = !!task.status;
+    const hasAuthoritativeCompletion = typeof task.completed === "boolean";
     const values = new Map<string, any>([
       ...Object.entries(inlineRow).map(([key, value]) => [key.toLowerCase(), value] as [string, unknown]),
       ["kind", "task"],
@@ -8151,13 +8248,17 @@ export class CalendarView extends BasesView {
       [task.scheduledKey.toLowerCase(), task.scheduledValue],
       ["scheduled", task.scheduledValue],
       ["checkboxstate", task.checkboxState],
-      ["checkboxstatus", task.status],
       ["raw", task.line],
-      ["open", !task.completed],
-      ["done", task.completed],
-      ["completed", task.completed],
       ["tags", taskTags],
     ]);
+    if (hasMappedWorkflowStatus) {
+      values.set("checkboxstatus", task.status);
+    }
+    if (hasAuthoritativeCompletion) {
+      values.set("open", !task.completed);
+      values.set("done", task.completed);
+      values.set("completed", task.completed);
+    }
     if (task.durationKey && task.durationMinutes != null) {
       values.set(task.durationKey.toLowerCase(), task.durationMinutes);
       values.set("timeestimate", task.durationMinutes);
@@ -8170,10 +8271,25 @@ export class CalendarView extends BasesView {
       itemType: "task",
       lineNumber: oneBasedLineNumber,
       checkboxState: task.checkboxState,
-      checkboxStatus: task.status,
+      ...(hasMappedWorkflowStatus ? { checkboxStatus: task.status } : {}),
       explicitKind,
       kinds,
     } as Record<string, unknown>;
+    const taskFormulaRow = { ...row };
+    const taskWorkflowFieldKeys = new Set([
+      "status",
+      "taskStatus",
+      "task.status",
+      "checkboxStatus",
+      "task.checkboxStatus",
+      "open",
+      "done",
+      "completed",
+    ].map((key) => key.toLowerCase().replace(/[\s_.-]+/g, "")));
+    for (const key of Object.keys(taskFormulaRow)) {
+      const normalized = key.trim().toLowerCase().replace(/[\s_.-]+/g, "");
+      if (taskWorkflowFieldKeys.has(normalized)) delete taskFormulaRow[key];
+    }
     let formulaState: CalendarSyntheticFormulaState = {
       session: null,
       recordId: `${task.file.path}:${oneBasedLineNumber}`,
@@ -8189,12 +8305,17 @@ export class CalendarView extends BasesView {
         file: fileContext,
         thisValue: this.formulaThisValue,
         task: {
-          ...row,
-          status: task.status,
+          ...taskFormulaRow,
           checkboxState: task.checkboxState,
-          checkboxStatus: task.status,
-          open: !task.completed,
-          done: task.completed,
+          ...(hasMappedWorkflowStatus ? {
+            status: task.status,
+            checkboxStatus: task.status,
+          } : {}),
+          ...(hasAuthoritativeCompletion ? {
+            open: !task.completed,
+            done: task.completed,
+            completed: task.completed,
+          } : {}),
           tags: taskTags,
           file: fileContext,
         },
@@ -8214,6 +8335,10 @@ export class CalendarView extends BasesView {
       getValue: (propId: BasesPropertyId | string) => {
         if (isCalendarFormulaProperty(propId)) {
           return this.readSyntheticFormulaValue(formulaState, propId);
+        }
+        const rawPropertyId = String(propId || '').trim().toLowerCase();
+        if (rawPropertyId === 'task.status' || rawPropertyId === 'task.checkboxstatus') {
+          return values.get('checkboxstatus') ?? null;
         }
         const parsed = parsePropertyId(propId as BasesPropertyId);
         const key = (parsed.name || (parsed as any).property || String(propId)).trim().toLowerCase();
@@ -8240,7 +8365,8 @@ export class CalendarView extends BasesView {
     await this.app.vault.process(task.file, (content) => {
       const currentLines = content.split(/\r\n|\n|\r/u);
       const footnoteMetadata = this.parseInlineMetadataFootnotes(currentLines);
-      patchState.result = patchInlineTaskLineContent(
+      let mappingInvalid = false;
+      const patchResult = patchInlineTaskLineContent(
         content,
         {
           preferredLineIndex: task.lineNumber,
@@ -8250,8 +8376,10 @@ export class CalendarView extends BasesView {
           subitemId: task.inlineProperties.get("subitemid"),
         },
         (line) => {
-          const taskMatch = line.match(/^\s*[-*]\s+\[([^\]]*)\]\s+(.+)$/u);
+          const taskMatch = line.match(/^\s*[-*]\s+\[([^\]\r\n]*)\]\s+(.+)$/u);
           if (!taskMatch) return null;
+          const checkboxState = normalizeGcmTaskCheckboxState(`[${taskMatch[1] || ""}]`);
+          if (!checkboxState || !getGcmTaskStatusForCheckboxState(this.app, checkboxState)) return null;
           const properties = this.parseInlineDataviewProperties(line, footnoteMetadata);
           return {
             title: this.cleanInlineTaskTitle(taskMatch[2]),
@@ -8260,6 +8388,12 @@ export class CalendarView extends BasesView {
           };
         },
         (currentLine) => {
+          const taskMatch = currentLine.match(/^\s*[-*]\s+\[([^\]\r\n]*)\]\s+/u);
+          const checkboxState = normalizeGcmTaskCheckboxState(`[${taskMatch?.[1] || ""}]`);
+          if (!taskMatch || !checkboxState || !getGcmTaskStatusForCheckboxState(this.app, checkboxState)) {
+            mappingInvalid = true;
+            return currentLine;
+          }
           let nextLine = this.replaceOrAppendInlineProperty(currentLine, task.scheduledKey, scheduledValue);
           if (allDay && task.durationKey) {
             nextLine = this.removeInlineProperty(nextLine, task.durationKey);
@@ -8269,6 +8403,7 @@ export class CalendarView extends BasesView {
           return nextLine;
         },
       );
+      patchState.result = mappingInvalid ? null : patchResult;
       return patchState.result?.content ?? content;
     });
 
@@ -8299,10 +8434,60 @@ export class CalendarView extends BasesView {
   }
 
   private removeInlineProperty(line: string, key: string): string {
-    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return line
-      .replace(new RegExp(`\\s*\\[${escaped}::\\s*[^\\]]+\\]`, "gi"), "")
-      .replace(/\s+$/u, "");
+    const source = String(line || '');
+    const target = this.normalizeInlinePropertyIdentity(key);
+    if (!target) return source;
+    const codeRanges: Array<{ start: number; end: number }> = [];
+    for (let index = 0; index < source.length;) {
+      if (source[index] !== '`') {
+        index += 1;
+        continue;
+      }
+      let runEnd = index;
+      while (source[runEnd] === '`') runEnd += 1;
+      const delimiter = source.slice(index, runEnd);
+      const close = source.indexOf(delimiter, runEnd);
+      if (close < 0) {
+        index = runEnd;
+        continue;
+      }
+      codeRanges.push({ start: index, end: close + delimiter.length });
+      index = close + delimiter.length;
+    }
+    const isInCode = (index: number) => codeRanges.some((range) => index >= range.start && index < range.end);
+    const removals: Array<{ start: number; end: number }> = [];
+    for (let index = 0; index < source.length; index += 1) {
+      const opener = source[index];
+      if ((opener !== '[' && opener !== '(') || isInCode(index)) continue;
+      const closer = opener === '[' ? ']' : ')';
+      const separator = source.indexOf('::', index + 1);
+      if (separator < 0) break;
+      const firstCloser = source.indexOf(closer, index + 1);
+      if (firstCloser >= 0 && firstCloser < separator) continue;
+      if (this.normalizeInlinePropertyIdentity(source.slice(index + 1, separator)) !== target) continue;
+      const stack = [closer];
+      let cursor = separator + 2;
+      for (; cursor < source.length && stack.length; cursor += 1) {
+        const char = source[cursor];
+        if (char === '[') stack.push(']');
+        else if (char === '(') stack.push(')');
+        else if (char === stack[stack.length - 1]) stack.pop();
+      }
+      if (stack.length) continue;
+      let start = index;
+      if (start > 0 && /[ \t]/u.test(source[start - 1])) start -= 1;
+      removals.push({ start, end: cursor });
+      index = cursor - 1;
+    }
+    let output = source;
+    for (let index = removals.length - 1; index >= 0; index -= 1) {
+      output = `${output.slice(0, removals[index].start)}${output.slice(removals[index].end)}`;
+    }
+    return output.replace(/\s+$/u, '');
+  }
+
+  private normalizeInlinePropertyIdentity(key: string): string {
+    return String(key || '').trim().toLowerCase().replace(/[\s_.-]+/gu, '');
   }
 
   private getSlotRange(): { min: string; max: string } | undefined {

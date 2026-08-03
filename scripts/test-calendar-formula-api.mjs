@@ -115,6 +115,7 @@ async function importCalendarViewBundle() {
 }
 
 const formulaUtility = await importBundled("../src/utils/calendar-formula-api.ts");
+const eventStatusUtility = await importBundled("../src/utils/calendar-entry-status.ts");
 const { CalendarView, installGcmApiRegistry } = await importCalendarViewBundle();
 const gcmFormulaUtility = await importBundled("../../TPS-Global-Context-Menu (Dev)/src/services/tps-base-formula-service.ts");
 
@@ -273,7 +274,14 @@ function createFile(path, contents = "") {
   };
 }
 
-function createBareView({ api = null, lineMetadata = undefined, baseDefinition = {}, markdownFiles = [], frontmatterByPath = {} } = {}) {
+function createBareView({
+  api = null,
+  lineMetadata = undefined,
+  baseDefinition = {},
+  markdownFiles = [],
+  frontmatterByPath = {},
+  statusService = undefined,
+} = {}) {
   const view = Object.create(CalendarView.prototype);
   const baseFile = createFile("Inbox/Schedule.base", JSON.stringify(baseDefinition));
   const resolvedLineMetadata = lineMetadata === undefined && api ? makeLineMetadataApi() : lineMetadata;
@@ -313,12 +321,44 @@ function createBareView({ api = null, lineMetadata = undefined, baseDefinition =
   };
   installGcmApiRegistry(owner, view.app);
   if (api || resolvedLineMetadata) {
+    const checkboxStates = new Map([
+      ['todo', '[ ]'],
+      ['complete', '[x]'],
+      ['working', '[/]'],
+      ['holding', '[?]'],
+      ['wont-do', '[-]'],
+    ]);
+    const statusesByState = new Map(Array.from(checkboxStates, ([status, state]) => [state, status]));
+    const resolvedStatusService = statusService === undefined
+      ? { isDoneStatus: (status) => ['complete', 'wont-do'].includes(String(status || '').trim().toLowerCase()) }
+      : statusService ?? {};
     workspace.trigger("tps:gcm-api-changed", {
       source: "tps-global-context-menu",
       sourcePluginId: "tps-global-context-menu",
       timestamp: Date.now(),
       available: true,
-      api: { formulas: api, lineMetadata: resolvedLineMetadata },
+      taskCheckboxesVersion: 1,
+      api: {
+        formulas: api,
+        lineMetadata: resolvedLineMetadata,
+        services: {
+          status: {
+            getStatusPropertyKey: () => 'status',
+            getRelationalStatusPropertyKey: () => 'relationshipStatus',
+            ...resolvedStatusService,
+          },
+        },
+        taskCheckboxes: {
+          version: 1,
+          contract: 'ordered-strict-v1',
+          getMappings: () => Array.from(checkboxStates, ([status, state]) => ({
+            checkboxState: state,
+            statuses: [status],
+          })),
+          stateForStatus: (status) => checkboxStates.get(String(status || '').trim().toLowerCase()) || '',
+          statusForState: (state) => statusesByState.get(String(state || '').trim().replace('[X]', '[x]')) || '',
+        },
+      },
     });
   }
   view.plugin = {
@@ -354,6 +394,178 @@ function createBareView({ api = null, lineMetadata = undefined, baseDefinition =
   view.getStatusCssClasses = () => [];
   return view;
 }
+
+function configureTaskDropFixture(view, status = 'working') {
+  view.startDateProp = 'note.scheduled';
+  view.endDateProp = 'note.timeEstimate';
+  view.defaultEventDuration = 30;
+  view.getNoteField = (property) => String(property || '').replace(/^note\./u, '');
+  view.readBaseFileFilterSources = async () => [];
+  view.extractTaskLineDefaultsFromFilters = () => ({ tags: ['qa'], status, targetPath: null });
+  view.resolveDraggedTaskLineInfo = async (_file, payload) => ({
+    lineIndex: payload.line - 1,
+    rawLine: payload.rawLine,
+    title: payload.text,
+  });
+  view.updateCalendar = async () => {};
+}
+
+test('calendar task-drop source resolution accepts only currently mapped one-character checkbox states', async () => {
+  const view = createBareView({ api: makeFormulaApi(() => value('noop', null)).api });
+  const mappedLine = '- [ ] Mapped task';
+  const malformedLine = '- [ab] Not a task';
+  const unmappedLine = '- [*] Unknown state';
+  const file = createFile('Inbox/Task Drop Sources.md', `${mappedLine}\n${malformedLine}\n${unmappedLine}\n`);
+
+  assert.deepEqual(
+    await view.resolveDraggedTaskLineInfo(file, {
+      type: 'task', filePath: file.path, line: 1, rawLine: mappedLine, checkboxState: '[ ]', text: 'Mapped task',
+    }),
+    { lineIndex: 0, rawLine: mappedLine, title: 'Mapped task' },
+  );
+  assert.equal(
+    await view.resolveDraggedTaskLineInfo(file, {
+      type: 'task', filePath: file.path, line: 2, rawLine: malformedLine, checkboxState: '[ab]', text: 'Not a task',
+    }),
+    null,
+  );
+  assert.equal(
+    await view.resolveDraggedTaskLineInfo(file, {
+      type: 'task', filePath: file.path, line: 3, rawLine: unmappedLine, checkboxState: '[*]', text: 'Unknown state',
+    }),
+    null,
+  );
+});
+
+test('calendar task drops fail closed before process and apply one captured mapping atomically', async () => {
+  globalThis.__calendarFormulaNotices.length = 0;
+  const view = createBareView({ api: makeFormulaApi(() => value('noop', null)).api });
+  configureTaskDropFixture(view, 'working');
+  const sourceLine = '- [ ] Ship it [status:: todo] [task.status:: stale] [checkbox_Status:: stale] `[task.status:: example]` [relationshipStatus:: [[Statuses/Todo]]]';
+  const file = createFile('Inbox/Tasks.md', `${sourceLine}\n`);
+  let processCalls = 0;
+  view.app.vault.process = async (target, mutator) => {
+    processCalls += 1;
+    target.contents = mutator(target.contents);
+  };
+  const payload = {
+    type: 'task',
+    filePath: file.path,
+    line: 1,
+    rawLine: sourceLine,
+    checkboxState: '[ ]',
+    text: 'Ship it',
+  };
+
+  const plan = await view.buildCalendarTaskDropPlan(file, payload, new Date(2026, 7, 2, 12, 0, 0), false);
+  assert.equal(plan.filterCheckboxState, '[/]');
+  assert.equal(plan.sourceLineIndex, 0);
+  assert.equal(plan.sourceLine, sourceLine);
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), true);
+  assert.equal(processCalls, 1);
+  assert.match(file.contents, /^- \[\/\] Ship it `\[task\.status:: example\]` \[relationshipStatus:: \[\[Statuses\/Todo\]\]\] \[scheduled:: 2026-08-02 12:00:00\] \[timeEstimate:: 30\] #qa$/mu);
+
+  file.contents = '- [?] Concurrent edit\n';
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
+  assert.equal(file.contents, '- [?] Concurrent edit\n');
+
+  file.contents = `Heading\n${plan.sourceLine}\n`;
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), true);
+  assert.match(file.contents, /^Heading\n- \[\/\] Ship it /u);
+
+  file.contents = `Heading\n${plan.sourceLine}\n${plan.sourceLine}\n`;
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
+  assert.equal(file.contents, `Heading\n${plan.sourceLine}\n${plan.sourceLine}\n`);
+
+  file.contents = `${plan.sourceLine}\n`;
+  const mappedStateForStatus = view.getCheckboxStateForStatus.bind(view);
+  let mappingReads = 0;
+  view.getCheckboxStateForStatus = () => ++mappingReads === 1 ? '[/]' : null;
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
+  assert.equal(file.contents, `${plan.sourceLine}\n`);
+  assert.equal(processCalls, 5, 'a mapping changed during vault.process must perform no write');
+  view.getCheckboxStateForStatus = mappedStateForStatus;
+
+  configureTaskDropFixture(view, 'unmapped');
+  await view.handleExternalTaskDrop(file, payload, new Date(2026, 7, 3, 12, 0, 0), false);
+  assert.equal(processCalls, 5, 'an unmapped status must not invoke vault.process');
+  assert.match(globalThis.__calendarFormulaNotices.at(-1) || '', /no checkbox mapping/u);
+
+  view.app.workspace.trigger('tps:gcm-api-changed', {
+    source: 'tps-global-context-menu',
+    sourcePluginId: 'tps-global-context-menu',
+    timestamp: Date.now(),
+    available: true,
+    taskCheckboxesVersion: 1,
+    api: {
+      taskCheckboxes: {
+        version: 1,
+        contract: 'ordered-strict-v1',
+        getMappings: () => [],
+        stateForStatus: () => '[/]',
+        statusForState: () => 'working',
+      },
+    },
+  });
+  configureTaskDropFixture(view, 'working');
+  await view.handleExternalTaskDrop(file, payload, new Date(2026, 7, 4, 12, 0, 0), false);
+  assert.equal(processCalls, 5, 'a malformed provider must not invoke vault.process');
+
+  file.contents = `${plan.sourceLine}\n`;
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
+  assert.equal(processCalls, 5, 'a mapping changed after confirmation must fail before vault.process');
+});
+
+test('calendar task drops clear every checkbox-owned workflow carrier and preserve the exact relational field', async () => {
+  const view = createBareView({ api: makeFormulaApi(() => value('noop', null)).api });
+  configureTaskDropFixture(view, 'working');
+  const mappings = Object.freeze([
+    Object.freeze({ checkboxState: '[ ]', statuses: Object.freeze(['todo']) }),
+    Object.freeze({ checkboxState: '[/]', statuses: Object.freeze(['working']) }),
+  ]);
+  view.app.workspace.trigger('tps:gcm-api-changed', {
+    source: 'tps-global-context-menu',
+    sourcePluginId: 'tps-global-context-menu',
+    timestamp: Date.now(),
+    available: true,
+    taskCheckboxesVersion: 1,
+    api: {
+      services: {
+        status: {
+          getStatusPropertyKey: () => 'workflowState',
+          getRelationalStatusPropertyKey: () => 'status',
+        },
+      },
+      taskCheckboxes: {
+        version: 1,
+        contract: 'ordered-strict-v1',
+        getMappings: () => mappings,
+        stateForStatus: (status) => status === 'working' ? '[/]' : status === 'todo' ? '[ ]' : '',
+        statusForState: (state) => state === '[/]' ? 'working' : state === '[ ]' ? 'todo' : '',
+      },
+    },
+  });
+  const sourceLine = '- [ ] Cleanup [status:: [[Statuses/Todo]]] [workflowState:: todo] [taskStatus:: todo] [task.status:: todo] [task.checkboxStatus:: todo] [checkboxStatus:: todo] `[taskStatus:: example]`';
+  const file = createFile('Inbox/Workflow Cleanup.md', `${sourceLine}\n`);
+  view.app.vault.process = async (target, mutator) => {
+    target.contents = mutator(target.contents);
+  };
+  const payload = {
+    type: 'task',
+    filePath: file.path,
+    line: 1,
+    rawLine: sourceLine,
+    checkboxState: '[ ]',
+    text: 'Cleanup',
+  };
+
+  const plan = await view.buildCalendarTaskDropPlan(file, payload, new Date(2026, 7, 2, 12, 0, 0), false);
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), true);
+  assert.equal(
+    file.contents,
+    '- [/] Cleanup [status:: [[Statuses/Todo]]] `[taskStatus:: example]` [scheduled:: 2026-08-02 12:00:00] [timeEstimate:: 30] #qa\n',
+  );
+});
 
 test("extracts only authoritative, named Base formulas and recognizes formula property IDs", () => {
   assert.deepEqual(
@@ -799,10 +1011,195 @@ test("synthetic task sessions expose row-first, note, file, this, task, and 1-ba
   assert.equal(context.task.status, "todo", "task.status is workflow state, not relational status");
   assert.equal(context.task.checkboxStatus, "todo");
   assert.equal(context.task.checkboxState, "[ ]");
+  assert.equal(entry.getValue('status'), 'working', 'bare status preserves the authored row field');
+  assert.equal(entry.getValue('task.status'), 'todo', 'task.status resolves the mapped checkbox workflow');
   assert.equal(context.row.projects, "[[Projects/Alpha]], [[Projects/Beta|Beta, LLC]]");
   assert.deepEqual(entry.getValue("kind"), ["task", "project", "client"], "bare Kind filters receive canonical additive identities from every authored Kind field");
   assert.equal(calls.contexts[0].now, view.formulaNow);
   assert.equal(calls.contexts[1].now, view.formulaNow, "one frozen now object is shared by every row in the pass");
+});
+
+test("inline Calendar task parsing preserves structural one-code-unit tasks while workflow aliases require a mapping", async () => {
+  const { api, calls } = makeFormulaApi((name) => value(name, true));
+  const view = createBareView({
+    api,
+    baseDefinition: { formulas: { ownership: "task.status" } },
+  });
+  await view.prepareFormulaRuntime();
+  const source = createFile("Inbox/Strict Tasks.md");
+  const parse = (token) => view.parseInlineScheduledTask(
+    source,
+    0,
+    `- ${token} Strict token [scheduled:: 2026-08-05]`,
+    "scheduled",
+    "timeEstimate",
+    new Map(),
+  );
+
+  assert.equal(parse("[ ]")?.checkboxState, "[ ]");
+  assert.equal(parse("[X]")?.checkboxState, "[x]");
+  assert.equal(parse("[/]")?.checkboxState, "[/]");
+  const unmapped = view.parseInlineScheduledTask(
+    source,
+    0,
+    '- [*] Structurally valid [scheduled:: 2026-08-05] [status:: authored] [taskStatus:: stale] [task.checkboxStatus:: stale] [checkboxStatus:: stale] [open:: authored-open] [done:: authored-done] [completed:: authored-completed] [relationshipStatus:: [[Statuses/Todo]]]',
+    'scheduled',
+    'timeEstimate',
+    new Map(),
+  );
+  assert.equal(unmapped?.checkboxState, '[*]');
+  assert.equal(unmapped?.status, '');
+  const unmappedEntry = view.createInlineTaskBasesEntry(unmapped);
+  assert.deepEqual(unmappedEntry.getValue('kind'), ['task']);
+  assert.equal(unmappedEntry.getValue('checkboxState'), '[*]');
+  assert.equal(unmappedEntry.getValue('checkboxStatus'), null);
+  assert.equal(unmappedEntry.getValue('status'), 'authored');
+  assert.equal(unmappedEntry.getValue('taskStatus'), null);
+  assert.equal(unmappedEntry.getValue('task.status'), null);
+  assert.equal(unmappedEntry.getValue('task.checkboxStatus'), null);
+  assert.equal(unmappedEntry.getValue('open'), null);
+  assert.equal(unmappedEntry.getValue('done'), null);
+  assert.equal(unmappedEntry.getValue('completed'), null);
+  assert.equal(unmappedEntry.getValue('relationshipStatus'), '[[Statuses/Todo]]');
+  assert.equal(unmappedEntry.getValue('formula.ownership'), true);
+  const context = calls.contexts.at(-1);
+  assert.equal(context.row.status, 'authored', 'authored row.status remains row metadata');
+  assert.equal(context.row.relationshipStatus, '[[Statuses/Todo]]');
+  for (const key of ['status', 'taskStatus', 'checkboxStatus', 'open', 'done', 'completed']) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(context.task, key),
+      false,
+      `unmapped task.${key} must not inherit an authored row workflow carrier`,
+    );
+  }
+  for (const malformed of ["[]", "[  ]", "[ab]", "[🧪]"]) {
+    assert.equal(parse(malformed), null, `${malformed} must not be promoted to an open task`);
+  }
+});
+
+test("inline task completion aliases, filters, and styles require authoritative GCM classification", async () => {
+  const buildTask = async (statusService, checkboxState = "[x]") => {
+    const { api } = makeFormulaApi(() => value("noop", null));
+    const view = createBareView({ api, statusService });
+    await view.prepareFormulaRuntime();
+    const source = createFile("Inbox/Completion Authority.md");
+    const task = view.parseInlineScheduledTask(
+      source,
+      0,
+      `- ${checkboxState} Completion authority [scheduled:: 2026-08-05]`,
+      "scheduled",
+      "timeEstimate",
+      new Map(),
+    );
+    assert.ok(task);
+    return { view, task, entry: view.createInlineTaskBasesEntry(task) };
+  };
+
+  const missing = await buildTask(null);
+  assert.equal(missing.task.status, "complete", "mapped workflow status remains available");
+  assert.equal(missing.task.completed, null);
+  assert.equal(missing.entry.getValue("checkboxStatus"), "complete");
+  for (const key of ["open", "done", "completed", "task.open", "task.done", "task.completed"]) {
+    assert.equal(missing.entry.getValue(key), null, `${key} is absent without completion authority`);
+  }
+  assert.deepEqual(
+    missing.view.evaluateEntryFilterCondition(
+      missing.entry,
+      { property: "done", operator: "is not", value: true },
+    ),
+    { applied: true, result: false },
+    "a negative completion filter cannot admit an unclassified task",
+  );
+  assert.equal(
+    eventStatusUtility.isCalendarEntryNonActive(
+      { status: missing.task.status, entry: missing.entry },
+      ["complete", "wont-do"],
+    ),
+    false,
+    "generic Calendar status fallbacks cannot dim an unclassified inline task",
+  );
+
+  const throwing = await buildTask({
+    isDoneStatus: () => { throw new Error("classifier unavailable"); },
+    getDoneStatuses: () => ["complete"],
+    getInactiveStatuses: () => ["complete"],
+  });
+  assert.equal(throwing.task.status, "complete");
+  assert.equal(throwing.task.completed, null);
+  assert.equal(throwing.entry.getValue("done"), null);
+
+  const contradictory = await buildTask({
+    isDoneStatus: () => false,
+    getDoneStatuses: () => ["complete"],
+    getInactiveStatuses: () => ["complete"],
+  });
+  assert.equal(contradictory.task.completed, false, "the authoritative boolean wins over fallback lists");
+  assert.equal(contradictory.entry.getValue("open"), true);
+  assert.equal(contradictory.entry.getValue("done"), false);
+  assert.equal(
+    eventStatusUtility.isCalendarEntryNonActive(
+      { status: contradictory.task.status, entry: contradictory.entry },
+      ["complete", "wont-do"],
+    ),
+    false,
+  );
+
+  const authoritativeDone = await buildTask({
+    isDoneStatus: () => true,
+    getDoneStatuses: () => [],
+    getInactiveStatuses: () => [],
+  }, "[ ]");
+  assert.equal(authoritativeDone.task.status, "todo");
+  assert.equal(authoritativeDone.task.completed, true);
+  assert.equal(authoritativeDone.entry.getValue("done"), true);
+  assert.equal(
+    eventStatusUtility.isCalendarEntryNonActive(
+      { status: authoritativeDone.task.status, entry: authoritativeDone.entry },
+      [],
+    ),
+    true,
+  );
+
+  assert.equal(
+    eventStatusUtility.isCalendarEntryNonActive({ status: "complete", entry: {} }, ["complete"]),
+    true,
+    "native and external entries retain Calendar's standalone status-list behavior",
+  );
+});
+
+test('calendar rescheduling revalidates the current checkbox mapping inside the atomic source update', async () => {
+  const { api } = makeFormulaApi(() => value('noop', null));
+  const view = createBareView({ api });
+  await view.prepareFormulaRuntime();
+  const line = '- [ ] Mapping race [scheduled:: 2026-08-05 09:00:00]';
+  const source = createFile('Inbox/Reschedule Mapping.md', `${line}\n`);
+  const task = view.parseInlineScheduledTask(
+    source,
+    0,
+    line,
+    'scheduled',
+    'timeEstimate',
+    new Map(),
+  );
+  let processCalls = 0;
+  view.app.vault.process = async (file, mutator) => {
+    processCalls += 1;
+    file.contents = mutator(file.contents);
+  };
+  view.app.workspace.trigger('tps:gcm-api-changed', {
+    source: 'tps-global-context-menu',
+    sourcePluginId: 'tps-global-context-menu',
+    timestamp: Date.now(),
+    available: false,
+    taskCheckboxesVersion: null,
+  });
+
+  await assert.rejects(
+    view.updateInlineScheduledTask(task, new Date(2026, 7, 6, 10, 0, 0)),
+    /safely find the task line/u,
+  );
+  assert.equal(processCalls, 1);
+  assert.equal(source.contents, `${line}\n`);
 });
 
 test("formula date, dependency, status, priority, all-day, and duration drive an inline Calendar entry", async () => {

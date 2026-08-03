@@ -4,6 +4,8 @@ import { Buffer } from "node:buffer";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
+let activeInstallGcmApiRegistry = null;
+
 async function importNewEventService() {
   const build = await esbuild.build({
     stdin: {
@@ -109,7 +111,9 @@ async function importNewEventService() {
     ],
   });
   const bundled = build.outputFiles[0].text;
-  return import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
+  const imported = await import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
+  activeInstallGcmApiRegistry = imported.installGcmApiRegistry;
+  return imported;
 }
 
 function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
@@ -118,6 +122,7 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
   const pluginRegistry = {};
   const workspaceListeners = new Map();
   let createCount = 0;
+  let processCount = 0;
   let templaterRuns = 0;
   const templaterPendingFiles = new Set();
   const hasLocalTemplaterSetting = options.templaterLocalSettingsUnavailable !== true;
@@ -248,6 +253,10 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
       process: async (file, processor) => {
         const record = files.get(file.path);
         if (!record) throw new Error(`Missing file: ${file.path}`);
+        processCount += 1;
+        if (typeof options.beforeVaultProcess === "function") {
+          await options.beforeVaultProcess(app, file, processCount);
+        }
         record.content = processor(record.content);
       },
       getMarkdownFiles: () => Array.from(files.values()).map((entry) => entry.file),
@@ -270,22 +279,59 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
     },
   };
 
-  if (
-    typeof options.gcmEnsureForIsoDate === "function"
-    && typeof options.installGcmApiRegistry === "function"
-  ) {
-    options.installGcmApiRegistry({ register() {}, registerEvent() {} }, app);
+  const installGcmApiRegistry = options.installGcmApiRegistry ?? activeInstallGcmApiRegistry;
+  if (typeof installGcmApiRegistry === "function") {
+    installGcmApiRegistry({ register() {}, registerEvent() {} }, app);
+    const taskCheckboxMappings = Object.freeze((options.taskCheckboxMappings ?? [
+      { checkboxState: "[ ]", statuses: ["todo", "next"], toggleTargetStatus: "complete", icon: "square" },
+      { checkboxState: "[x]", statuses: ["complete"], toggleTargetStatus: "todo", icon: "check" },
+      { checkboxState: "[/]", statuses: ["working"], toggleTargetStatus: "complete", icon: "slash" },
+      { checkboxState: "[\\]", statuses: ["working"], toggleTargetStatus: "complete", icon: "slash" },
+      { checkboxState: "[?]", statuses: ["holding"], toggleTargetStatus: "todo", icon: "help-circle" },
+      { checkboxState: "[-]", statuses: ["wont-do"], toggleTargetStatus: "todo", icon: "minus" },
+      { checkboxState: "[>]", statuses: ["migrated"] },
+    ]).map((mapping) => Object.freeze({
+      ...mapping,
+      statuses: Object.freeze([...mapping.statuses]),
+    })));
+    const stateForStatus = (status) => {
+      const normalized = String(status ?? "").trim().toLowerCase();
+      return taskCheckboxMappings.find((mapping) => mapping.statuses.includes(normalized))?.checkboxState ?? "";
+    };
+    const statusForState = (state) => {
+      const raw = String(state ?? "");
+      const normalized = raw === " " ? "[ ]" : raw.trim().toLowerCase() === "[x]" ? "[x]" : raw.trim();
+      return taskCheckboxMappings.find((mapping) => mapping.checkboxState === normalized)?.statuses[0] ?? "";
+    };
+    const api = {};
+    if (options.disableTaskCheckboxes !== true) {
+      api.taskCheckboxes = {
+        version: 1,
+        contract: "ordered-strict-v1",
+        getMappings: () => taskCheckboxMappings,
+        stateForStatus,
+        statusForState,
+      };
+    }
+    if (typeof options.gcmEnsureForIsoDate === "function") {
+      api.dailyNotes = {
+        version: 1,
+        ensureForIsoDate: (isoDate) => options.gcmEnsureForIsoDate(isoDate, app),
+      };
+    }
+    api.services = {
+      status: {
+        getStatusPropertyKey: () => options.statusPropertyKey ?? "status",
+        getRelationalStatusPropertyKey: () => options.relationalStatusPropertyKey ?? "",
+      },
+    };
     app.workspace.trigger("tps:gcm-api-changed", {
       source: "tps-global-context-menu",
       sourcePluginId: "tps-global-context-menu",
       timestamp: Date.now(),
       available: true,
-      api: {
-        dailyNotes: {
-          version: 1,
-          ensureForIsoDate: (isoDate) => options.gcmEnsureForIsoDate(isoDate, app),
-        },
-      },
+      api,
+      taskCheckboxesVersion: api.taskCheckboxes?.version ?? null,
     });
   }
 
@@ -304,6 +350,7 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
     },
     stats: {
       get createCount() { return createCount; },
+      get processCount() { return processCount; },
       get templaterRuns() { return templaterRuns; },
     },
   };
@@ -439,16 +486,39 @@ test("NewEventService writes custom task fields only through the exact GCM confi
     },
   };
   installGcmApiRegistry({ register() {}, registerEvent() {} }, app);
+  const mappings = Object.freeze([
+    Object.freeze({ checkboxState: "[ ]", statuses: Object.freeze(["todo"]), toggleTargetStatus: "complete" }),
+    Object.freeze({ checkboxState: "[x]", statuses: Object.freeze(["complete"]), toggleTargetStatus: "todo" }),
+    Object.freeze({ checkboxState: "[/]", statuses: Object.freeze(["working"]), toggleTargetStatus: "complete" }),
+    Object.freeze({ checkboxState: "[\\]", statuses: Object.freeze(["working"]), toggleTargetStatus: "complete" }),
+    Object.freeze({ checkboxState: "[?]", statuses: Object.freeze(["holding"]), toggleTargetStatus: "todo" }),
+    Object.freeze({ checkboxState: "[-]", statuses: Object.freeze(["wont-do"]), toggleTargetStatus: "todo" }),
+    Object.freeze({ checkboxState: "[>]", statuses: Object.freeze(["migrated"]) }),
+  ]);
   app.workspace.trigger("tps:gcm-api-changed", {
     source: "tps-global-context-menu",
     sourcePluginId: "tps-global-context-menu",
     timestamp: Date.now(),
     available: true,
+    taskCheckboxesVersion: 1,
     api: {
       configuration: {
         version: 1,
         isInlinePropertyAllowed: (key) => key === "client",
         getParentLinkPolicy: () => ({ format: "wikilink", tag: [], autoSelfLink: false }),
+      },
+      taskCheckboxes: {
+        version: 1,
+        contract: "ordered-strict-v1",
+        getMappings: () => mappings,
+        stateForStatus: (status) => {
+          const normalized = String(status ?? "").trim().toLowerCase();
+          return mappings.find((mapping) => mapping.statuses.includes(normalized))?.checkboxState ?? "";
+        },
+        statusForState: (state) => {
+          const normalized = String(state ?? "").trim().toLowerCase() === "[x]" ? "[x]" : String(state ?? "").trim();
+          return mappings.find((mapping) => mapping.checkboxState === normalized)?.statuses[0] ?? "";
+        },
       },
     },
   });
@@ -503,8 +573,226 @@ test("NewEventService task mode writes an inline scheduled task to the resolved 
   assert.equal(fake.has("Inbox/Follow Up 2027-01-03.md"), false);
   assert.equal(
     fake.read("Inbox/Calendar Tasks.md"),
-    "---\ntitle: Calendar Tasks\n---\n\nExisting body\n- [ ] Follow Up [scheduled:: 2027-01-03 14:00:00] [timeEstimate:: 30] #deep-work [status:: next]\n",
+    "---\ntitle: Calendar Tasks\n---\n\nExisting body\n- [ ] Follow Up [scheduled:: 2027-01-03 14:00:00] [timeEstimate:: 30] #deep-work\n",
   );
+});
+
+test("NewEventService task creation uses the authoritative custom status mapping", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {
+    "Inbox/Calendar Tasks.md": "---\ntitle: Calendar Tasks\n---\n\n",
+  }, {
+    taskCheckboxMappings: [
+      { checkboxState: "[o]", statuses: ["todo", "next"], toggleTargetStatus: "complete" },
+      { checkboxState: "[/]", statuses: ["working"], toggleTargetStatus: "complete" },
+      { checkboxState: "[d]", statuses: ["complete", "shipped"], toggleTargetStatus: "todo" },
+      { checkboxState: "[-]", statuses: ["canceled"], toggleTargetStatus: "todo" },
+    ],
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    createMode: "task",
+    taskDestination: "event-note",
+  });
+
+  const created = await service.createEvent(
+    new Date("2027-02-03T14:00:00"),
+    new Date("2027-02-03T14:30:00"),
+    undefined,
+    {
+      titleOverride: "Mapped task",
+      createMode: "task",
+      taskStatus: "working",
+      taskTargetPath: "Inbox/Calendar Tasks.md",
+    },
+  );
+
+  assert.equal(created?.path, "Inbox/Calendar Tasks.md");
+  assert.match(fake.read(created.path), /- \[\/\] Mapped task \[scheduled::/u);
+  assert.doesNotMatch(fake.read(created.path), /\[(?:status|taskStatus|checkboxStatus)::/u);
+  assert.equal(fake.stats.processCount, 1);
+});
+
+test("NewEventService blocks task creation before file or note writes when mappings are unavailable", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const original = "---\ntitle: Calendar Tasks\n---\n\nUnchanged\n";
+  const fake = createFakeCalendarApp(TFile, {
+    "Inbox/Calendar Tasks.md": original,
+  }, {
+    disableTaskCheckboxes: true,
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    createMode: "task",
+  });
+
+  const result = await service.createEvent(
+    new Date("2027-02-04T09:00:00"),
+    new Date("2027-02-04T09:30:00"),
+    undefined,
+    {
+      titleOverride: "Blocked task",
+      createMode: "task",
+      taskTargetPath: "Inbox/New Tasks.md",
+    },
+  );
+  const directResult = await service.createTaskInDailyNote(
+    "Also blocked",
+    new Date("2027-02-04T10:00:00"),
+    new Date("2027-02-04T10:30:00"),
+    [],
+    {},
+    "Inbox/Calendar Tasks.md",
+  );
+
+  assert.equal(result, null);
+  assert.equal(directResult, null);
+  assert.equal(fake.stats.createCount, 0);
+  assert.equal(fake.stats.processCount, 0);
+  assert.equal(fake.has("Inbox/New Tasks.md"), false);
+  assert.equal(fake.read("Inbox/Calendar Tasks.md"), original);
+});
+
+test("NewEventService rejects stale or malformed captured checkbox states before mutation", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const original = "---\ntitle: Calendar Tasks\n---\n\nUnchanged\n";
+  const fake = createFakeCalendarApp(TFile, {
+    "Inbox/Calendar Tasks.md": original,
+  });
+  const service = new NewEventService({ app: fake.app });
+
+  const result = await service.createTaskInDailyNote(
+    "Stale captured state",
+    new Date("2027-02-05T10:00:00"),
+    new Date("2027-02-05T10:30:00"),
+    [],
+    {},
+    "Inbox/Calendar Tasks.md",
+    false,
+    "[z]",
+  );
+
+  assert.equal(result, null);
+  assert.equal(fake.stats.createCount, 0);
+  assert.equal(fake.stats.processCount, 0);
+  assert.equal(fake.read("Inbox/Calendar Tasks.md"), original);
+});
+
+test("NewEventService revalidates a captured mapping inside the atomic task-line write", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const original = "---\ntitle: Calendar Tasks\n---\n\nUnchanged\n";
+  const fake = createFakeCalendarApp(TFile, {
+    "Inbox/Calendar Tasks.md": original,
+  }, {
+    beforeVaultProcess: (app) => {
+      app.workspace.trigger("tps:gcm-api-changed", {
+        source: "tps-global-context-menu",
+        sourcePluginId: "tps-global-context-menu",
+        timestamp: Date.now(),
+        available: false,
+        taskCheckboxesVersion: null,
+      });
+    },
+  });
+  const service = new NewEventService({ app: fake.app });
+
+  const result = await service.createTaskInDailyNote(
+    "Mapping race",
+    new Date("2027-02-05T11:00:00"),
+    new Date("2027-02-05T11:30:00"),
+    [],
+    { status: "todo" },
+    "Inbox/Calendar Tasks.md",
+  );
+
+  assert.equal(result, null);
+  assert.equal(fake.stats.processCount, 1);
+  assert.equal(fake.read("Inbox/Calendar Tasks.md"), original);
+});
+
+test("NewEventService keeps checkbox workflow status out of relational inline and frontmatter fields", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {}, {
+    statusPropertyKey: "taskStatus",
+    relationalStatusPropertyKey: "status",
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    useEndDuration: true,
+  });
+  const content = service.buildDedicatedTaskNoteContent(
+    "Owned status",
+    new Date("2027-02-05T12:00:00"),
+    new Date("2027-02-05T12:30:00"),
+    [],
+    {
+      status: "working",
+      taskStatus: "stale",
+      "task.status": "stale",
+      "task.checkboxStatus": "stale",
+      checkboxStatus: "stale",
+    },
+    "[/]",
+  );
+
+  assert.match(content, /^---[\s\S]*\ntaskStatus: working\n[\s\S]*- \[\/\] Owned status/mu);
+  assert.doesNotMatch(content, /^status:/mu);
+  assert.doesNotMatch(content, /\[(?:status|taskStatus|task\.status|task\.checkboxStatus|checkboxStatus)::/u);
+});
+
+test("NewEventService applies task-note status ownership on the actual Base-default creation route", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {}, {
+    statusPropertyKey: "taskStatus",
+    relationalStatusPropertyKey: "relationshipStatus",
+  });
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    folderPath: "Inbox",
+    useEndDuration: true,
+    createMode: "task",
+    taskDestination: "event-note",
+  });
+
+  const created = await service.createEvent(
+    new Date("2027-02-05T13:00:00"),
+    new Date("2027-02-05T13:30:00"),
+    undefined,
+    {
+      titleOverride: "Owned Base task note",
+      createMode: "task",
+      useBaseDefaults: true,
+      taskStatus: "working",
+      frontmatterDefaults: {
+        status: "working",
+        taskStatus: "stale",
+        "task.status": "stale",
+        "task.checkboxStatus": "stale",
+        checkboxStatus: "stale",
+        relationshipStatus: "[[Statuses/Planned]]",
+        client: "Acme",
+      },
+    },
+  );
+
+  assert.equal(created?.path, "Inbox/Owned Base task note 2027-02-05.md");
+  const content = fake.read(created.path);
+  const frontmatter = content.split("---", 3)[1];
+  assert.match(frontmatter, /^taskStatus: working$/mu);
+  assert.match(frontmatter, /^relationshipStatus: ['"]?\[\[Statuses\/Planned\]\]['"]?$/mu);
+  assert.match(frontmatter, /^client: Acme$/mu);
+  assert.doesNotMatch(frontmatter, /^status:/mu);
+  assert.doesNotMatch(frontmatter, /^(?:task\.status|task\.checkboxStatus|checkboxStatus):/mu);
+  assert.match(content, /- \[\/\] Owned Base task note /u);
+  assert.doesNotMatch(content, /\[(?:status|taskStatus|task\.status|task\.checkboxStatus|checkboxStatus)::/u);
 });
 
 test("NewEventService delegates missing daily-note task targets to the GCM daily-note API", async () => {
@@ -1066,14 +1354,16 @@ test("dedicated task notes retain task defaults and an explicit linked-note asso
 
   assert.equal(created?.path, "Inbox/Roadmap Review 2027-01-08.md");
   const content = fake.read("Inbox/Roadmap Review 2027-01-08.md");
-  assert.match(content, /- \[ \] Roadmap Review \[scheduled:: 2027-01-08 11:00:00] \[timeEstimate:: 45] #planning \[status:: next]/);
+  assert.match(content, /- \[ \] Roadmap Review \[scheduled:: 2027-01-08 11:00:00] \[timeEstimate:: 45] #planning/);
+  assert.doesNotMatch(content, /\[(?:status|taskStatus|checkboxStatus)::/u);
   const hidden = content.match(/\[tpsInlineProps:: ([^\]]+)]/);
   assert.ok(hidden);
   assert.deepEqual(
     JSON.parse(decodeURIComponent(hidden[1])),
     { associatedNotePath: "Projects/Roadmap.md" },
   );
-  assert.doesNotMatch(content.split("---", 3)[1], /associatedNotePath|planning|next/);
+  assert.match(content.split("---", 3)[1], /^status: next$/mu);
+  assert.doesNotMatch(content.split("---", 3)[1], /associatedNotePath|planning/);
 });
 
 test("external-event task creation atomically skips duplicate external identities", async () => {
