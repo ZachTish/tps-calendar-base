@@ -21,6 +21,7 @@ const viewOptionsSource = readFileSync(new URL("../src/view-options.ts", import.
 const visualBuilderSource = readFileSync(new URL("../src/services/visual-builder.ts", import.meta.url), "utf8");
 const utilsSource = readFileSync(new URL("../src/utils.ts", import.meta.url), "utf8");
 const calendarDayCountSource = readFileSync(new URL("../src/utils/calendar-day-count.ts", import.meta.url), "utf8");
+const calendarEventGestureSource = readFileSync(new URL("../src/utils/calendar-event-gesture.ts", import.meta.url), "utf8");
 const calendarCss = readFileSync(new URL("../src/calendar.css", import.meta.url), "utf8");
 const embedCalendarCss = readFileSync(new URL("../src/embed-calendar.css", import.meta.url), "utf8");
 const settingsUiCss = readFileSync(new URL("../styles-ui.css", import.meta.url), "utf8");
@@ -139,6 +140,18 @@ async function importCalendarExternalDropUtility() {
 async function importCalendarDayCountUtility() {
   const build = await esbuild.build({
     entryPoints: [fileURLToPath(new URL("../src/utils/calendar-day-count.ts", import.meta.url))],
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    write: false,
+  });
+  const bundled = build.outputFiles[0].text;
+  return import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
+}
+
+async function importCalendarEventGestureUtility() {
+  const build = await esbuild.build({
+    entryPoints: [fileURLToPath(new URL("../src/utils/calendar-event-gesture.ts", import.meta.url))],
     bundle: true,
     format: "esm",
     platform: "node",
@@ -1061,6 +1074,55 @@ test("calendar keeps event drag snap separate and continuous view uses configure
   assert.match(continuousSource, /slotDuration=\{formatFullCalendarDuration\(slotDurationMinutes, 30\)\}/);
   assert.match(continuousSource, /snapDuration=\{formatFullCalendarDuration\(snapDurationMinutes, 5\)\}/);
   assert.doesNotMatch(continuousSource, /slotDuration="00:30:00"/);
+});
+
+test("mobile event dragging is owned exclusively by FullCalendar", async () => {
+  const { resolveCalendarEventNativeGesturePolicy } = await importCalendarEventGestureUtility();
+
+  assert.deepEqual(resolveCalendarEventNativeGesturePolicy(false, false), {
+    enableNativeFileDrag: true,
+    enableNativeContextMenu: true,
+  });
+  assert.deepEqual(resolveCalendarEventNativeGesturePolicy(false, true), {
+    enableNativeFileDrag: false,
+    enableNativeContextMenu: true,
+  });
+  assert.deepEqual(resolveCalendarEventNativeGesturePolicy(true, false), {
+    enableNativeFileDrag: false,
+    enableNativeContextMenu: false,
+  });
+  assert.deepEqual(resolveCalendarEventNativeGesturePolicy(true, true), {
+    enableNativeFileDrag: false,
+    enableNativeContextMenu: false,
+  });
+
+  assert.match(calendarEventGestureSource, /FullCalendar owns touch dragging/);
+  assert.match(
+    reactViewSource,
+    /resolveCalendarEventNativeGesturePolicy\(\s*Platform\.isMobile,\s*isAuxiliaryDate,\s*\)/,
+  );
+  assert.match(
+    reactViewSource,
+    /if \(!nativeGesturePolicy\.enableNativeFileDrag\) \{\s*element\.removeAttribute\("draggable"\);/,
+  );
+  assert.match(
+    reactViewSource,
+    /if \(nativeGesturePolicy\.enableNativeContextMenu\) \{[\s\S]*?addEventListener\('contextmenu', contextMenuHandler\);/,
+  );
+  assert.match(reactViewSource, /eventLongPressDelay=\{isMobile \? 600 : 300\}/);
+  assert.match(reactViewSource, /eventDragStart=\{handleDragStart\}/);
+  assert.match(reactViewSource, /eventDragStop=\{handleDragStop\}/);
+  assert.match(continuousSource, /eventLongPressDelay=\{isMobile \? 600 : 300\}/);
+  assert.match(continuousSource, /eventDidMount=\{handleEventMount\}/);
+  assert.match(reactViewSource, /onTouchCancel=\{handleWrapperTouchEnd\}/);
+  assert.match(
+    reactViewSource,
+    /handleWrapperTouchStart[\s\S]*?if \(touchTimerRef\.current\) \{[\s\S]*?clearTimeout\(touchTimerRef\.current\);[\s\S]*?touchTimerRef\.current = null;/,
+  );
+  assert.match(
+    reactViewSource,
+    /if \(mobileSwipeRevealTimerRef\.current\) \{[\s\S]*?mobileSwipeRevealTimerRef\.current = null;[\s\S]*?if \(touchTimerRef\.current\) \{[\s\S]*?touchTimerRef\.current = null;[\s\S]*?setMobileGestureHidden\(false\);/,
+  );
 });
 
 test("external drag-create preview shows the resolved time without changing normal events", () => {

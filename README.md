@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.4.5
+
+- Mobile event moves now give FullCalendar exclusive ownership of the touch long-press gesture. Calendar no longer adds browser-native HTML file dragging to event cards on mobile, preventing iOS/WebView from stealing the touch sequence before the event can move.
+- Touch-generated browser context menus no longer compete with the same long press. The existing mobile single-tap menu and quick double-tap open behavior remain available, while desktop right-click menus and drag-out Obsidian file payloads are unchanged.
+- Interrupted touch gestures now follow the normal end cleanup path. `touchcancel`, repeated touch starts, and Calendar unmount clear the haptic timer and restore mobile UI visibility instead of leaving delayed vibration or hidden controls behind.
+- This backward-compatible correctness patch changes no settings, commands, Base schema, stored event/task data, or plugin APIs. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.4.4
 
 - Timed checkbox tasks now resolve their display interval from the task row instead of the containing storage or Daily Note. A per-view fixed duration wins first, followed by the configured task duration/end field, the canonical `[timeEstimate:: minutes]` fallback, and finally the readability fallback for a genuinely missing interval.
@@ -464,6 +471,7 @@ External calendar diagnostics log invalid URLs, cache hits, in-flight fetch reus
 
 ## Validation Notes
 
+- 2026-08-11 (0.4.5) mobile event-drag validation: the native-gesture policy matrix, desktop file-drag preservation, mobile context-menu isolation, standard/continuous FullCalendar long-press wiring, and touch-cancel cleanup regressions passed. Final full-suite, build/deploy, reload, and artifact verification are recorded in `release-notes/0.4.5.md`.
 - 2026-08-03 (0.4.4) task-duration validation: literal, unit-suffixed, hidden-comment, configured custom, formula, fixed, end-datetime, canonical fallback, missing-duration, resize, timed/all-day round-trip, FullCalendar harness, live-safe CSS-variable, and per-view override regressions passed. All 178 declared tests, TypeScript, the mandatory separate final build/deploy, byte-for-byte artifact comparison, and a full `Reload app without saving` passed. In the reloaded isolated duration Base, 15-, 30-, 60-, and 90-minute task bars remained visibly proportional despite conflicting storage-note frontmatter. The fixture was moved directly to `_archive`; production was not accessed.
 - 2026-07-15: Fixed standalone Calendar Base tabs collapsing an explicit three-day view to two days when workspace sidebars narrowed the leaf. Dedicated tabs now preserve the configured day count, while ordinary markdown/Canvas embeds retain responsive reduction and direct dashboard embeds retain `preserveDayCount`. Added behavioral coverage for the narrow dedicated/embed split; focused coverage passed 25/25, TypeScript and the complete `npm test` suite passed, and the suite's production build deployed `main.js`. Obsidian 1.12.7 was reloaded with `Reload app without saving`; live verification on `home-schedule.base` showed three day columns with both workspace sidebars open, and the TPS Home embedded Calendar also retained three columns.
 - 2026-07-15: Fixed linked Calendar task renaming so every inline-task right-click routes directly to the task-specific chooser and returns before Calendar can compose the source/associated note's file menu. The route emits concise task path, line, and `task-specific` diagnostics. Focused Calendar interaction coverage passed 24/24, including the no-fallthrough regression; TypeScript and the complete `npm test` suite passed, the test suite's production build deployed `main.js`, and the required final production build reported the runtime unchanged. Obsidian 1.12.7 was reloaded with `Reload app without saving`; live right-click on the existing `62854` Calendar task showed `Rename task label...` and task-only actions with no note `Rename Title`. Opening the action displayed `Edit Task label` prefilled with `62854`; the modal was canceled, and the source task line plus `62854.md` title remained unchanged.

@@ -57,6 +57,7 @@ import {
   getAutoRangeViewMode,
   getInclusiveCalendarDayCount,
 } from "./utils/filter-date-utils";
+import { resolveCalendarEventNativeGesturePolicy } from "./utils/calendar-event-gesture";
 
 const DEFAULT_SLOT_MIN_TIME = "00:00:00";
 const DEFAULT_SLOT_MAX_TIME = "24:00:00";
@@ -2490,6 +2491,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       if (!element) return;
       const isAuxiliaryDate = !!event.extendedProps?.isAuxiliaryDate;
       const isArchivedExternalPlaceholder = !!event.extendedProps?.isArchivedExternalPlaceholder;
+      const nativeGesturePolicy = resolveCalendarEventNativeGesturePolicy(
+        Platform.isMobile,
+        isAuxiliaryDate,
+      );
 
       const isNonActiveEvent = !!event.extendedProps?.isNonActive || !!event.extendedProps?.isPast || event.classNames.includes("is-non-active") || event.classNames.includes("is-past");
       const mutedEventOpacity = isCanvasEmbed
@@ -2768,7 +2773,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
           element.removeEventListener("dragstart", previousDragStartHandler);
           delete (element as any)._tpsDragStartHandler;
         }
-        if (isAuxiliaryDate) {
+        if (!nativeGesturePolicy.enableNativeFileDrag) {
           element.removeAttribute("draggable");
         } else {
           element.setAttribute("draggable", "true");
@@ -2851,10 +2856,15 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 	      if (previousContextMouseDownHandler) {
 	        element.removeEventListener("mousedown", previousContextMouseDownHandler);
 	      }
-	      eventContextMenuHandlersRef.current.set(element, contextMenuHandler);
-	      element.addEventListener('contextmenu', contextMenuHandler);
-	      (element as any)._tpsContextMouseDownHandler = contextMouseDownHandler;
-	      element.addEventListener("mousedown", contextMouseDownHandler);
+	      if (nativeGesturePolicy.enableNativeContextMenu) {
+	        eventContextMenuHandlersRef.current.set(element, contextMenuHandler);
+	        element.addEventListener('contextmenu', contextMenuHandler);
+	        (element as any)._tpsContextMouseDownHandler = contextMouseDownHandler;
+	        element.addEventListener("mousedown", contextMouseDownHandler);
+	      } else {
+	        eventContextMenuHandlersRef.current.delete(element);
+	        delete (element as any)._tpsContextMouseDownHandler;
+	      }
 	    },
     [app, basesEntryMap, clearEventClickPreview, highlightTaskLineInHoverPreview, isCanvasEmbed, onEntryClick, onEntryContextMenu, openEntryClickPreview, revealCompletedTaskForPreview],
 	  );
@@ -3491,6 +3501,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       window.clearTimeout(mobileSwipeRevealTimerRef.current);
       mobileSwipeRevealTimerRef.current = null;
     }
+    if (touchTimerRef.current) {
+      window.clearTimeout(touchTimerRef.current);
+      touchTimerRef.current = null;
+    }
     setMobileGestureHidden(false);
     touchTimerRef.current = window.setTimeout(() => {
       if (navigator.vibrate) navigator.vibrate(50);
@@ -3593,6 +3607,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       if (mobileSwipeRevealTimerRef.current) {
         window.clearTimeout(mobileSwipeRevealTimerRef.current);
         mobileSwipeRevealTimerRef.current = null;
+      }
+      if (touchTimerRef.current) {
+        window.clearTimeout(touchTimerRef.current);
+        touchTimerRef.current = null;
       }
       mobileKeyboardBaseHeightRef.current = 0;
       setMobileKeyboardHidden(false);
@@ -3709,6 +3727,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       onDrop={handleExternalDrop}
       onTouchStart={handleWrapperTouchStart}
       onTouchEnd={handleWrapperTouchEnd}
+      onTouchCancel={handleWrapperTouchEnd}
       onTouchMove={handleWrapperTouchMove}
     >
       <style>{CALENDAR_EVENT_DENSITY_CSS}</style>
