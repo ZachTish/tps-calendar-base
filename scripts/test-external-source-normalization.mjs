@@ -180,8 +180,491 @@ function createBareView() {
     getExternalCalendarFilter: () => "",
   };
   view.statusField = "note.status";
+  view.transientProtocolDateKey = null;
+  view.calendarProtocolPreparationToken = null;
+  view.calendarProtocolPreparationPreviousDate = null;
+  view.calendarProtocolPreparationPreviousJumpDate = null;
+  view.calendarProtocolPreparationPreviousTransientDateKey = null;
+  view.calendarProtocolPreparationPreviousSuppressionLogged = false;
+  view.transientProtocolSuppressionLogged = false;
+  view.calendarNavigationEpoch = 0;
+  view.calendarReactRenderGeneration = 0;
+  view.calendarReactRenderGenerationStartedAt = 0;
+  view.activeCalendarUpdateNavigationEpoch = null;
+  view.activeExternalFetchRequestKey = null;
+  view.scheduleRefresh = () => {};
   return view;
 }
+
+test("protocol preparation suppresses range writes and cleans up only its own request", async () => {
+  const view = createBareView();
+  const targetDate = new Date(2026, 7, 14);
+  const renderedDates = [];
+  Object.assign(view, {
+    config: { name: "Today Schedule", set() {} },
+    navigationBoundsStart: null,
+    navigationBoundsEnd: null,
+    renderReactCalendar() {
+      renderedDates.push(view.currentDate ? view.currentDate.getTime() : null);
+    },
+    shouldProcessUpdates: () => true,
+    matchesCalendarProtocolTarget: () => true,
+    updateCalendar: async () => {
+      assert.equal(
+        [
+          view.currentDate.getFullYear(),
+          String(view.currentDate.getMonth() + 1).padStart(2, "0"),
+          String(view.currentDate.getDate()).padStart(2, "0"),
+        ].join("-"),
+        view.transientProtocolDateKey,
+      );
+      view.persistCurrentDate(new Date(2026, 7, 1), "automatic");
+      assert.equal(view.saveDateTimeout ?? null, null);
+    },
+  });
+
+  assert.equal(
+    await view.prepareCalendarProtocolTarget(
+      "Inbox/Calendar QA.base",
+      "Today Schedule",
+      targetDate,
+      "request-1",
+    ),
+    true,
+  );
+  assert.equal(view.transientProtocolDateKey, "2026-08-14");
+  assert.equal(view.calendarNavigationEpoch, 1);
+  assert.equal(view.calendarProtocolPreparationToken, "request-1");
+  assert.equal(view.focusDateTransiently(targetDate, "wrong-request"), false);
+  assert.equal(view.focusDateTransiently(targetDate, "request-1"), true);
+  view.cancelCalendarProtocolPreparation("request-1");
+  assert.equal(view.transientProtocolDateKey, null);
+
+  assert.equal(
+    await view.prepareCalendarProtocolTarget(
+      "Inbox/Calendar QA.base",
+      "Today Schedule",
+      new Date(2026, 7, 15),
+      "request-2",
+    ),
+    true,
+  );
+  view.cancelCalendarProtocolPreparation("request-1");
+  assert.equal(view.transientProtocolDateKey, "2026-08-15");
+  assert.equal(view.calendarProtocolPreparationToken, "request-2");
+  view.cancelCalendarProtocolPreparation("request-2");
+  assert.equal(view.transientProtocolDateKey, null);
+  assert.equal(view.calendarProtocolPreparationToken, null);
+  assert.equal(view.saveDateTimeout ?? null, null);
+  assert.equal(renderedDates.at(-1), null);
+});
+
+test("stale rendered generations cannot overwrite a cancelled focus while explicit user navigation still wins", () => {
+  const view = createBareView();
+  view.config = { name: "Today Schedule", set() {} };
+  view.currentDate = new Date(2026, 6, 31);
+  view.calendarReactRenderGeneration = 8;
+
+  view.handleRenderedDateChange(new Date(2026, 7, 14), "render", 7);
+  assert.equal(view.currentDate.getTime(), new Date(2026, 6, 31).getTime());
+  assert.equal(view.saveDateTimeout ?? null, null);
+
+  view.calendarNavigationEpoch = 1;
+  view.calendarProtocolPreparationToken = "request-1";
+  view.calendarProtocolPreparationNavigationEpoch = 1;
+  view.transientProtocolDateKey = "2026-08-14";
+  view.currentDate = new Date(2026, 7, 14);
+  view.handleRenderedDateChange(new Date(2026, 7, 15), "user", 7);
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 14).getTime());
+  assert.equal(view.calendarProtocolPreparationToken, "request-1");
+  view.handleRenderedDateChange(new Date(2026, 7, 15), "user", 8);
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 15).getTime());
+  assert.equal(view.calendarProtocolPreparationToken, null);
+  assert.equal(view.transientProtocolDateKey, null);
+  if (view.saveDateTimeout) clearTimeout(view.saveDateTimeout);
+});
+
+test("protocol readiness requires a visible active renderer and settlement belongs to the current render generation", () => {
+  const view = createBareView();
+  let shown = false;
+  view.containerEl = { isConnected: true, isShown: () => shown };
+  view.matchesCalendarProtocolTarget = () => true;
+  view.isActiveLeaf = () => true;
+  view.calendarProtocolDataRangeReady = true;
+  view.updateInFlight = false;
+  assert.equal(view.isCalendarProtocolTargetReady("Inbox/Calendar QA.base", "Today Schedule"), false);
+  shown = true;
+  assert.equal(view.isCalendarProtocolTargetReady("Inbox/Calendar QA.base", "Today Schedule"), true);
+
+  view.calendarNavigationEpoch = 3;
+  view.calendarProtocolPreparationNavigationEpoch = 3;
+  view.calendarProtocolPreparationToken = "request-3";
+  view.transientProtocolDateKey = "2026-08-14";
+  view.currentDate = new Date(2026, 7, 14);
+  view.calendarProtocolRenderedDateKey = "2026-08-14";
+  view.calendarReactRenderGeneration = 9;
+  view.calendarProtocolRenderedGeneration = 8;
+  assert.equal(view.isCalendarProtocolFocusSettled(
+    "Inbox/Calendar QA.base",
+    "Today Schedule",
+    new Date(2026, 7, 14),
+    "request-3",
+  ), false);
+  view.calendarProtocolRenderedGeneration = 9;
+  assert.equal(view.isCalendarProtocolFocusSettled(
+    "Inbox/Calendar QA.base",
+    "Today Schedule",
+    new Date(2026, 7, 14),
+    "request-3",
+  ), true);
+});
+
+test("rapid explicit user navigation survives callback generation rollover without admitting an older delayed scroll", () => {
+  const view = createBareView();
+  view.config = { name: "Today Schedule", set() {} };
+  view.containerEl = { isConnected: true, isShown: () => true };
+  view.isActiveLeaf = () => true;
+  view.calendarReactRenderGeneration = 8;
+  view.calendarReactRenderGenerationStartedAt = performance.now();
+  view.currentDate = new Date(2026, 7, 14);
+
+  const firstInteraction = view.calendarReactRenderGenerationStartedAt + 1;
+  view.handleRenderedDateChange(new Date(2026, 7, 15), "user", 8, firstInteraction);
+  const rolledGeneration = view.calendarReactRenderGeneration;
+  const rolledAt = view.calendarReactRenderGenerationStartedAt;
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 15).getTime());
+  assert.equal(rolledGeneration, 9);
+
+  view.handleRenderedDateChange(new Date(2026, 7, 16), "user", 8, rolledAt + 1);
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 16).getTime());
+  assert.equal(view.calendarReactRenderGeneration, 10);
+
+  const currentDate = view.currentDate.getTime();
+  view.handleRenderedDateChange(new Date(2026, 7, 13), "user", 8, rolledAt - 1);
+  assert.equal(view.currentDate.getTime(), currentDate);
+  if (view.saveDateTimeout) clearTimeout(view.saveDateTimeout);
+});
+
+test("user navigation invalidates an older asynchronous preparation refresh", async () => {
+  const view = createBareView();
+  let releaseUpdate;
+  const updateGate = new Promise((resolve) => { releaseUpdate = resolve; });
+  let savedDate = null;
+  const refreshes = [];
+  Object.assign(view, {
+    currentDate: new Date(2026, 6, 31),
+    config: {
+      name: "Today Schedule",
+      set: (_key, value) => { savedDate = value; },
+    },
+    navigationBoundsStart: null,
+    navigationBoundsEnd: null,
+    renderReactCalendar() {},
+    scheduleRefresh: (...args) => { refreshes.push(args); },
+    matchesCalendarProtocolTarget: () => true,
+    updateCalendar: async (_force, navigationEpoch) => {
+      view.activeCalendarUpdateNavigationEpoch = navigationEpoch;
+      await updateGate;
+      view.persistCurrentDate(new Date(2026, 7, 1), "automatic");
+      view.activeCalendarUpdateNavigationEpoch = null;
+    },
+  });
+
+  const preparation = view.prepareCalendarProtocolTarget(
+    "Inbox/Calendar QA.base",
+    "Today Schedule",
+    new Date(2026, 7, 14),
+    "request-async",
+  );
+  await Promise.resolve();
+  view.currentDate = new Date(2026, 7, 16);
+  view.persistCurrentDate(view.currentDate, "user");
+  const userSaveTimeout = view.saveDateTimeout;
+  releaseUpdate();
+
+  assert.equal(await preparation, false);
+  assert.equal(view.calendarNavigationEpoch, 2);
+  assert.equal(view.transientProtocolDateKey, null);
+  assert.equal(view.calendarProtocolPreparationToken, null);
+  assert.equal(view.saveDateTimeout, userSaveTimeout);
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 16).getTime());
+  assert.deepEqual(refreshes, [[0, true, 2]]);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal(savedDate, "2026-08-16");
+});
+
+test("immediate protocol success or cancellation preserves an earned user date save", async () => {
+  const view = createBareView();
+  const savedDates = [];
+  Object.assign(view, {
+    currentDate: new Date(2026, 7, 10),
+    config: {
+      name: "Today Schedule",
+      set: (_key, value) => { savedDates.push(value); },
+    },
+    navigationBoundsStart: null,
+    navigationBoundsEnd: null,
+    renderReactCalendar() {},
+    shouldProcessUpdates: () => true,
+    matchesCalendarProtocolTarget: () => true,
+    updateCalendar: async () => {},
+  });
+
+  view.currentDate = new Date(2026, 7, 11);
+  view.persistCurrentDate(view.currentDate, "user");
+  const successUserSave = view.saveDateTimeout;
+  assert.equal(
+    await view.prepareCalendarProtocolTarget(
+      "Inbox/Calendar QA.base",
+      "Today Schedule",
+      new Date(2026, 7, 14),
+      "request-success",
+    ),
+    true,
+  );
+  assert.equal(view.saveDateTimeout, successUserSave);
+  assert.equal(view.saveDateTimeoutSource, "user");
+  assert.equal(
+    view.focusDateTransiently(new Date(2026, 7, 14), "request-success"),
+    true,
+  );
+  assert.equal(view.saveDateTimeout, successUserSave);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.deepEqual(savedDates, ["2026-08-11"]);
+
+  view.currentDate = new Date(2026, 7, 12);
+  view.persistCurrentDate(view.currentDate, "user");
+  const cancelledUserSave = view.saveDateTimeout;
+  assert.equal(
+    await view.prepareCalendarProtocolTarget(
+      "Inbox/Calendar QA.base",
+      "Today Schedule",
+      new Date(2026, 7, 15),
+      "request-cancelled",
+    ),
+    true,
+  );
+  view.cancelCalendarProtocolPreparation("request-cancelled");
+  assert.equal(view.saveDateTimeout, cancelledUserSave);
+  assert.equal(view.saveDateTimeoutSource, "user");
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 12).getTime());
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.deepEqual(savedDates, ["2026-08-11", "2026-08-12"]);
+});
+
+test("stale queued updates cannot replace work for a newer navigation", async () => {
+  const view = createBareView();
+  let releaseUpdate;
+  const updateGate = new Promise((resolve) => { releaseUpdate = resolve; });
+  const scheduled = [];
+  Object.assign(view, {
+    updateInFlight: false,
+    queuedUpdateForce: null,
+    queuedUpdateNavigationEpoch: null,
+    calendarProtocolDataRangeReady: true,
+    shouldProcessUpdates: () => true,
+    traceRender() {},
+    updateCalendarCore: async () => { await updateGate; },
+    scheduleRefresh: (...args) => { scheduled.push(args); },
+  });
+
+  const activeUpdate = view.updateCalendar(false, 0);
+  await Promise.resolve();
+  await view.updateCalendar(true, 0);
+  view.calendarNavigationEpoch = 1;
+  releaseUpdate();
+  await activeUpdate;
+
+  assert.deepEqual(scheduled, []);
+  assert.equal(view.queuedUpdateForce, null);
+  assert.equal(view.queuedUpdateNavigationEpoch, null);
+});
+
+test("a newer navigation fetch supersedes an older external-calendar response", async () => {
+  const view = createBareView();
+  const pending = new Map();
+  const updates = [];
+  Object.assign(view, {
+    cachedExternalEvents: [],
+    isFetchingExternalEvents: false,
+    externalFetchGeneration: 0,
+    activeExternalFetchNavigationEpoch: null,
+    lastExternalFetch: 0,
+    lastEditorChangeAt: 0,
+    visibleExternalCalendarUrls: ["https://calendar.example/feed.ics"],
+    shouldProcessUpdates: () => true,
+    externalCalendarService: {
+      fetchEvents: (_url, start) => new Promise((resolve) => {
+        pending.set(start.toISOString(), resolve);
+      }),
+    },
+    config: { name: "Today Schedule", set() {} },
+    navigationBoundsStart: null,
+    navigationBoundsEnd: null,
+    renderReactCalendar() {},
+    matchesCalendarProtocolTarget: () => true,
+  });
+
+  const oldStart = new Date("2026-07-01T00:00:00.000Z");
+  const oldEnd = new Date("2026-09-01T00:00:00.000Z");
+  const newStart = new Date("2026-08-01T00:00:00.000Z");
+  const newEnd = new Date("2026-10-01T00:00:00.000Z");
+  const oldFetch = view.refreshExternalEvents(oldStart, oldEnd, 0);
+  await Promise.resolve();
+  view.updateCalendar = async (_force, navigationEpoch) => {
+    updates.push(navigationEpoch);
+    await view.refreshExternalEvents(newStart, newEnd, navigationEpoch);
+  };
+  const preparation = view.prepareCalendarProtocolTarget(
+    "Inbox/Calendar QA.base",
+    "Today Schedule",
+    new Date(2026, 7, 14),
+    "request-fetch",
+  );
+  await Promise.resolve();
+
+  pending.get(oldStart.toISOString())([externalEvent({ id: "old" })]);
+  await oldFetch;
+  assert.deepEqual(view.cachedExternalEvents, []);
+  assert.equal(view.lastExternalFetch, 0);
+  assert.deepEqual(updates, [1]);
+
+  pending.get(newStart.toISOString())([externalEvent({ id: "new" })]);
+  assert.equal(await preparation, true);
+  assert.deepEqual(view.cachedExternalEvents.map((event) => event.id), ["new"]);
+  assert.ok(view.lastExternalFetch > 0);
+  assert.deepEqual(updates, [1, 1]);
+  assert.equal(view.isFetchingExternalEvents, false);
+  assert.equal(view.activeExternalFetchNavigationEpoch, null);
+});
+
+test("external-calendar cache freshness is scoped to sources and the requested day", () => {
+  const view = createBareView();
+  const now = Date.now();
+  Object.assign(view, {
+    visibleExternalCalendarUrls: ["https://calendar.example/feed.ics"],
+    lastExternalFetch: now - 1000,
+    lastExternalFetchRangeStart: new Date("2026-07-01T00:00:00.000Z").getTime(),
+    lastExternalFetchRangeEnd: new Date("2026-09-01T00:00:00.000Z").getTime(),
+    lastExternalFetchSourceSignature: "https://calendar.example/feed.ics",
+  });
+
+  const coveredStart = new Date("2026-07-15T00:00:00.000Z");
+  const coveredEnd = new Date("2026-08-31T00:00:00.000Z");
+  const overlappingEnd = new Date("2026-10-01T00:00:00.000Z");
+  assert.equal(view.shouldRefreshExternalEvents(coveredStart, coveredEnd, now), false);
+  assert.equal(view.shouldRefreshExternalEvents(coveredStart, overlappingEnd, now), true);
+  view.visibleExternalCalendarUrls = ["https://other.example/feed.ics"];
+  assert.equal(view.shouldRefreshExternalEvents(coveredStart, coveredEnd, now), true);
+  view.visibleExternalCalendarUrls = ["https://calendar.example/feed.ics"];
+  assert.equal(view.shouldRefreshExternalEvents(coveredStart, coveredEnd, now + 60001), true);
+});
+
+test("one-day navigation reuses the wide external-calendar prefetch window", () => {
+  const view = createBareView();
+  const now = Date.now();
+  Object.assign(view, {
+    viewMode: "3d",
+    filterRangeAuto: false,
+    hasExplicitFilterRange: false,
+    weekStartDay: 1,
+    visibleExternalCalendarUrls: ["https://calendar.example/feed.ics"],
+    lastExternalFetch: now - 1000,
+    lastExternalFetchRangeStart: new Date(2026, 6, 15).getTime(),
+    lastExternalFetchRangeEnd: new Date(2026, 9, 13).getTime(),
+    lastExternalFetchSourceSignature: "https://calendar.example/feed.ics",
+  });
+
+  const nextDayRange = view.resolveExternalCalendarVisibleRange(
+    new Date(2026, 7, 15),
+  );
+  assert.equal(
+    view.shouldRefreshExternalEvents(nextDayRange.start, nextDayRange.end, now),
+    false,
+  );
+
+  const outsideBufferRange = view.resolveExternalCalendarVisibleRange(
+    new Date(2026, 9, 13),
+  );
+  assert.equal(
+    view.shouldRefreshExternalEvents(
+      outsideBufferRange.start,
+      outsideBufferRange.end,
+      now,
+    ),
+    true,
+  );
+});
+
+test("continuous view freshness covers a fully expanded rolling window", () => {
+  const view = createBareView();
+  const now = Date.now();
+  Object.assign(view, {
+    viewMode: "continuous",
+    filterRangeAuto: false,
+    hasExplicitFilterRange: false,
+    weekStartDay: 1,
+    visibleExternalCalendarUrls: ["https://calendar.example/feed.ics"],
+    lastExternalFetch: now - 1000,
+    lastExternalFetchRangeStart: new Date(2026, 0, 1).getTime(),
+    lastExternalFetchRangeEnd: new Date(2026, 2, 2).getTime(),
+    lastExternalFetchSourceSignature: "https://calendar.example/feed.ics",
+  });
+
+  const edgeRange = view.resolveExternalCalendarVisibleRange(
+    new Date(2026, 2, 1),
+  );
+  assert.equal(edgeRange.start.getTime(), new Date(2026, 1, 18).getTime());
+  assert.equal(edgeRange.end.getTime(), new Date(2026, 2, 13).getTime());
+  assert.equal(
+    view.shouldRefreshExternalEvents(edgeRange.start, edgeRange.end, now),
+    true,
+  );
+});
+
+test("same-epoch source changes supersede an in-flight external request", async () => {
+  const view = createBareView();
+  const pending = new Map();
+  const updates = [];
+  const start = new Date("2026-08-01T00:00:00.000Z");
+  const end = new Date("2026-10-01T00:00:00.000Z");
+  Object.assign(view, {
+    cachedExternalEvents: [],
+    isFetchingExternalEvents: false,
+    externalFetchGeneration: 0,
+    activeExternalFetchNavigationEpoch: null,
+    activeExternalFetchRequestKey: null,
+    lastExternalFetch: 0,
+    lastEditorChangeAt: 0,
+    visibleExternalCalendarUrls: ["https://old.example/feed.ics"],
+    shouldProcessUpdates: () => true,
+    externalCalendarService: {
+      fetchEvents: (url) => new Promise((resolve) => { pending.set(url, resolve); }),
+    },
+    updateCalendar: async (...args) => { updates.push(args); },
+  });
+
+  const oldFetch = view.refreshExternalEvents(start, end, 0);
+  await Promise.resolve();
+  view.visibleExternalCalendarUrls = ["https://new.example/feed.ics"];
+  const newFetch = view.refreshExternalEvents(start, end, 0);
+  await Promise.resolve();
+
+  pending.get("https://old.example/feed.ics")([
+    externalEvent({ id: "old-source", sourceUrl: "https://old.example/feed.ics" }),
+  ]);
+  await oldFetch;
+  assert.deepEqual(view.cachedExternalEvents, []);
+
+  pending.get("https://new.example/feed.ics")([
+    externalEvent({ id: "new-source", sourceUrl: "https://new.example/feed.ics" }),
+  ]);
+  await newFetch;
+  assert.deepEqual(view.cachedExternalEvents.map((event) => event.id), ["new-source"]);
+  assert.equal(view.lastExternalFetchSourceSignature, "https://new.example/feed.ics");
+  assert.deepEqual(updates, [[false, 0]]);
+  assert.equal(view.activeExternalFetchRequestKey, null);
+});
 
 function calendarRangeEntry(year, monthIndex, day) {
   return {
@@ -315,9 +798,9 @@ function createLocalMatchView(frontmatter, events) {
   view.useEndDuration = true;
   view.currentDate = startDate;
   view.cachedExternalEvents = events;
-  view.visibleExternalCalendarUrls = new Set(
+  view.visibleExternalCalendarUrls = Array.from(new Set(
     events.map((event) => event.sourceUrl).filter(Boolean),
-  );
+  ));
   view.lastExternalFetch = Date.now();
   view.externalCalendarFilterTerms = [];
   view.pendingUpdates = new Map();

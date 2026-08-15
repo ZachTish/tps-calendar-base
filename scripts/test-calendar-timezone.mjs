@@ -450,6 +450,7 @@ test('manual multi-day selections stay centered while exact ranges stay start-an
   const {
     clampCalendarNavigationDate,
     getCalendarAnchorForStart,
+    getCalendarPresentationStartForAnchor,
     getCalendarStartForAnchor,
     resolveCalendarRangeAnchor,
     shiftCalendarMonthStart,
@@ -466,6 +467,14 @@ test('manual multi-day selections stay centered while exact ranges stay start-an
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7, 1)), '2026-07-27');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 2, 0)), '2026-07-30');
   assert.equal(formatLocalDate(getCalendarStartForAnchor(anchor, 'week', 7, 0)), '2026-07-26');
+  assert.equal(
+    formatLocalDate(getCalendarPresentationStartForAnchor(anchor, 'month', 31)),
+    '2026-07-01',
+  );
+  assert.equal(
+    formatLocalDate(getCalendarPresentationStartForAnchor(anchor, '3d', 3)),
+    '2026-07-29',
+  );
   assert.equal(
     formatLocalDate(getCalendarStartForAnchor(new Date(2027, 0, 3), 'week', 7, 1)),
     '2026-12-28',
@@ -790,7 +799,10 @@ test('calendar day-count paths use shared calendar-day helper', () => {
   assert.match(reactSource, /"timeGridRange-2": \{ type: "timeGrid", duration: \{ days: 2 \}/);
   assert.match(reactSource, /"timeGridRange-6": \{ type: "timeGrid", duration: \{ days: 6 \}/);
   assert.match(hostSource, /getAutoRangeViewMode\(diffDays\)/);
-  assert.match(reactSource, /lastObservedCurrentDatePropRef\.current === currentDate/);
+  assert.doesNotMatch(
+    reactSource,
+    /if \(lastObservedCurrentDatePropRef\.current === currentDate\) return/,
+  );
   assert.match(reactSource, /lastAppliedJumpTargetRef\.current === jumpTargetDate/);
   assert.match(reactSource, /displayedAnchorRef\.current \?\? initialAnchorRef\.current \?\? api\.getDate\(\)/);
   assert.match(

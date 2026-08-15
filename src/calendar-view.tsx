@@ -22,7 +22,11 @@ import {
 } from "obsidian";
 import { StrictMode } from "react";
 import { createRoot, Root } from "react-dom/client";
-import { CalendarReactView, CalendarEntry } from "./CalendarReactView";
+import {
+  CalendarReactView,
+  CalendarEntry,
+  type CalendarDateChangeSource,
+} from "./CalendarReactView";
 import { AppContext } from "./context";
 import { NewEventService } from "./services/new-event-service";
 import { CalendarPluginBridge } from "./plugin-interface";
@@ -90,6 +94,7 @@ import { getInclusiveCalendarDisplayBounds } from "./utils/calendar-display-inte
 import { isCalendarEntryDisplayedAllDay } from "./utils/calendar-entry-all-day";
 import {
   clampCalendarNavigationDate,
+  getCalendarStartForAnchor,
   resolveCalendarRangeAnchor,
   shiftCalendarMonthStart,
 } from "./utils/calendar-day-count";
@@ -112,6 +117,13 @@ import {
   resolveShowNowIndicator,
   snapshotCalendarDateKey,
 } from "./utils/view-config";
+import {
+  canApplyAutomaticCalendarDate,
+  isCalendarProtocolRendererReady,
+  resolveCalendarProtocolDatePersistence,
+  shouldApplyCalendarProtocolDateChange,
+  type CalendarProtocolDateChangeSource,
+} from "./utils/calendar-open-protocol";
 import {
   extractCalendarFormulaDefinitions,
   getCalendarFormulaName,
@@ -507,6 +519,19 @@ export class CalendarView extends BasesView {
   private showFullDay: boolean = false;
   private currentDate: Date | null = null;
   private jumpTargetDate: Date | null = null;
+  private transientProtocolDateKey: string | null = null;
+  private calendarProtocolPreparationToken: string | null = null;
+  private calendarProtocolPreparationNavigationEpoch: number | null = null;
+  private calendarProtocolRenderedDateKey: string | null = null;
+  private calendarProtocolRenderedGeneration: number | null = null;
+  private calendarProtocolPreparationPreviousDate: Date | null = null;
+  private calendarProtocolPreparationPreviousJumpDate: Date | null = null;
+  private calendarProtocolPreparationPreviousTransientDateKey: string | null = null;
+  private calendarProtocolPreparationPreviousSuppressionLogged = false;
+  private calendarReactRenderGeneration = 0;
+  private calendarReactRenderGenerationStartedAt = 0;
+  private transientProtocolSuppressionLogged = false;
+  private calendarProtocolDataRangeReady = false;
   private dayCount: number = 7;
   private navStep: number = 7;
   private minHour: string = "";
@@ -527,6 +552,9 @@ export class CalendarView extends BasesView {
   // private showHiddenEvents: boolean = false; // Removed per user request
   private cachedExternalEvents: ExternalCalendarEvent[] = [];
   private isFetchingExternalEvents: boolean = false;
+  private externalFetchGeneration = 0;
+  private activeExternalFetchNavigationEpoch: number | null = null;
+  private activeExternalFetchRequestKey: string | null = null;
   private currentBaseFileFilterSources: unknown[] = [];
   private formulaDefinitions: CalendarFormulaDefinitions = {};
   private formulaApi: CalendarFormulaApi | null = null;
@@ -558,6 +586,7 @@ export class CalendarView extends BasesView {
   private lastAutoRangeKey: string | null = null; // Tracks last range to detect significant changes
   private lastLoadedViewName: string | null = null; // Prevents one Base view from inheriting another view's range
   private saveDateTimeout: ReturnType<typeof setTimeout> | null = null; // Debounce timer for date persistence
+  private saveDateTimeoutSource: CalendarProtocolDateChangeSource | null = null;
   private explicitViewModePinned = false;
 
   // Context-aware initial date detection.
@@ -592,6 +621,9 @@ export class CalendarView extends BasesView {
   private lastResizeRenderSignature = "";
   private updateInFlight = false;
   private queuedUpdateForce: boolean | null = null;
+  private queuedUpdateNavigationEpoch: number | null = null;
+  private activeCalendarUpdateNavigationEpoch: number | null = null;
+  private calendarNavigationEpoch = 0;
   private hasRenderedCalendar = false;
   private toolbarCreateInFlight = false;
 
@@ -599,6 +631,9 @@ export class CalendarView extends BasesView {
 
   private lastAutoCreateCheck: number = 0;
   private lastExternalFetch: number = 0;
+  private lastExternalFetchRangeStart: number | null = null;
+  private lastExternalFetchRangeEnd: number | null = null;
+  private lastExternalFetchSourceSignature = "";
   private lastFrontmatterByPath: Map<string, string> = new Map();
   private lastEditorChangeAt: number = 0;
   private readonly typingQuietWindowMs: number = 4000;
@@ -872,7 +907,7 @@ export class CalendarView extends BasesView {
       if (val) {
         const [y, m, d] = val.split('-').map(Number);
         const safeDate = new Date(y, m - 1, d);
-        this.currentDate = safeDate;
+        this.handleRenderedDateChange(safeDate, "user");
         this.renderReactCalendar();
       }
     });
@@ -938,6 +973,7 @@ export class CalendarView extends BasesView {
   }
 
   onunload(): void {
+    this.advanceCalendarReactRenderGeneration();
     (this.plugin as any)?.unregisterCalendarViewInstance?.(this);
     if (this.refreshTimeout !== null) {
       window.clearTimeout(this.refreshTimeout);
@@ -966,7 +1002,19 @@ export class CalendarView extends BasesView {
     if (this.saveDateTimeout) {
       clearTimeout(this.saveDateTimeout);
       this.saveDateTimeout = null;
+      this.saveDateTimeoutSource = null;
     }
+    this.transientProtocolDateKey = null;
+    this.calendarProtocolPreparationToken = null;
+    this.calendarProtocolPreparationNavigationEpoch = null;
+    this.calendarProtocolRenderedDateKey = null;
+    this.calendarProtocolRenderedGeneration = null;
+    this.calendarProtocolPreparationPreviousDate = null;
+    this.calendarProtocolPreparationPreviousJumpDate = null;
+    this.calendarProtocolPreparationPreviousTransientDateKey = null;
+    this.calendarProtocolPreparationPreviousSuppressionLogged = false;
+    this.transientProtocolSuppressionLogged = false;
+    this.calendarProtocolDataRangeReady = false;
     if (this.dayPickerAction) {
       this.dayPickerAction.remove();
       this.dayPickerAction = null;
@@ -1155,9 +1203,12 @@ export class CalendarView extends BasesView {
       && this.lastLoadedViewName !== activeViewName;
     this.lastLoadedViewName = activeViewName;
     if (viewChanged) {
+      this.calendarNavigationEpoch += 1;
+      this.advanceCalendarReactRenderGeneration();
       if (this.saveDateTimeout) {
         clearTimeout(this.saveDateTimeout);
         this.saveDateTimeout = null;
+        this.saveDateTimeoutSource = null;
       }
       this.autoRangeInitialized = false;
       this.lastAutoRangeKey = null;
@@ -1173,6 +1224,17 @@ export class CalendarView extends BasesView {
       this.navigationLockedByAutoRange = false;
       this.currentDate = null;
       this.jumpTargetDate = null;
+      this.transientProtocolDateKey = null;
+      this.calendarProtocolPreparationToken = null;
+      this.calendarProtocolPreparationNavigationEpoch = null;
+      this.calendarProtocolRenderedDateKey = null;
+      this.calendarProtocolRenderedGeneration = null;
+      this.calendarProtocolPreparationPreviousDate = null;
+      this.calendarProtocolPreparationPreviousJumpDate = null;
+      this.calendarProtocolPreparationPreviousTransientDateKey = null;
+      this.calendarProtocolPreparationPreviousSuppressionLogged = false;
+      this.transientProtocolSuppressionLogged = false;
+      this.calendarProtocolDataRangeReady = false;
     }
     // console.log("[DEBUG-CALENDAR-V2] loadConfig: Loading configuration...");
     // Date properties
@@ -1380,10 +1442,11 @@ export class CalendarView extends BasesView {
   private scheduleDataRetry(): void {
     if (this.pendingDataRetryId !== null) return;
     if (this.pendingDataRetryCount >= this.pendingDataMaxRetries) return;
+    const navigationEpoch = this.calendarNavigationEpoch;
     this.pendingDataRetryId = window.setTimeout(() => {
       this.pendingDataRetryId = null;
       this.pendingDataRetryCount += 1;
-      this.updateCalendar();
+      this.updateCalendar(false, navigationEpoch);
     }, this.withStartupQuietDelay(250, false));
   }
 
@@ -1419,25 +1482,65 @@ export class CalendarView extends BasesView {
     return null;
   }
 
-  public async updateCalendar(force = false): Promise<void> {
+  public async updateCalendar(
+    force = false,
+    navigationEpoch = this.calendarNavigationEpoch,
+  ): Promise<void> {
+    if (navigationEpoch !== this.calendarNavigationEpoch) {
+      this.traceRender("update:skip:stale-navigation", {
+        requestedEpoch: navigationEpoch,
+        currentEpoch: this.calendarNavigationEpoch,
+      });
+      return;
+    }
     if (this.updateInFlight) {
+      this.calendarProtocolDataRangeReady = false;
       this.queuedUpdateForce = this.queuedUpdateForce === true || force;
-      this.traceRender("update:queued", { force, queuedForce: this.queuedUpdateForce });
+      this.queuedUpdateNavigationEpoch = navigationEpoch;
+      this.traceRender("update:queued", {
+        force,
+        queuedForce: this.queuedUpdateForce,
+        navigationEpoch,
+      });
       return;
     }
 
+    this.calendarProtocolDataRangeReady = false;
     this.updateInFlight = true;
+    this.activeCalendarUpdateNavigationEpoch = navigationEpoch;
     try {
       await this.updateCalendarCore(force);
     } finally {
       this.updateInFlight = false;
+      this.activeCalendarUpdateNavigationEpoch = null;
       const queuedForce = this.queuedUpdateForce;
+      const queuedNavigationEpoch = this.queuedUpdateNavigationEpoch;
       this.queuedUpdateForce = null;
-      if (queuedForce !== null && this.shouldProcessUpdates()) {
-        this.traceRender("update:run-queued", { force: queuedForce });
-        this.scheduleRefresh(80, queuedForce);
+      this.queuedUpdateNavigationEpoch = null;
+      if (
+        queuedForce !== null
+        && queuedNavigationEpoch !== null
+        && queuedNavigationEpoch === this.calendarNavigationEpoch
+        && this.shouldProcessUpdates()
+      ) {
+        this.calendarProtocolDataRangeReady = false;
+        this.traceRender("update:run-queued", {
+          force: queuedForce,
+          navigationEpoch: queuedNavigationEpoch,
+        });
+        this.scheduleRefresh(80, queuedForce, queuedNavigationEpoch);
       }
     }
+  }
+
+  private isActiveCalendarUpdateNavigationCurrent(): boolean {
+    return this.activeCalendarUpdateNavigationEpoch === null
+      || this.activeCalendarUpdateNavigationEpoch === this.calendarNavigationEpoch;
+  }
+
+  private canApplyAutomaticDateForActiveUpdate(): boolean {
+    return this.isActiveCalendarUpdateNavigationCurrent()
+      && canApplyAutomaticCalendarDate(this.transientProtocolDateKey);
   }
 
   private async updateCalendarCore(force = false): Promise<void> {
@@ -1510,6 +1613,7 @@ export class CalendarView extends BasesView {
     calendarStart.setDate(calendarStart.getDate() - 30);
     const calendarEnd = new Date(baseDate);
     calendarEnd.setDate(calendarEnd.getDate() + 60);
+    const visibleExternalRange = this.resolveExternalCalendarVisibleRange(baseDate);
 
     // Fetch external calendar events if configured
     // 1. Fetch external calendar events FIRST
@@ -1538,9 +1642,18 @@ export class CalendarView extends BasesView {
       externalFilterTerms: this.externalCalendarFilterTerms,
     });
     // Trigger background fetch (throttled to 1 minute to prevent infinite loops)
-    const timeSinceLastFetch = Date.now() - this.lastExternalFetch;
-    if (timeSinceLastFetch > 60000 && !recentlyTyping) {
-      this.refreshExternalEvents(calendarStart, calendarEnd);
+    if (
+      this.shouldRefreshExternalEvents(
+        visibleExternalRange.start,
+        visibleExternalRange.end,
+      )
+      && !recentlyTyping
+    ) {
+      this.refreshExternalEvents(
+        calendarStart,
+        calendarEnd,
+        this.activeCalendarUpdateNavigationEpoch ?? this.calendarNavigationEpoch,
+      );
     }
 
     // 2. Process local entries
@@ -2179,6 +2292,14 @@ export class CalendarView extends BasesView {
 
     this.containerEl.removeClass("is-loading");
     if (!this.shouldProcessUpdates()) return;
+    if (!this.isActiveCalendarUpdateNavigationCurrent()) {
+      this.traceRender("update:discard:stale-navigation", {
+        requestedEpoch: this.activeCalendarUpdateNavigationEpoch,
+        currentEpoch: this.calendarNavigationEpoch,
+      });
+      return;
+    }
+    this.calendarProtocolDataRangeReady = true;
     this.renderReactCalendar();
     this.updateBasesHeaderOffset(); // Ensure layout is correct
     window.setTimeout(() => this.updateBasesHeaderOffset(), 120);
@@ -2509,7 +2630,10 @@ export class CalendarView extends BasesView {
       this.hasExplicitFilterRange = false;
       this.navigationLockedByAutoRange = false;
       // Only reset to today on first load, not on subsequent refreshes
-      if (!this.autoRangeInitialized) {
+      if (
+        !this.autoRangeInitialized
+        && this.canApplyAutomaticDateForActiveUpdate()
+      ) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         this.currentDate = today;
@@ -2551,7 +2675,9 @@ export class CalendarView extends BasesView {
     const rangeKey = `${hasExplicitBounds ? "explicit" : "entries"}-${startOfMinDay.getTime()}-${startOfMaxDay.getTime()}`;
     const rangeChanged = this.lastAutoRangeKey !== rangeKey;
     this.lastAutoRangeKey = rangeKey;
-    const shouldApplyAutoRangeDate = !this.autoRangeInitialized || rangeChanged || !this.currentDate;
+    const shouldApplyAutoRangeDate =
+      this.canApplyAutomaticDateForActiveUpdate()
+      && (!this.autoRangeInitialized || rangeChanged || !this.currentDate);
 
     // Explicit bounds should constrain navigation, not disable it outright.
     this.navigationLockedByAutoRange = false;
@@ -2688,7 +2814,10 @@ export class CalendarView extends BasesView {
         // Apply the embedded context date when the parent/context changes, then
         // leave user navigation alone during later data refreshes.
         detectedDate.setHours(0, 0, 0, 0);
-        if (!this.currentDate || this.contextDateLastAppliedKey !== dateLogKey) {
+        if (
+          this.canApplyAutomaticDateForActiveUpdate()
+          && (!this.currentDate || this.contextDateLastAppliedKey !== dateLogKey)
+        ) {
           this.currentDate = detectedDate;
           this.contextDateLastAppliedKey = dateLogKey;
         }
@@ -2704,8 +2833,10 @@ export class CalendarView extends BasesView {
         if (this.contextDateLastAppliedKey === noDateKey) return;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        this.currentDate = today;
-        this.persistCurrentDate(today);
+        if (this.canApplyAutomaticDateForActiveUpdate()) {
+          this.currentDate = today;
+          this.persistCurrentDate(today);
+        }
         this.contextDateLastAppliedParentPath = parentNote;
         this.contextDateLastAppliedKey = noDateKey;
         this.lastLoggedContextDateDetectedKey = null;
@@ -2961,8 +3092,19 @@ export class CalendarView extends BasesView {
     return null;
   }
 
-  private async refreshExternalEvents(start: Date, end: Date): Promise<void> {
+  private async refreshExternalEvents(
+    start: Date,
+    end: Date,
+    navigationEpoch = this.calendarNavigationEpoch,
+  ): Promise<void> {
     if (!this.shouldProcessUpdates()) {
+      return;
+    }
+    if (navigationEpoch !== this.calendarNavigationEpoch) {
+      logger.flow("CalendarProtocol", "external-fetch:skip-stale-navigation", {
+        requestedEpoch: navigationEpoch,
+        currentEpoch: this.calendarNavigationEpoch,
+      });
       return;
     }
     // All devices fetch and display external events
@@ -2977,23 +3119,43 @@ export class CalendarView extends BasesView {
       return;
     }
 
-    if (this.isFetchingExternalEvents || this.visibleExternalCalendarUrls.length === 0) {
+    const sourceURLs = [...this.visibleExternalCalendarUrls];
+    const sourceSignature = sourceURLs.join("\n");
+    const requestKey = [
+      navigationEpoch,
+      start.getTime(),
+      end.getTime(),
+      sourceSignature,
+    ].join("|");
+    if (
+      (this.isFetchingExternalEvents
+        && this.activeExternalFetchRequestKey === requestKey)
+      || sourceURLs.length === 0
+    ) {
       logger.log("[CalendarView] Skipping external fetch", {
         isFetchingExternalEvents: this.isFetchingExternalEvents,
-        visibleExternalCalendarUrls: this.visibleExternalCalendarUrls,
+        activeNavigationEpoch: this.activeExternalFetchNavigationEpoch,
+        sameRequestInFlight: this.activeExternalFetchRequestKey === requestKey,
+        requestedNavigationEpoch: navigationEpoch,
+        visibleExternalCalendarUrls: sourceURLs,
       });
       return;
     }
 
+    const fetchGeneration = ++this.externalFetchGeneration;
     this.isFetchingExternalEvents = true;
+    this.activeExternalFetchNavigationEpoch = navigationEpoch;
+    this.activeExternalFetchRequestKey = requestKey;
     logger.log("[CalendarView] Fetching external events", {
       start: start.toISOString(),
       end: end.toISOString(),
-      visibleExternalCalendarUrls: this.visibleExternalCalendarUrls,
+      fetchGeneration,
+      navigationEpoch,
+      visibleExternalCalendarUrls: sourceURLs,
     });
 
     try {
-      const externalPromises = this.visibleExternalCalendarUrls.map((url) =>
+      const externalPromises = sourceURLs.map((url) =>
         this.externalCalendarService.fetchEvents(url, start, end, false, true),
       );
 
@@ -3003,31 +3165,151 @@ export class CalendarView extends BasesView {
       results.forEach((result, index) => {
         if (result.status === "fulfilled") {
           logger.log("[CalendarView] External fetch result", {
-            url: this.visibleExternalCalendarUrls[index],
+            url: sourceURLs[index],
             count: result.value.length,
           });
           newEvents.push(...result.value);
         } else {
           logger.warn("[CalendarView] External fetch failed", {
-            url: this.visibleExternalCalendarUrls[index],
+            url: sourceURLs[index],
             reason: result.reason,
           });
         }
       });
 
+      if (
+        fetchGeneration !== this.externalFetchGeneration
+        || navigationEpoch !== this.calendarNavigationEpoch
+        || sourceSignature !== this.visibleExternalCalendarUrls.join("\n")
+      ) {
+        logger.flow("CalendarProtocol", "external-fetch:discard-stale-navigation", {
+          fetchGeneration,
+          currentFetchGeneration: this.externalFetchGeneration,
+          requestedEpoch: navigationEpoch,
+          currentEpoch: this.calendarNavigationEpoch,
+          sourceChanged: sourceSignature !== this.visibleExternalCalendarUrls.join("\n"),
+        });
+        return;
+      }
+
       this.cachedExternalEvents = newEvents;
       this.lastExternalFetch = Date.now();
+      this.lastExternalFetchRangeStart = start.getTime();
+      this.lastExternalFetchRangeEnd = end.getTime();
+      this.lastExternalFetchSourceSignature = sourceSignature;
       logger.log("[CalendarView] External fetch complete", {
         totalEvents: newEvents.length,
+        fetchGeneration,
+        navigationEpoch,
         sourceUrls: Array.from(new Set(newEvents.map((event) => event.sourceUrl || ""))).filter(Boolean),
       });
-      this.updateCalendar();
+      this.updateCalendar(false, navigationEpoch);
 
     } catch (error) {
       logger.error("[CalendarView] Error fetching external events:", error);
     } finally {
-      this.isFetchingExternalEvents = false;
+      if (fetchGeneration === this.externalFetchGeneration) {
+        this.isFetchingExternalEvents = false;
+        this.activeExternalFetchNavigationEpoch = null;
+        this.activeExternalFetchRequestKey = null;
+      }
     }
+  }
+
+  private shouldRefreshExternalEvents(
+    requiredStart: Date,
+    requiredEnd: Date,
+    now = Date.now(),
+  ): boolean {
+    const requiredStartTime = requiredStart.getTime();
+    const requiredEndTime = requiredEnd.getTime();
+    if (
+      !Number.isFinite(requiredStartTime)
+      || !Number.isFinite(requiredEndTime)
+      || requiredEndTime < requiredStartTime
+    ) return true;
+    const sourceSignature = this.visibleExternalCalendarUrls.join("\n");
+    const cachedRangeCoversRequest =
+      this.lastExternalFetchRangeStart !== null
+      && this.lastExternalFetchRangeEnd !== null
+      && this.lastExternalFetchRangeStart <= requiredStartTime
+      && requiredEndTime <= this.lastExternalFetchRangeEnd;
+    return !cachedRangeCoversRequest
+      || this.lastExternalFetchSourceSignature !== sourceSignature
+      || now - this.lastExternalFetch > 60000;
+  }
+
+  /**
+   * Returns the smallest conservative range that the active FullCalendar view
+   * can display. External feeds are still fetched with a wide buffer, but
+   * ordinary navigation inside that buffer must not bypass the service cache
+   * and issue another network request on every day step.
+   */
+  private resolveExternalCalendarVisibleRange(
+    anchor: Date,
+  ): { start: Date; end: Date } {
+    const safeAnchor = new Date(anchor);
+    if (Number.isNaN(safeAnchor.getTime())) {
+      return { start: safeAnchor, end: safeAnchor };
+    }
+    safeAnchor.setHours(0, 0, 0, 0);
+
+    const resolvedMode = this.viewMode === "filter-based"
+      ? getAutoRangeViewMode(Math.max(1, this.filterRangeDays || 7))
+      : this.viewMode;
+    const safeWeekStartDay = Number.isFinite(this.weekStartDay)
+      ? Math.max(0, Math.min(6, Math.round(this.weekStartDay)))
+      : 1;
+
+    if (resolvedMode === "month") {
+      const start = new Date(
+        safeAnchor.getFullYear(),
+        safeAnchor.getMonth(),
+        1,
+      );
+      const leadingDays = (start.getDay() - safeWeekStartDay + 7) % 7;
+      start.setDate(start.getDate() - leadingDays);
+
+      const end = new Date(
+        safeAnchor.getFullYear(),
+        safeAnchor.getMonth() + 1,
+        1,
+      );
+      const trailingDays = (safeWeekStartDay - end.getDay() + 7) % 7;
+      end.setDate(end.getDate() + trailingDays);
+      return { start, end };
+    }
+
+    if (resolvedMode === "continuous") {
+      // ContinuousScrollView starts with five days and grows to a rolling
+      // fourteen-day window. Cover the union of a fully expanded window in
+      // either direction around its anchor so cached edge days never render
+      // without their external events.
+      const start = new Date(safeAnchor);
+      start.setDate(start.getDate() - 11);
+      const end = new Date(safeAnchor);
+      end.setDate(end.getDate() + 12);
+      return { start, end };
+    }
+
+    const configuredDayCount = resolvedMode === "week" || resolvedMode === "7d"
+      ? 7
+      : /^([1-6])d$/.test(resolvedMode)
+        ? Number.parseInt(resolvedMode, 10)
+        : 1;
+    const start = getCalendarStartForAnchor(
+      safeAnchor,
+      resolvedMode,
+      configuredDayCount,
+      safeWeekStartDay,
+      resolveCalendarRangeAnchor(
+        this.filterRangeAuto,
+        this.hasExplicitFilterRange,
+      ),
+    );
+    const end = new Date(start);
+    end.setDate(end.getDate() + configuredDayCount);
+    return { start, end };
   }
 
   private tryGetValue(entry: BasesEntry, propId: BasesPropertyId): any {
@@ -5452,8 +5734,18 @@ export class CalendarView extends BasesView {
     });
   }
 
+  private advanceCalendarReactRenderGeneration(): number {
+    this.calendarReactRenderGeneration += 1;
+    this.calendarReactRenderGenerationStartedAt = performance.now();
+    return this.calendarReactRenderGeneration;
+  }
 
   private renderReactCalendar(): void {
+    const renderGeneration = this.advanceCalendarReactRenderGeneration();
+    if (this.calendarProtocolPreparationToken) {
+      this.calendarProtocolRenderedDateKey = null;
+      this.calendarProtocolRenderedGeneration = null;
+    }
     if (!this.shouldProcessUpdates()) {
       this.traceRender("render:skip:not-ready");
       return;
@@ -5536,11 +5828,17 @@ export class CalendarView extends BasesView {
             currentDate={this.currentDate ?? undefined}
             jumpTargetDate={this.jumpTargetDate ?? undefined}
             onJumpTargetApplied={() => {
-              this.jumpTargetDate = null;
+              if (renderGeneration === this.calendarReactRenderGeneration) {
+                this.jumpTargetDate = null;
+              }
             }}
-            onDateChange={(date) => {
-              this.currentDate = date;
-              this.persistCurrentDate(date);
+            onDateChange={(date, source, interactionStartedAt) => {
+              this.handleRenderedDateChange(
+                date,
+                source,
+                renderGeneration,
+                interactionStartedAt,
+              );
               // NOTE: do NOT call renderReactCalendar() here.
               // This callback fires from inside FullCalendar's datesSet event,
               // which is already inside React's event-handling loop. Calling
@@ -5550,6 +5848,16 @@ export class CalendarView extends BasesView {
               // Each cycle briefly repositions events, causing "ghost" flickers.
               // The date is already managed internally by FullCalendar; we only
               // need to persist it here for cross-session / cross-device restore.
+            }}
+            onRenderedDateCommit={(date) => {
+              if (
+                renderGeneration === this.calendarReactRenderGeneration
+                && this.calendarProtocolPreparationToken
+                && this.calendarProtocolPreparationNavigationEpoch === this.calendarNavigationEpoch
+              ) {
+                this.calendarProtocolRenderedDateKey = snapshotCalendarDateKey(date);
+                this.calendarProtocolRenderedGeneration = renderGeneration;
+              }
             }}
             onToggleFullDay={() => this.toggleFullDay()}
             allDayProperty={this.allDayProperty}
@@ -8759,20 +9067,117 @@ export class CalendarView extends BasesView {
     return this.currentDate ?? new Date();
   }
 
+  private handleRenderedDateChange(
+    date: Date,
+    source: CalendarDateChangeSource,
+    renderGeneration = this.calendarReactRenderGeneration,
+    interactionStartedAt?: number,
+  ): void {
+    const observedDateKey = snapshotCalendarDateKey(date);
+    const isFreshExplicitUserInteraction = source === "user"
+      && Number.isFinite(interactionStartedAt)
+      && Number(interactionStartedAt) >= this.calendarReactRenderGenerationStartedAt
+      && Boolean(this.containerEl?.isConnected)
+      && Boolean(this.containerEl?.isShown?.())
+      && this.isActiveLeaf();
+    if (
+      renderGeneration !== this.calendarReactRenderGeneration
+      && !isFreshExplicitUserInteraction
+    ) {
+      logger.flow("CalendarProtocol", "focus:stale-render-generation-ignored", {
+        viewName: String(this.config?.name || ""),
+        observedDate: observedDateKey,
+        source,
+        renderGeneration,
+        currentRenderGeneration: this.calendarReactRenderGeneration,
+        interactionStartedAt: interactionStartedAt ?? null,
+        currentRenderGenerationStartedAt: this.calendarReactRenderGenerationStartedAt,
+      });
+      return;
+    }
+    if (source !== "user" && !this.isActiveCalendarUpdateNavigationCurrent()) {
+      logger.flow("CalendarProtocol", "focus:stale-update-date-ignored", {
+        viewName: String(this.config?.name || ""),
+        observedDate: observedDateKey,
+        source,
+      });
+      return;
+    }
+    if (!shouldApplyCalendarProtocolDateChange(
+      this.transientProtocolDateKey,
+      observedDateKey,
+      source,
+    )) {
+      if (!this.transientProtocolSuppressionLogged) {
+        logger.flow("CalendarProtocol", "focus:stale-render-ignored", {
+          viewName: String(this.config?.name || ""),
+          requestedDate: this.transientProtocolDateKey,
+          observedDate: observedDateKey,
+          source,
+        });
+        this.transientProtocolSuppressionLogged = true;
+      }
+      return;
+    }
+    this.currentDate = date;
+    this.persistCurrentDate(date, source);
+  }
+
   /**
    * Debounced save of currentDate to per-view config for cross-device persistence.
    * Uses a 1-second debounce to avoid excessive writes during rapid navigation.
    */
-  private persistCurrentDate(date: Date): void {
+  private persistCurrentDate(
+    date: Date,
+    source: CalendarProtocolDateChangeSource = "automatic",
+  ): void {
+    const dateKey = snapshotCalendarDateKey(date);
+    if (source === "user") {
+      this.calendarNavigationEpoch += 1;
+      this.advanceCalendarReactRenderGeneration();
+      this.calendarProtocolPreparationToken = null;
+      this.calendarProtocolPreparationNavigationEpoch = null;
+      this.calendarProtocolRenderedDateKey = null;
+      this.calendarProtocolRenderedGeneration = null;
+      this.calendarProtocolPreparationPreviousDate = null;
+      this.calendarProtocolPreparationPreviousJumpDate = null;
+      this.calendarProtocolPreparationPreviousTransientDateKey = null;
+      this.calendarProtocolPreparationPreviousSuppressionLogged = false;
+    } else if (!this.isActiveCalendarUpdateNavigationCurrent()) {
+      logger.flow("CalendarProtocol", "focus:stale-update-persistence-ignored", {
+        viewName: String(this.config?.name || ""),
+        observedDate: dateKey,
+        source,
+      });
+      return;
+    }
+    const persistence = resolveCalendarProtocolDatePersistence(
+      this.transientProtocolDateKey,
+      source,
+    );
+    this.transientProtocolDateKey = persistence.nextTransientDateKey;
+    if (!persistence.shouldPersist) {
+      if (!this.transientProtocolSuppressionLogged) {
+        logger.flow("CalendarProtocol", "focus:persistence-suppressed", {
+          viewName: String(this.config?.name || ""),
+          requestedDate: this.transientProtocolDateKey,
+          observedDate: dateKey,
+        });
+        this.transientProtocolSuppressionLogged = true;
+      }
+      return;
+    }
+    this.transientProtocolSuppressionLogged = false;
     if (this.saveDateTimeout) {
       clearTimeout(this.saveDateTimeout);
+      this.saveDateTimeoutSource = null;
     }
-    const dateKey = snapshotCalendarDateKey(date);
     const targetConfig = this.config;
     const targetViewName = String(targetConfig.name || "");
     const timeout = setTimeout(() => {
       if (this.saveDateTimeout === timeout) {
         this.saveDateTimeout = null;
+        this.saveDateTimeoutSource = null;
       }
       if (!isCalendarViewPersistenceTargetCurrent(
         targetConfig,
@@ -8784,6 +9189,126 @@ export class CalendarView extends BasesView {
       targetConfig.set("tps_currentDate", dateKey);
     }, 1000);
     this.saveDateTimeout = timeout;
+    this.saveDateTimeoutSource = source;
+    if (source === "user") {
+      this.scheduleRefresh(0, true, this.calendarNavigationEpoch);
+    }
+  }
+
+  public focusDateTransiently(date: Date, preparationToken: string): boolean {
+    if (
+      !preparationToken
+      || this.calendarProtocolPreparationToken !== preparationToken
+      || this.calendarProtocolPreparationNavigationEpoch !== this.calendarNavigationEpoch
+    ) {
+      return false;
+    }
+    const requested = new Date(date);
+    const next = clampCalendarNavigationDate(
+      requested,
+      this.navigationBoundsStart ?? undefined,
+      this.navigationBoundsEnd ?? undefined,
+    );
+    if (
+      Number.isNaN(next.getTime())
+      || snapshotCalendarDateKey(next) !== snapshotCalendarDateKey(requested)
+    ) {
+      return false;
+    }
+    if (
+      this.saveDateTimeout
+      && this.saveDateTimeoutSource !== "user"
+    ) {
+      clearTimeout(this.saveDateTimeout);
+      this.saveDateTimeout = null;
+      this.saveDateTimeoutSource = null;
+    }
+    this.transientProtocolDateKey = snapshotCalendarDateKey(next);
+    this.calendarProtocolRenderedDateKey = null;
+    this.calendarProtocolRenderedGeneration = null;
+    this.transientProtocolSuppressionLogged = false;
+    this.currentDate = next;
+    this.jumpTargetDate = new Date(next);
+    logger.flow("CalendarProtocol", "focus:transient", {
+      viewName: String(this.config?.name || ""),
+      date: this.transientProtocolDateKey,
+    });
+    this.renderReactCalendar();
+    return true;
+  }
+
+  public isCalendarProtocolFocusSettled(
+    path: string,
+    viewName: string,
+    date: Date,
+    preparationToken: string,
+  ): boolean {
+    const dateKey = snapshotCalendarDateKey(date);
+    return Boolean(
+      this.isCalendarProtocolPresentationActive(path, viewName)
+      && preparationToken
+      && this.calendarProtocolPreparationToken === preparationToken
+      && this.calendarProtocolPreparationNavigationEpoch === this.calendarNavigationEpoch
+      && this.transientProtocolDateKey === dateKey
+      && snapshotCalendarDateKey(this.currentDate ?? new Date(Number.NaN)) === dateKey
+      && this.calendarProtocolRenderedDateKey === dateKey
+      && this.calendarProtocolRenderedGeneration === this.calendarReactRenderGeneration
+      && this.containerEl?.isConnected
+    );
+  }
+
+  public retryCalendarProtocolFocus(
+    path: string,
+    viewName: string,
+    date: Date,
+    preparationToken: string,
+  ): boolean {
+    if (
+      !this.isCalendarProtocolPresentationActive(path, viewName)
+      || !this.isCalendarProtocolFocusCurrent(date, preparationToken)
+    ) {
+      return false;
+    }
+    const target = new Date(date);
+    this.currentDate = new Date(target);
+    this.jumpTargetDate = new Date(target);
+    this.calendarProtocolRenderedDateKey = null;
+    this.calendarProtocolRenderedGeneration = null;
+    this.renderReactCalendar();
+    return true;
+  }
+
+  public completeCalendarProtocolFocus(
+    path: string,
+    viewName: string,
+    date: Date,
+    preparationToken: string,
+  ): boolean {
+    if (!this.isCalendarProtocolFocusSettled(path, viewName, date, preparationToken)) return false;
+    this.calendarProtocolPreparationToken = null;
+    this.calendarProtocolPreparationNavigationEpoch = null;
+    this.calendarProtocolRenderedDateKey = null;
+    this.calendarProtocolRenderedGeneration = null;
+    this.calendarProtocolPreparationPreviousDate = null;
+    this.calendarProtocolPreparationPreviousJumpDate = null;
+    this.calendarProtocolPreparationPreviousTransientDateKey = null;
+    this.calendarProtocolPreparationPreviousSuppressionLogged = false;
+    this.jumpTargetDate = null;
+    return true;
+  }
+
+  private isCalendarProtocolFocusCurrent(date: Date, preparationToken: string): boolean {
+    const dateKey = snapshotCalendarDateKey(date);
+    return Boolean(
+      preparationToken
+      && this.calendarProtocolPreparationToken === preparationToken
+      && this.calendarProtocolPreparationNavigationEpoch === this.calendarNavigationEpoch
+      && this.transientProtocolDateKey === dateKey
+      && snapshotCalendarDateKey(this.currentDate ?? new Date(Number.NaN)) === dateKey
+      && this.containerEl?.isConnected
+      && this.containerEl?.isShown?.()
+      && this.isActiveLeaf()
+    );
   }
 
   public jumpToDateTime(date: Date): void {
@@ -8793,9 +9318,15 @@ export class CalendarView extends BasesView {
       this.navigationBoundsEnd ?? undefined,
     );
     if (Number.isNaN(next.getTime())) return;
+    this.calendarProtocolPreparationToken = null;
+    this.calendarProtocolPreparationNavigationEpoch = null;
+    this.calendarProtocolRenderedDateKey = null;
+    this.calendarProtocolRenderedGeneration = null;
+    this.transientProtocolDateKey = null;
+    this.transientProtocolSuppressionLogged = false;
     this.currentDate = next;
     this.jumpTargetDate = new Date(next);
-    this.persistCurrentDate(next);
+    this.persistCurrentDate(next, "user");
     this.renderReactCalendar();
   }
 
@@ -8909,6 +9440,120 @@ export class CalendarView extends BasesView {
     if (!normalized) return false;
     const baseFile = this.resolveContainerLeafFile();
     return baseFile instanceof TFile && normalizePath(baseFile.path) === normalized;
+  }
+
+  public matchesCalendarProtocolTarget(path: string, viewName: string): boolean {
+    if (!this.isDefaultCalendarBasePath(path)) return false;
+    const activeViewName = String(this.config?.name || "");
+    return activeViewName === viewName && this.lastLoadedViewName === viewName;
+  }
+
+  public isCalendarProtocolPresentationActive(path: string, viewName: string): boolean {
+    return this.matchesCalendarProtocolTarget(path, viewName)
+      && Boolean(this.containerEl?.isConnected)
+      && Boolean(this.containerEl?.isShown?.())
+      && this.isActiveLeaf();
+  }
+
+  public isCalendarProtocolTargetReady(path: string, viewName: string): boolean {
+    return isCalendarProtocolRendererReady(
+      this.isCalendarProtocolPresentationActive(path, viewName),
+      this.calendarProtocolDataRangeReady,
+      this.updateInFlight,
+    );
+  }
+
+  public async prepareCalendarProtocolTarget(
+    path: string,
+    viewName: string,
+    date: Date,
+    preparationToken: string,
+  ): Promise<boolean> {
+    if (!this.matchesCalendarProtocolTarget(path, viewName) || !preparationToken) return false;
+    const requestedDate = new Date(date);
+    if (Number.isNaN(requestedDate.getTime())) return false;
+    const requestedDateKey = snapshotCalendarDateKey(requestedDate);
+    if (
+      this.saveDateTimeout
+      && this.saveDateTimeoutSource !== "user"
+    ) {
+      clearTimeout(this.saveDateTimeout);
+      this.saveDateTimeout = null;
+      this.saveDateTimeoutSource = null;
+    }
+    this.calendarProtocolPreparationToken = preparationToken;
+    this.calendarProtocolRenderedDateKey = null;
+    this.calendarProtocolRenderedGeneration = null;
+    this.calendarProtocolPreparationPreviousDate = this.currentDate
+      ? new Date(this.currentDate)
+      : null;
+    this.calendarProtocolPreparationPreviousJumpDate = this.jumpTargetDate
+      ? new Date(this.jumpTargetDate)
+      : null;
+    this.calendarProtocolPreparationPreviousTransientDateKey = this.transientProtocolDateKey;
+    this.calendarProtocolPreparationPreviousSuppressionLogged = this.transientProtocolSuppressionLogged;
+    this.calendarNavigationEpoch += 1;
+    this.transientProtocolDateKey = requestedDateKey;
+    this.transientProtocolSuppressionLogged = false;
+    this.currentDate = new Date(requestedDate);
+    this.jumpTargetDate = new Date(requestedDate);
+    logger.flow("CalendarProtocol", "prepare:armed", {
+      viewName,
+      date: requestedDateKey,
+    });
+    const preparationNavigationEpoch = this.calendarNavigationEpoch;
+    this.calendarProtocolPreparationNavigationEpoch = preparationNavigationEpoch;
+    // Commit the guarded date props before the potentially long data refresh so
+    // explicit user navigation remains observable and can supersede this request.
+    this.renderReactCalendar();
+    await this.updateCalendar(true, preparationNavigationEpoch);
+    return this.matchesCalendarProtocolTarget(path, viewName)
+      && this.calendarProtocolPreparationToken === preparationToken
+      && this.calendarProtocolPreparationNavigationEpoch === preparationNavigationEpoch
+      && this.transientProtocolDateKey === requestedDateKey
+      && this.calendarNavigationEpoch === preparationNavigationEpoch;
+  }
+
+  public cancelCalendarProtocolPreparation(preparationToken: string): void {
+    if (
+      !preparationToken
+      || this.calendarProtocolPreparationToken !== preparationToken
+    ) {
+      return;
+    }
+    if (
+      this.saveDateTimeout
+      && this.saveDateTimeoutSource !== "user"
+    ) {
+      clearTimeout(this.saveDateTimeout);
+      this.saveDateTimeout = null;
+      this.saveDateTimeoutSource = null;
+    }
+    this.calendarNavigationEpoch += 1;
+    this.advanceCalendarReactRenderGeneration();
+    this.currentDate = this.calendarProtocolPreparationPreviousDate
+      ? new Date(this.calendarProtocolPreparationPreviousDate)
+      : null;
+    this.jumpTargetDate = this.calendarProtocolPreparationPreviousJumpDate
+      ? new Date(this.calendarProtocolPreparationPreviousJumpDate)
+      : null;
+    this.transientProtocolDateKey = this.calendarProtocolPreparationPreviousTransientDateKey;
+    this.transientProtocolSuppressionLogged = this.calendarProtocolPreparationPreviousSuppressionLogged;
+    this.calendarProtocolPreparationToken = null;
+    this.calendarProtocolPreparationNavigationEpoch = null;
+    this.calendarProtocolRenderedDateKey = null;
+    this.calendarProtocolRenderedGeneration = null;
+    this.calendarProtocolPreparationPreviousDate = null;
+    this.calendarProtocolPreparationPreviousJumpDate = null;
+    this.calendarProtocolPreparationPreviousTransientDateKey = null;
+    this.calendarProtocolPreparationPreviousSuppressionLogged = false;
+    logger.flow("CalendarProtocol", "prepare:cancelled", {
+      viewName: String(this.config?.name || ""),
+    });
+    if (this.shouldProcessUpdates()) {
+      this.renderReactCalendar();
+      this.scheduleRefresh(0, true, this.calendarNavigationEpoch);
+    }
   }
 
   private updateCondenseLevel(level: number): void {
@@ -10277,7 +10922,20 @@ export class CalendarView extends BasesView {
     return activeContainer.contains(this.containerEl);
   }
 
-  private scheduleRefresh(delay = 120, force = false): void {
+  private scheduleRefresh(
+    delay = 120,
+    force = false,
+    navigationEpoch = this.calendarNavigationEpoch,
+  ): void {
+    if (navigationEpoch !== this.calendarNavigationEpoch) {
+      this.traceRender("schedule-refresh:skip:stale-navigation", {
+        delay,
+        force,
+        requestedEpoch: navigationEpoch,
+        currentEpoch: this.calendarNavigationEpoch,
+      });
+      return;
+    }
     if (!this.shouldProcessUpdates()) {
       this.traceRender("schedule-refresh:skip:not-ready", { delay, force });
       return;
@@ -10290,17 +10948,21 @@ export class CalendarView extends BasesView {
       window.clearTimeout(this.refreshTimeout);
     }
 
-    this.refreshTimeout = window.setTimeout(() => {
+    this.calendarProtocolDataRangeReady = false;
+    const timeout = window.setTimeout(() => {
       const scrollPos = this.scrollEl.scrollTop;
       this.traceRender("schedule-refresh:run", { delay, force });
 
-      this.updateCalendar(force)
+      this.updateCalendar(force, navigationEpoch)
         .catch((error) => logger.error('[CalendarView] Error during scheduled refresh:', error))
         .finally(() => {
           this.scrollEl.scrollTop = scrollPos;
-          this.refreshTimeout = null;
+          if (this.refreshTimeout === timeout) {
+            this.refreshTimeout = null;
+          }
         });
     }, this.withStartupQuietDelay(delay, force));
+    this.refreshTimeout = timeout;
   }
 
   private withStartupQuietDelay(delay: number, force = false): number {

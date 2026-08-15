@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.5.0
+
+- TishOS Calendar widgets can now open one exact Base and named Calendar view on the same strict local day shown in the widget. The version-1 `tps-calendar-open` protocol independently asserts the active vault, rereads the current Base definition, rejects missing or ambiguous Calendar views, and waits for the exact initialized renderer before focusing it.
+- External focus is navigation-only. Calendar preserves an already earned user-date save while suppressing pending automatic saved-date writes, does not persist the protocol day to `tps_currentDate`, ignores stale non-user render anchors, and keeps later automatic range/context refreshes from replacing the requested day; the next explicit user navigation resumes normal persistence.
+- Rapid links are serialized and generation-cancelled so an older slow open cannot focus after a newer request. Unsafe, oversized, wrong-vault, malformed-date, out-of-range, ambiguous, superseded, and renderer-timeout requests fail closed with concise content-free diagnostics.
+- The additive `plugin.api.openCalendarBaseAt({ basePath, viewName, date, scrollToNow? })` method exposes the same exact transient handoff to trusted local integrations. Existing settings, commands, Base schema, note/task data, saved dates, and minimum Obsidian 1.10.0 remain unchanged.
+- Validation passed the complete declared suite, TypeScript, the required separate production-mode build, byte-identical source/runtime verification, and reloaded Obsidian 1.13.7 QA in the isolated test vault. A cold exact-date URI visibly opened the three-day fixture on August 13–15 around requested August 14; a wrong-vault URI failed closed, the fixture checksum remained unchanged, and production was not accessed.
+
 ## 0.4.5
 
 - Mobile event moves now give FullCalendar exclusive ownership of the touch long-press gesture. Calendar no longer adds browser-native HTML file dragging to event cards on mobile, preventing iOS/WebView from stealing the touch sequence before the event can move.
@@ -206,6 +214,13 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Navigation controls (previous/next/today), an accessible count of events in the exact visible range for FullCalendar-backed navigable views, and condensed event display levels.
 - Day headers omit the aggregate task/context checklist badge and give the date label the full header width, keeping the day number visible in constrained layouts. Separate auxiliary-date and archived-external warning markers remain available.
 - `Show now indicator` is a per-view display option. An explicit Show/Hide value overrides the global plugin setting; a view that omits the option inherits the global setting.
+
+### Exact transient calendar opening
+
+- `obsidian://tps-calendar-open` is a narrow version-1 navigation protocol for trusted local integrations. It requires `expected-vault`, `v=1`, one safe vault-relative `.base` path, one exact named Calendar view, and one real local `YYYY-MM-DD` date. Obsidian may consume the reserved `vault` routing item before dispatch, so `expected-vault` is always checked independently against the plugin's currently loaded vault. Optional `scroll=now` recenters the current-time region after the requested day is applied.
+- Unknown fields, unsupported versions, control characters, traversal, link-fragment/alias delimiters, oversized requests, a wrong vault, a missing or duplicate named Calendar view, an uninitialized/ambiguous renderer, and an out-of-range date fail closed. The protocol accepts no command ID, note content, mutation, or arbitrary callback URL.
+- `plugin.api.openCalendarBaseAt({ basePath, viewName, date, scrollToNow? })` provides the same exact path/view/date behavior to trusted in-process callers. `date` accepts the plugin's existing local-date input forms; invalid inputs fail without opening a target.
+- Protocol focus is intentionally transient. It changes the rendered navigation state only, does not write the Base, and leaves the stored `tps_currentDate` untouched. The first explicit user date navigation exits transient mode and restores normal saved-date behavior.
 
 ### Base formulas on synthetic records
 
@@ -471,6 +486,7 @@ External calendar diagnostics log invalid URLs, cache hits, in-flight fetch reus
 
 ## Validation Notes
 
+- 2026-08-14 (0.5.0) exact widget-date handoff validation: the complete declared suite and required separate production-mode build passed, and the latter reported the test runtime unchanged. Source and deployed `main.js` matched SHA-256 `35b7f43f99766dd8819b7d4573686f812aa896a62040bb31887f880446d2f6dd`. After `Reload app without saving` in isolated Obsidian 1.13.7, a cold URI opened `Inbox/TishOS Phone Calendar QA.base#Phone 3-Day QA` on August 13–15 around requested August 14. A wrong-vault URI was rejected without changing the rendered range, and the Base retained its original SHA-256. Production was not accessed.
 - 2026-08-11 (0.4.5) mobile event-drag validation: the native-gesture policy matrix, desktop file-drag preservation, mobile context-menu isolation, standard/continuous FullCalendar long-press wiring, and touch-cancel cleanup regressions passed. Final full-suite, build/deploy, reload, and artifact verification are recorded in `release-notes/0.4.5.md`.
 - 2026-08-03 (0.4.4) task-duration validation: literal, unit-suffixed, hidden-comment, configured custom, formula, fixed, end-datetime, canonical fallback, missing-duration, resize, timed/all-day round-trip, FullCalendar harness, live-safe CSS-variable, and per-view override regressions passed. All 178 declared tests, TypeScript, the mandatory separate final build/deploy, byte-for-byte artifact comparison, and a full `Reload app without saving` passed. In the reloaded isolated duration Base, 15-, 30-, 60-, and 90-minute task bars remained visibly proportional despite conflicting storage-note frontmatter. The fixture was moved directly to `_archive`; production was not accessed.
 - 2026-07-15: Fixed standalone Calendar Base tabs collapsing an explicit three-day view to two days when workspace sidebars narrowed the leaf. Dedicated tabs now preserve the configured day count, while ordinary markdown/Canvas embeds retain responsive reduction and direct dashboard embeds retain `preserveDayCount`. Added behavioral coverage for the narrow dedicated/embed split; focused coverage passed 25/25, TypeScript and the complete `npm test` suite passed, and the suite's production build deployed `main.js`. Obsidian 1.12.7 was reloaded with `Reload app without saving`; live verification on `home-schedule.base` showed three day columns with both workspace sidebars open, and the TPS Home embedded Calendar also retained three columns.

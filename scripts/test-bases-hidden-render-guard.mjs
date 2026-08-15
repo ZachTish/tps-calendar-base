@@ -11,7 +11,8 @@ test('calendar does not mount React into hidden Bases view instances', () => {
   assert.match(source, /if \(!this\.containerEl\.isConnected\) return false/);
   assert.match(source, /if \(force \|\| \(this as any\)\.forceDirectEmbedRender === true\) return true/);
   assert.match(source, /return this\.containerEl\.isShown\(\) \|\| this\.isActiveLeaf\(\)/);
-  assert.match(source, /this\.containerEl\.removeClass\("is-loading"\);\s*if \(!this\.shouldProcessUpdates\(\)\) return;\s*this\.renderReactCalendar\(\)/);
+  assert.match(source, /this\.containerEl\.removeClass\("is-loading"\);\s*if \(!this\.shouldProcessUpdates\(\)\) return;[\s\S]{0,500}this\.calendarProtocolDataRangeReady = true;\s*this\.renderReactCalendar\(\)/);
+  assert.match(source, /if \(!this\.isActiveCalendarUpdateNavigationCurrent\(\)\) \{[\s\S]{0,300}return;[\s\S]{0,100}this\.calendarProtocolDataRangeReady = true/);
   assert.match(source, /private renderReactCalendar\(\): void \{[\s\S]*if \(!this\.shouldProcessUpdates\(\)\) \{/);
 });
 

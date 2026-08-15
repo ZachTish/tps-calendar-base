@@ -71,6 +71,28 @@ export function getCalendarStartForAnchor(
   return start;
 }
 
+/** Resolves the semantic start FullCalendar must report for a focused anchor. */
+export function getCalendarPresentationStartForAnchor(
+  anchor: Date,
+  viewMode: string,
+  displayedDayCount: number,
+  weekStartDay = 1,
+  rangeAnchor: CalendarRangeAnchor = "center",
+): Date {
+  const start = getCalendarStartForAnchor(
+    anchor,
+    viewMode,
+    displayedDayCount,
+    weekStartDay,
+    rangeAnchor,
+  );
+  if (viewMode === "month" && !Number.isNaN(start.getTime())) {
+    start.setHours(0, 0, 0, 0);
+    start.setDate(1);
+  }
+  return start;
+}
+
 /** Normalizes FullCalendar's rendered start back to the persisted selected day. */
 export function getCalendarAnchorForStart(
   startDate: Date,

@@ -19,6 +19,16 @@ import {
   installGcmApiRegistry,
 } from "./tps-gcm-api";
 import { parseCalendarDateInput } from "./utils/filter-date-utils";
+import {
+  CALENDAR_OPEN_PROTOCOL_ACTION,
+  type CalendarBaseOpenRequest,
+  isSafeCalendarBasePath,
+  isSafeCalendarViewName,
+  parseCalendarOpenProtocolParams,
+  resolveExactCalendarProtocolView,
+  waitForCalendarProtocolFocusSettlement,
+  waitForUniqueCalendarProtocolView,
+} from "./utils/calendar-open-protocol";
 
 
 
@@ -36,6 +46,8 @@ export default class ObsidianCalendarPlugin
   private controllerExternalCalendars: ExternalCalendarConfig[] = [];
   private controllerExternalCalendarFilter: string | null = null;
   private activeCalendarViews = new Set<CalendarView>();
+  private calendarOpenRequestGeneration = 0;
+  private calendarOpenChain: Promise<void> = Promise.resolve();
   externalCalendarService: ExternalCalendarService;
 
   async onload() {
@@ -60,6 +72,9 @@ export default class ObsidianCalendarPlugin
     this.registerHoverLinkSource("tps-calendar", {
       display: "TPS Calendar Base",
       defaultMod: false,
+    });
+    this.registerObsidianProtocolHandler(CALENDAR_OPEN_PROTOCOL_ACTION, async (params) => {
+      await this.handleCalendarOpenProtocol(params as Record<string, unknown>);
     });
     const settingsStartedAt = performance.now();
     await this.loadSettings();
@@ -199,6 +214,7 @@ export default class ObsidianCalendarPlugin
 
   onunload() {
     // No intervals to clear — sync is handled by TPS-Controller.
+    this.calendarOpenRequestGeneration += 1;
     this.activeCalendarViews.clear();
   }
 
@@ -304,6 +320,7 @@ export default class ObsidianCalendarPlugin
       getExternalEventHideKey: (event: ExternalCalendarEvent): string => this.getExternalEventHideKey(event),
       isExternalEventHiddenAnywhere: (event: ExternalCalendarEvent): boolean => this.isExternalEventHiddenAnywhere(event),
       openDefaultCalendarAt: (date: Date | string | number): Promise<boolean> => this.openDefaultBaseAtDateTime(date),
+      openCalendarBaseAt: (request: CalendarBaseOpenRequest): Promise<boolean> => this.openCalendarBaseAt(request),
       renderBaseCalendarEmbed: (containerEl: HTMLElement, basePath: string, options?: CalendarEmbedRenderOptions): Promise<CalendarEmbedRenderChild | null> =>
         this.renderBaseCalendarEmbed(containerEl, basePath, options),
     };
@@ -448,6 +465,285 @@ export default class ObsidianCalendarPlugin
     await this.openDefaultBaseAtDateTime(null);
   }
 
+  private async handleCalendarOpenProtocol(params: Record<string, unknown>): Promise<void> {
+    const parsed = parseCalendarOpenProtocolParams(params, this.app.vault.getName());
+    if (!parsed.ok) {
+      logger.flowWarn("CalendarProtocol", "request:rejected", {
+        code: parsed.code,
+        parameterKeys: Object.keys(params).sort(),
+      });
+      new Notice(`Calendar link rejected: ${parsed.code}.`);
+      return;
+    }
+
+    const { request } = parsed;
+    logger.flow("CalendarProtocol", "request:accepted", {
+      basePath: request.basePath,
+      viewName: request.viewName,
+      date: request.dateKey,
+      scrollToNow: request.scrollToNow,
+    });
+    try {
+      const opened = await this.openCalendarBaseAt(request);
+      if (!opened) {
+        new Notice("Calendar could not open the requested Base view and date.");
+      }
+    } catch (error) {
+      logger.flowError("CalendarProtocol", "request:failed", error, {
+        basePath: request.basePath,
+        viewName: request.viewName,
+        date: request.dateKey,
+      });
+      new Notice("Calendar could not open the requested Base view.");
+    }
+  }
+
+  public openCalendarBaseAt(request: CalendarBaseOpenRequest): Promise<boolean> {
+    const generation = ++this.calendarOpenRequestGeneration;
+    const run = this.calendarOpenChain
+      .catch(() => undefined)
+      .then(() => this.performCalendarBaseOpen(request, generation));
+    this.calendarOpenChain = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async performCalendarBaseOpen(
+    request: CalendarBaseOpenRequest,
+    generation: number,
+  ): Promise<boolean> {
+    if (generation !== this.calendarOpenRequestGeneration) {
+      logger.flow("CalendarProtocol", "open:superseded", { stage: "queued" });
+      return true;
+    }
+    const requestedPath = String(request?.basePath || "");
+    const normalizedPath = normalizePath(requestedPath);
+    const viewName = String(request?.viewName || "");
+    const date = request?.date === undefined ? null : parseCalendarDateInput(request.date);
+    if (
+      normalizedPath !== requestedPath
+      || !isSafeCalendarBasePath(normalizedPath)
+      || !isSafeCalendarViewName(viewName)
+      || !date
+    ) {
+      logger.flowWarn("CalendarProtocol", "open:invalid-target", {
+        hasBasePath: Boolean(requestedPath),
+        hasViewName: Boolean(viewName),
+        hasDate: Boolean(date),
+      });
+      return false;
+    }
+
+    const file = this.app.vault.getAbstractFileByPath(normalizedPath);
+    if (!(file instanceof TFile) || file.extension.toLowerCase() !== "base") {
+      logger.flowWarn("CalendarProtocol", "open:base-missing", { basePath: normalizedPath });
+      return false;
+    }
+
+    let definition: unknown;
+    try {
+      definition = parseYaml(await this.app.vault.cachedRead(file));
+    } catch (error) {
+      logger.flowError("CalendarProtocol", "open:base-read-failed", error, { basePath: normalizedPath });
+      return false;
+    }
+    if (generation !== this.calendarOpenRequestGeneration) {
+      logger.flow("CalendarProtocol", "open:superseded", { stage: "base-read" });
+      return true;
+    }
+    const resolvedView = resolveExactCalendarProtocolView(definition, viewName);
+    if (!resolvedView.ok) {
+      logger.flowWarn("CalendarProtocol", "open:view-rejected", {
+        basePath: normalizedPath,
+        viewName,
+        code: resolvedView.code || "unknown",
+      });
+      return false;
+    }
+
+    const leaf = this.getMainWorkspaceLeafForDefaultBase();
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    await (leaf as any).openFile(file, { active: true });
+    if (generation !== this.calendarOpenRequestGeneration) {
+      logger.flow("CalendarProtocol", "open:superseded", { stage: "file-open" });
+      return true;
+    }
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    await this.app.workspace.openLinkText(
+      `${file.path}#${viewName}`,
+      "",
+      false,
+      { active: true },
+    );
+    if (generation !== this.calendarOpenRequestGeneration) {
+      logger.flow("CalendarProtocol", "open:superseded", { stage: "base-open" });
+      return true;
+    }
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    this.app.workspace.revealLeaf(leaf);
+
+    const mountedResult = await waitForUniqueCalendarProtocolView(
+      () => this.findCalendarViewInstancesForLeaf(
+        leaf,
+        normalizedPath,
+        viewName,
+        false,
+      ),
+      {
+        maxAttempts: 40,
+        isCancelled: () => generation !== this.calendarOpenRequestGeneration,
+      },
+    );
+    if (mountedResult.code === "request-superseded") {
+      logger.flow("CalendarProtocol", "open:superseded", {
+        stage: "view-mount",
+        attempts: mountedResult.attempts,
+      });
+      return true;
+    }
+    if (!mountedResult.ok || !mountedResult.value) {
+      logger.flowWarn("CalendarProtocol", "open:target-not-mounted", {
+        basePath: normalizedPath,
+        viewName,
+        code: mountedResult.code || "unknown",
+        attempts: mountedResult.attempts,
+      });
+      return false;
+    }
+    const preparationToken = `calendar-open-${generation}`;
+    try {
+      const prepared = await mountedResult.value.prepareCalendarProtocolTarget(
+        normalizedPath,
+        viewName,
+        date,
+        preparationToken,
+      );
+      if (generation !== this.calendarOpenRequestGeneration) {
+        logger.flow("CalendarProtocol", "open:superseded", { stage: "view-prepare" });
+        return true;
+      }
+      if (!prepared) {
+        logger.flowWarn("CalendarProtocol", "open:target-changed", {
+          basePath: normalizedPath,
+          viewName,
+        });
+        return false;
+      }
+
+      const waitResult = await waitForUniqueCalendarProtocolView(
+        () => this.findCalendarViewInstancesForLeaf(leaf, normalizedPath, viewName),
+        { isCancelled: () => generation !== this.calendarOpenRequestGeneration },
+      );
+      if (waitResult.code === "request-superseded") {
+        logger.flow("CalendarProtocol", "open:superseded", {
+          stage: "view-wait",
+          attempts: waitResult.attempts,
+        });
+        return true;
+      }
+      if (!waitResult.ok || !waitResult.value) {
+        logger.flowWarn("CalendarProtocol", "open:target-not-ready", {
+          basePath: normalizedPath,
+          viewName,
+          code: waitResult.code || "unknown",
+          attempts: waitResult.attempts,
+        });
+        return false;
+      }
+      if (waitResult.value !== mountedResult.value) {
+        logger.flowWarn("CalendarProtocol", "open:target-replaced", {
+          basePath: normalizedPath,
+          viewName,
+        });
+        return false;
+      }
+
+      const isCurrentCalendarProtocolTarget = (): boolean => {
+        if (this.app.workspace.activeLeaf !== leaf) return false;
+        const matches = this.findCalendarViewInstancesForLeaf(
+          leaf,
+          normalizedPath,
+          viewName,
+          false,
+        );
+        return matches.length === 1
+          && matches[0] === waitResult.value
+          && waitResult.value!.isCalendarProtocolPresentationActive(normalizedPath, viewName);
+      };
+
+      const focused = waitResult.value.focusDateTransiently(date, preparationToken);
+      if (!focused) {
+        logger.flowWarn("CalendarProtocol", "open:date-out-of-range", {
+          basePath: normalizedPath,
+          viewName,
+        });
+        return false;
+      }
+      const settlement = await waitForCalendarProtocolFocusSettlement(
+        () => isCurrentCalendarProtocolTarget()
+          && waitResult.value!.isCalendarProtocolFocusSettled(
+            normalizedPath,
+            viewName,
+            date,
+            preparationToken,
+          ),
+        () => isCurrentCalendarProtocolTarget()
+          && waitResult.value!.retryCalendarProtocolFocus(
+            normalizedPath,
+            viewName,
+            date,
+            preparationToken,
+          ),
+        {
+          isCancelled: () => generation !== this.calendarOpenRequestGeneration,
+        },
+      );
+      if (settlement.code === "request-superseded") {
+        logger.flow("CalendarProtocol", "open:superseded", {
+          stage: "focus-settle",
+          attempts: settlement.attempts,
+        });
+        return true;
+      }
+      if (!settlement.ok) {
+        logger.flowWarn("CalendarProtocol", "open:focus-not-settled", {
+          basePath: normalizedPath,
+          viewName,
+          code: settlement.code || "unknown",
+          attempts: settlement.attempts,
+        });
+        return false;
+      }
+      if (!isCurrentCalendarProtocolTarget() || !waitResult.value.completeCalendarProtocolFocus(
+        normalizedPath,
+        viewName,
+        date,
+        preparationToken,
+      )) {
+        logger.flowWarn("CalendarProtocol", "open:focus-changed-before-commit", {
+          basePath: normalizedPath,
+          viewName,
+        });
+        return false;
+      }
+      if (request.scrollToNow === true) waitResult.value.scrollToNow();
+      logger.flow("CalendarProtocol", "open:done", {
+        basePath: normalizedPath,
+        viewName,
+        date: [
+          date.getFullYear(),
+          String(date.getMonth() + 1).padStart(2, "0"),
+          String(date.getDate()).padStart(2, "0"),
+        ].join("-"),
+        scrollToNow: request.scrollToNow === true,
+        attempts: waitResult.attempts,
+        focusAttempts: settlement.attempts,
+      });
+      return true;
+    } finally {
+      mountedResult.value.cancelCalendarProtocolPreparation(preparationToken);
+    }
+  }
+
   private isRightSidebarLeaf(leaf: WorkspaceLeaf | null | undefined): boolean {
     const containerEl = (leaf as any)?.containerEl as HTMLElement | undefined;
     return !!containerEl?.closest?.(".workspace-split.mod-right-split, .workspace-sidedock.mod-right");
@@ -541,13 +837,23 @@ export default class ObsidianCalendarPlugin
     return baseFiles.find((file) => /(^|\/)scheduled\.base$/i.test(file.path)) ?? baseFiles[0] ?? null;
   }
 
-  private findCalendarViewInstancesForLeaf(leaf: WorkspaceLeaf, path: string): CalendarView[] {
+  private findCalendarViewInstancesForLeaf(
+    leaf: WorkspaceLeaf,
+    path: string,
+    viewName?: string,
+    requireProtocolReadiness = true,
+  ): CalendarView[] {
     const leafContainer = (leaf as any)?.containerEl as HTMLElement | undefined;
     const normalizedPath = normalizePath(path || "");
     return Array.from(this.activeCalendarViews).filter((view) => {
       const container = view?.containerEl as HTMLElement | undefined;
       if (!container?.isConnected) return false;
       if (leafContainer && !leafContainer.contains(container)) return false;
+      if (viewName !== undefined) {
+        return requireProtocolReadiness
+          ? view.isCalendarProtocolTargetReady(normalizedPath, viewName)
+          : view.matchesCalendarProtocolTarget(normalizedPath, viewName);
+      }
       return !normalizedPath || view.isDefaultCalendarBasePath(normalizedPath);
     });
   }

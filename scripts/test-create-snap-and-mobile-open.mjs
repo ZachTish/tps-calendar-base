@@ -1719,7 +1719,8 @@ test("host-note start mode anchors once without following unrelated active notes
   assert.match(calendarViewSource, /const parentNote = this\.findParentNotePath\(\);/);
   assert.match(calendarViewSource, /this\.extractContextDateFromFrontmatter\(parentNote\)/);
   assert.match(calendarViewSource, /if \(this\.contextDateEnabled\) \{[\s\S]*this\.detectContextDate\(\);[\s\S]*\}/);
-  assert.match(calendarViewSource, /onDateChange=\{\(date\) => \{[\s\S]*this\.currentDate = date;[\s\S]*this\.persistCurrentDate\(date\);/);
+  assert.match(calendarViewSource, /onDateChange=\{\(date, source, interactionStartedAt\) => \{[\s\S]*this\.handleRenderedDateChange\([\s\S]*date,[\s\S]*source,[\s\S]*renderGeneration,[\s\S]*interactionStartedAt,/);
+  assert.match(calendarViewSource, /private handleRenderedDateChange\([\s\S]*date: Date,[\s\S]*source: CalendarDateChangeSource,[\s\S]*\): void \{[\s\S]*this\.currentDate = date;[\s\S]*this\.persistCurrentDate\(date, source\);/);
   assert.doesNotMatch(calendarViewSource, /scheduleFollowActiveNoteDay/);
   assert.doesNotMatch(calendarViewSource, /activeNoteFollowTimer/);
 });

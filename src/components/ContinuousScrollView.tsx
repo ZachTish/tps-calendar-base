@@ -50,7 +50,8 @@ interface ContinuousScrollViewProps {
   handleSelectAllow?: (selection: any) => boolean;
   handleUnselect?: () => void;
   onDateClick?: (date: Date, targetEl?: HTMLElement, event?: MouseEvent) => void;
-  onDateChange?: (date: Date) => void;
+  onDateChange?: (date: Date, interactionStartedAt: number) => void;
+  onRenderedDateCommit?: (date: Date) => void;
   handleMoreLinkClick?: (arg: any) => void;
   renderMoreLinkContent?: (arg: any) => any;
   allDayExpanded?: boolean;
@@ -89,6 +90,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   handleUnselect,
   onDateClick,
   onDateChange,
+  onRenderedDateCommit,
   handleMoreLinkClick,
   renderMoreLinkContent,
   allDayExpanded,
@@ -99,9 +101,20 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   const prevScrollHeightRef = useRef(0);
   const isPrependingRef = useRef(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const centerTimeoutRef = useRef<number | null>(null);
+  const centerFrameRef = useRef<number | null>(null);
+  const centerReleaseTimeoutRef = useRef<number | null>(null);
+  const centerGenerationRef = useRef(0);
+  const programmaticCenteringRef = useRef(false);
+  const renderedCommitRef = useRef(onRenderedDateCommit);
+
+  useEffect(() => {
+    renderedCommitRef.current = onRenderedDateCommit;
+  }, [onRenderedDateCommit]);
 
   // Initialize days on mount or date change
   useEffect(() => {
+    const centerGeneration = ++centerGenerationRef.current;
     const base = currentDate || new Date();
 
     const days: Date[] = [];
@@ -112,44 +125,89 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
     }
     setContinuousDays(days);
 
-    // Scroll to center the current date or today
-    setTimeout(() => {
-      if (continuousContainerRef.current) {
-        const container = continuousContainerRef.current;
-        const children = Array.from(container.children) as HTMLElement[];
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        // Find today's element or the center element
-        let targetEl: HTMLElement | null = null;
-        for (let i = 0; i < children.length; i++) {
-          const el = children[i];
-          if (el.classList.contains('bases-calendar-continuous-day-block')) {
-            const dayDate = new Date(days[i]);
-            dayDate.setHours(0, 0, 0, 0);
-            if (dayDate.getTime() === today.getTime()) {
-              targetEl = el;
-              break;
-            }
-          }
-        }
-
-        // Fall back to center element if today not found
-        if (!targetEl && children[2]) {
-          targetEl = children[2] as HTMLElement;
-        }
-
-        if (targetEl) {
-          // Calculate scroll position to center the target element
-          const containerHeight = container.clientHeight;
-          const targetOffset = targetEl.offsetTop;
-          const targetHeight = targetEl.offsetHeight;
-          const scrollPos = targetOffset - (containerHeight / 2) + (targetHeight / 2);
-          container.scrollTop = Math.max(0, scrollPos);
-        }
+    // A protocol focus is complete only after the requested block is actually
+    // centered. Merely buffering the day is not a presentation commitment.
+    programmaticCenteringRef.current = true;
+    if (centerReleaseTimeoutRef.current !== null) {
+      window.clearTimeout(centerReleaseTimeoutRef.current);
+      centerReleaseTimeoutRef.current = null;
+    }
+    centerTimeoutRef.current = window.setTimeout(() => {
+      if (centerGeneration !== centerGenerationRef.current) return;
+      const container = continuousContainerRef.current;
+      if (!container || !currentDate) {
+        programmaticCenteringRef.current = false;
+        return;
       }
+      const targetKey = currentDate.toDateString();
+      const targetEl = Array.from(
+        container.querySelectorAll<HTMLElement>('.bases-calendar-continuous-day-block'),
+      ).find((element) => element.dataset.date === targetKey);
+      if (!targetEl) {
+        programmaticCenteringRef.current = false;
+        return;
+      }
+
+      if (isMobile) {
+        targetEl.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
+      } else {
+        const scrollPos = targetEl.offsetTop
+          - (container.clientHeight / 2)
+          + (targetEl.offsetHeight / 2);
+        container.scrollTop = Math.max(0, scrollPos);
+      }
+
+      centerFrameRef.current = window.requestAnimationFrame(() => {
+        centerFrameRef.current = window.requestAnimationFrame(() => {
+          if (centerGeneration !== centerGenerationRef.current) return;
+          if (!targetEl.isConnected || !continuousContainerRef.current) {
+            programmaticCenteringRef.current = false;
+            return;
+          }
+          const targetRect = targetEl.getBoundingClientRect();
+          const viewportRect = isMobile
+            ? { top: 0, bottom: window.innerHeight }
+            : continuousContainerRef.current.getBoundingClientRect();
+          const viewportMidpoint = (viewportRect.top + viewportRect.bottom) / 2;
+          const targetMidpoint = (targetRect.top + targetRect.bottom) / 2;
+          const tolerance = Math.max(24, Math.min(120, (viewportRect.bottom - viewportRect.top) * 0.2));
+          if (
+            targetRect.bottom > viewportRect.top
+            && targetRect.top < viewportRect.bottom
+            && Math.abs(targetMidpoint - viewportMidpoint) <= tolerance
+          ) {
+            renderedCommitRef.current?.(new Date(currentDate));
+          }
+          centerReleaseTimeoutRef.current = window.setTimeout(() => {
+            if (centerGeneration === centerGenerationRef.current) {
+              programmaticCenteringRef.current = false;
+            }
+            centerReleaseTimeoutRef.current = null;
+          }, 50);
+        });
+      });
     }, 100);
-  }, [currentDate]);
+
+    return () => {
+      programmaticCenteringRef.current = false;
+      if (centerTimeoutRef.current !== null) {
+        window.clearTimeout(centerTimeoutRef.current);
+        centerTimeoutRef.current = null;
+      }
+      if (centerFrameRef.current !== null) {
+        window.cancelAnimationFrame(centerFrameRef.current);
+        centerFrameRef.current = null;
+      }
+      if (centerReleaseTimeoutRef.current !== null) {
+        window.clearTimeout(centerReleaseTimeoutRef.current);
+        centerReleaseTimeoutRef.current = null;
+      }
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = null;
+      }
+    };
+  }, [currentDate, isMobile]);
 
   // Restore scroll position after prepend
   useLayoutEffect(() => {
@@ -164,6 +222,8 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   }, [continuousDays]);
 
   const handleContinuousScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (programmaticCenteringRef.current) return;
+    const interactionStartedAt = performance.now();
     const el = e.currentTarget;
     const threshold = 200;
 
@@ -219,12 +279,52 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
         }
       });
 
-      if (bestDay && (!currentDate || (bestDay as Date).getTime() !== currentDate.getTime())) {
-        onDateChange(bestDay as Date);
+      if (bestDay && (!currentDate || (bestDay as Date).toDateString() !== currentDate.toDateString())) {
+        onDateChange(bestDay as Date, interactionStartedAt);
       }
     }, 300);
 
   }, [continuousDays, onDateChange, currentDate]);
+
+  useEffect(() => {
+    if (!isMobile || !onDateChange) return;
+    const container = continuousContainerRef.current;
+    if (!container) return;
+    const reportVisibleMobileDay = () => {
+      if (programmaticCenteringRef.current) return;
+      const interactionStartedAt = performance.now();
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      scrollTimeoutRef.current = setTimeout(() => {
+        const midpoint = window.innerHeight / 2;
+        let bestDay: Date | null = null;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        const blocks = Array.from(
+          container.querySelectorAll<HTMLElement>('.bases-calendar-continuous-day-block'),
+        );
+        for (let index = 0; index < blocks.length; index += 1) {
+          const block = blocks[index];
+          const rect = block.getBoundingClientRect();
+          if (rect.bottom <= 0 || rect.top >= window.innerHeight) continue;
+          const distance = Math.abs((rect.top + rect.bottom) / 2 - midpoint);
+          if (distance < bestDistance && continuousDays[index]) {
+            bestDistance = distance;
+            bestDay = continuousDays[index];
+          }
+        }
+        if (bestDay && (!currentDate || bestDay.toDateString() !== currentDate.toDateString())) {
+          onDateChange(new Date(bestDay), interactionStartedAt);
+        }
+      }, 300);
+    };
+    window.addEventListener('scroll', reportVisibleMobileDay, { passive: true, capture: true });
+    return () => {
+      window.removeEventListener('scroll', reportVisibleMobileDay, { capture: true } as EventListenerOptions);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = null;
+      }
+    };
+  }, [continuousDays, currentDate, isMobile, onDateChange]);
 
   return (
     <div
@@ -246,6 +346,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
         return (
           <div
             key={day.toISOString()}
+            data-date={day.toDateString()}
             className={`bases-calendar-continuous-day-block${isToday ? ' is-today' : ''}`}
             style={{
               minHeight: '800px',
