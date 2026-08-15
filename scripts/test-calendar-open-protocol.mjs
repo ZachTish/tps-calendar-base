@@ -77,6 +77,20 @@ test("protocol requires the independent expected-vault guard and rejects wrong r
   );
 });
 
+test("transient protocol focus bypasses only rendered manual navigation bounds", () => {
+  const start = new Date(2026, 7, 7);
+  const end = new Date(2026, 7, 7);
+
+  assert.deepEqual(
+    protocol.resolveCalendarProtocolNavigationBounds(null, start, end),
+    { start, end },
+  );
+  assert.deepEqual(
+    protocol.resolveCalendarProtocolNavigationBounds("2026-08-15", start, end),
+    {},
+  );
+});
+
 test("protocol rejects unknown, oversized, unsafe, or non-versioned URL data", () => {
   const cases = [
     [validParams({ v: "2" }), "unsupported-version"],
@@ -134,6 +148,43 @@ test("exact Calendar view resolution never falls back or accepts ambiguity", () 
     ] }, "Wrong Type"),
     { ok: false, code: "view-not-found" },
   );
+});
+
+test("Base materialization waits for a fresh exact view and remains cancellation bounded", async () => {
+  const snapshots = [
+    null,
+    { file: "stale", definition: { views: [{ type: "calendar", name: "Old" }] } },
+    { file: "fresh", definition: { views: [{ type: "calendar", name: "Today Schedule" }] } },
+  ];
+  let index = 0;
+  const resolved = await protocol.waitForCalendarProtocolBaseView(
+    async () => snapshots[Math.min(index++, snapshots.length - 1)],
+    "Today Schedule",
+    { maxAttempts: 5, intervalMs: 0, sleep: async () => undefined },
+  );
+  assert.deepEqual(resolved, {
+    ok: true,
+    file: "fresh",
+    view: { type: "calendar", name: "Today Schedule" },
+    attempts: 3,
+  });
+
+  let cancelled = false;
+  const superseded = await protocol.waitForCalendarProtocolBaseView(
+    async () => null,
+    "Today Schedule",
+    {
+      maxAttempts: 5,
+      intervalMs: 0,
+      isCancelled: () => cancelled,
+      sleep: async () => { cancelled = true; },
+    },
+  );
+  assert.deepEqual(superseded, {
+    ok: false,
+    code: "request-superseded",
+    attempts: 1,
+  });
 });
 
 test("view readiness polling waits through missing and duplicate mounts for one exact target", async () => {
@@ -385,7 +436,10 @@ test("plugin wiring opens an exact Base fragment and uses only transient protoco
   assert.match(mainSource, /openFile\(file, \{ active: true \}\)/);
   assert.match(mainSource, /`\$\{file\.path\}#\$\{viewName\}`/);
   assert.match(mainSource, /prepareCalendarProtocolTarget\([\s\S]*normalizedPath,[\s\S]*viewName/);
-  assert.match(mainSource, /findCalendarViewInstancesForLeaf\(leaf, normalizedPath, viewName\)/);
+  assert.match(mainSource, /waitForCalendarProtocolBaseView\(/);
+  assert.match(mainSource, /definition: parseYaml\(await this\.app\.vault\.read\(candidate\)\)/);
+  assert.match(mainSource, /const findInCurrentLeaf = \(requireProtocolReadiness: boolean\)/);
+  assert.match(mainSource, /this\.app\.workspace\.activeLeaf/);
   assert.match(mainSource, /private calendarOpenChain: Promise<void> = Promise\.resolve\(\)/);
   assert.match(mainSource, /const generation = \+\+this\.calendarOpenRequestGeneration/);
   assert.match(mainSource, /isCancelled: \(\) => generation !== this\.calendarOpenRequestGeneration/);

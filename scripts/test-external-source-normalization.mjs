@@ -452,6 +452,37 @@ test("immediate protocol success or cancellation preserves an earned user date s
   assert.deepEqual(savedDates, ["2026-08-11", "2026-08-12"]);
 });
 
+test("transient widget focus can show its exact day outside manual Base navigation bounds", async () => {
+  const view = createBareView();
+  Object.assign(view, {
+    currentDate: new Date(2026, 6, 31),
+    navigationBoundsStart: new Date(2026, 6, 30),
+    navigationBoundsEnd: new Date(2026, 7, 1),
+    renderReactCalendar() {},
+    matchesCalendarProtocolTarget: () => true,
+    updateCalendar: async () => {},
+  });
+
+  assert.equal(
+    await view.prepareCalendarProtocolTarget(
+      "Inbox/Calendar QA.base",
+      "Today Schedule",
+      new Date(2026, 7, 15),
+      "request-outside-bounds",
+    ),
+    true,
+  );
+  assert.equal(
+    view.focusDateTransiently(
+      new Date(2026, 7, 15),
+      "request-outside-bounds",
+    ),
+    true,
+  );
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 15).getTime());
+  assert.equal(view.transientProtocolDateKey, "2026-08-15");
+});
+
 test("stale queued updates cannot replace work for a newer navigation", async () => {
   const view = createBareView();
   let releaseUpdate;

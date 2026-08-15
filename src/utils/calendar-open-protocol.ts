@@ -61,6 +61,30 @@ export interface CalendarProtocolWaitResult<T> {
   attempts: number;
 }
 
+export interface CalendarProtocolBaseCandidate<T> {
+  file: T;
+  definition: unknown;
+}
+
+export type CalendarProtocolBaseWaitResult<T> =
+  | {
+      ok: true;
+      file: T;
+      view: Record<string, unknown>;
+      attempts: number;
+    }
+  | {
+      ok: false;
+      code:
+        | "base-missing"
+        | "base-read-failed"
+        | "invalid-definition"
+        | "view-not-found"
+        | "view-ambiguous"
+        | "request-superseded";
+      attempts: number;
+    };
+
 export interface CalendarProtocolFocusSettlementResult {
   ok: boolean;
   code?: "focus-timeout" | "target-changed" | "request-superseded";
@@ -102,6 +126,20 @@ export function canApplyAutomaticCalendarDate(
   transientDateKey: string | null,
 ): boolean {
   return transientDateKey === null;
+}
+
+export function resolveCalendarProtocolNavigationBounds(
+  transientDateKey: string | null,
+  navigationBoundsStart: Date | null,
+  navigationBoundsEnd: Date | null,
+): { start?: Date; end?: Date } {
+  if (transientDateKey !== null) {
+    return {};
+  }
+  return {
+    start: navigationBoundsStart ?? undefined,
+    end: navigationBoundsEnd ?? undefined,
+  };
 }
 
 export function isCalendarProtocolRendererReady(
@@ -280,6 +318,58 @@ export function resolveExactCalendarProtocolView(
   if (matches.length === 0) return { ok: false, code: "view-not-found" };
   if (matches.length !== 1) return { ok: false, code: "view-ambiguous" };
   return { ok: true, view: matches[0] };
+}
+
+/**
+ * Gives a just-activated mobile vault a short, bounded opportunity to
+ * materialize the exact Base definition that TishOS already authorized.
+ * Every attempt still performs the same strict named Calendar-view check.
+ */
+export async function waitForCalendarProtocolBaseView<T>(
+  readCandidate: () => Promise<CalendarProtocolBaseCandidate<T> | null>,
+  requestedViewName: string,
+  options: {
+    maxAttempts?: number;
+    intervalMs?: number;
+    sleep?: (delayMs: number) => Promise<void>;
+    isCancelled?: () => boolean;
+  } = {},
+): Promise<CalendarProtocolBaseWaitResult<T>> {
+  const maxAttempts = Math.max(1, Math.min(80, Math.floor(options.maxAttempts ?? 16)));
+  const intervalMs = Math.max(0, Math.min(1000, Math.floor(options.intervalMs ?? 125)));
+  const sleep = options.sleep ?? ((delayMs: number) => new Promise((resolve) => window.setTimeout(resolve, delayMs)));
+  let lastCode: Exclude<CalendarProtocolBaseWaitResult<T>, { ok: true }>["code"] = "base-missing";
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (options.isCancelled?.()) {
+      return { ok: false, code: "request-superseded", attempts: attempt - 1 };
+    }
+    try {
+      const candidate = await readCandidate();
+      if (!candidate) {
+        lastCode = "base-missing";
+      } else {
+        const resolved = resolveExactCalendarProtocolView(
+          candidate.definition,
+          requestedViewName,
+        );
+        if (resolved.ok && resolved.view) {
+          return {
+            ok: true,
+            file: candidate.file,
+            view: resolved.view,
+            attempts: attempt,
+          };
+        }
+        lastCode = resolved.code ?? "invalid-definition";
+      }
+    } catch {
+      lastCode = "base-read-failed";
+    }
+    if (attempt < maxAttempts) await sleep(intervalMs);
+  }
+
+  return { ok: false, code: lastCode, attempts: maxAttempts };
 }
 
 export async function waitForUniqueCalendarProtocolView<T>(

@@ -25,7 +25,7 @@ import {
   isSafeCalendarBasePath,
   isSafeCalendarViewName,
   parseCalendarOpenProtocolParams,
-  resolveExactCalendarProtocolView,
+  waitForCalendarProtocolBaseView,
   waitForCalendarProtocolFocusSettlement,
   waitForUniqueCalendarProtocolView,
 } from "./utils/calendar-open-protocol";
@@ -533,41 +533,47 @@ export default class ObsidianCalendarPlugin
       return false;
     }
 
-    const file = this.app.vault.getAbstractFileByPath(normalizedPath);
-    if (!(file instanceof TFile) || file.extension.toLowerCase() !== "base") {
-      logger.flowWarn("CalendarProtocol", "open:base-missing", { basePath: normalizedPath });
-      return false;
-    }
-
-    let definition: unknown;
-    try {
-      definition = parseYaml(await this.app.vault.cachedRead(file));
-    } catch (error) {
-      logger.flowError("CalendarProtocol", "open:base-read-failed", error, { basePath: normalizedPath });
-      return false;
-    }
-    if (generation !== this.calendarOpenRequestGeneration) {
-      logger.flow("CalendarProtocol", "open:superseded", { stage: "base-read" });
+    const baseResult = await waitForCalendarProtocolBaseView(
+      async () => {
+        const candidate = this.app.vault.getAbstractFileByPath(normalizedPath);
+        if (!(candidate instanceof TFile) || candidate.extension.toLowerCase() !== "base") {
+          return null;
+        }
+        // The protocol is reached immediately after an app switch on mobile.
+        // Read the adapter-backed file instead of accepting a stale metadata cache.
+        return {
+          file: candidate,
+          definition: parseYaml(await this.app.vault.read(candidate)),
+        };
+      },
+      viewName,
+      { isCancelled: () => generation !== this.calendarOpenRequestGeneration },
+    );
+    if (!baseResult.ok && baseResult.code === "request-superseded") {
+      logger.flow("CalendarProtocol", "open:superseded", {
+        stage: "base-read",
+        attempts: baseResult.attempts,
+      });
       return true;
     }
-    const resolvedView = resolveExactCalendarProtocolView(definition, viewName);
-    if (!resolvedView.ok) {
-      logger.flowWarn("CalendarProtocol", "open:view-rejected", {
+    if (!baseResult.ok) {
+      logger.flowWarn("CalendarProtocol", "open:base-view-unavailable", {
         basePath: normalizedPath,
         viewName,
-        code: resolvedView.code || "unknown",
+        code: baseResult.code,
+        attempts: baseResult.attempts,
       });
       return false;
     }
+    const file = baseResult.file;
 
-    const leaf = this.getMainWorkspaceLeafForDefaultBase();
-    this.app.workspace.setActiveLeaf(leaf, { focus: true });
-    await (leaf as any).openFile(file, { active: true });
+    const openingLeaf = this.getMainWorkspaceLeafForDefaultBase();
+    this.app.workspace.setActiveLeaf(openingLeaf, { focus: true });
+    await (openingLeaf as any).openFile(file, { active: true });
     if (generation !== this.calendarOpenRequestGeneration) {
       logger.flow("CalendarProtocol", "open:superseded", { stage: "file-open" });
       return true;
     }
-    this.app.workspace.setActiveLeaf(leaf, { focus: true });
     await this.app.workspace.openLinkText(
       `${file.path}#${viewName}`,
       "",
@@ -578,16 +584,22 @@ export default class ObsidianCalendarPlugin
       logger.flow("CalendarProtocol", "open:superseded", { stage: "base-open" });
       return true;
     }
-    this.app.workspace.setActiveLeaf(leaf, { focus: true });
-    this.app.workspace.revealLeaf(leaf);
+    const revealLeaf = this.app.workspace.activeLeaf ?? openingLeaf;
+    this.app.workspace.revealLeaf(revealLeaf);
 
-    const mountedResult = await waitForUniqueCalendarProtocolView(
-      () => this.findCalendarViewInstancesForLeaf(
-        leaf,
+    const findInCurrentLeaf = (requireProtocolReadiness: boolean): CalendarView[] => {
+      const activeLeaf = this.app.workspace.activeLeaf;
+      if (!activeLeaf) return [];
+      return this.findCalendarViewInstancesForLeaf(
+        activeLeaf,
         normalizedPath,
         viewName,
-        false,
-      ),
+        requireProtocolReadiness,
+      );
+    };
+
+    const mountedResult = await waitForUniqueCalendarProtocolView(
+      () => findInCurrentLeaf(false),
       {
         maxAttempts: 40,
         isCancelled: () => generation !== this.calendarOpenRequestGeneration,
@@ -630,7 +642,7 @@ export default class ObsidianCalendarPlugin
       }
 
       const waitResult = await waitForUniqueCalendarProtocolView(
-        () => this.findCalendarViewInstancesForLeaf(leaf, normalizedPath, viewName),
+        () => findInCurrentLeaf(true),
         { isCancelled: () => generation !== this.calendarOpenRequestGeneration },
       );
       if (waitResult.code === "request-superseded") {
@@ -658,13 +670,7 @@ export default class ObsidianCalendarPlugin
       }
 
       const isCurrentCalendarProtocolTarget = (): boolean => {
-        if (this.app.workspace.activeLeaf !== leaf) return false;
-        const matches = this.findCalendarViewInstancesForLeaf(
-          leaf,
-          normalizedPath,
-          viewName,
-          false,
-        );
+        const matches = findInCurrentLeaf(false);
         return matches.length === 1
           && matches[0] === waitResult.value
           && waitResult.value!.isCalendarProtocolPresentationActive(normalizedPath, viewName);

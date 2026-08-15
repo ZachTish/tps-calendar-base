@@ -120,6 +120,7 @@ import {
 import {
   canApplyAutomaticCalendarDate,
   isCalendarProtocolRendererReady,
+  resolveCalendarProtocolNavigationBounds,
   resolveCalendarProtocolDatePersistence,
   shouldApplyCalendarProtocolDateChange,
   type CalendarProtocolDateChangeSource,
@@ -5742,6 +5743,11 @@ export class CalendarView extends BasesView {
 
   private renderReactCalendar(): void {
     const renderGeneration = this.advanceCalendarReactRenderGeneration();
+    const renderedNavigationBounds = resolveCalendarProtocolNavigationBounds(
+      this.transientProtocolDateKey,
+      this.navigationBoundsStart,
+      this.navigationBoundsEnd,
+    );
     if (this.calendarProtocolPreparationToken) {
       this.calendarProtocolRenderedDateKey = null;
       this.calendarProtocolRenderedGeneration = null;
@@ -5875,8 +5881,8 @@ export class CalendarView extends BasesView {
             hasExplicitFilterRange={this.hasExplicitFilterRange}
             entryBoundsStart={this.filterRangeAuto && this.filterRangeStart ? this.filterRangeStart : undefined}
             entryBoundsEnd={this.filterRangeAuto && this.filterRangeEnd ? this.filterRangeEnd : undefined}
-            navigationBoundsStart={this.navigationBoundsStart ?? undefined}
-            navigationBoundsEnd={this.navigationBoundsEnd ?? undefined}
+            navigationBoundsStart={renderedNavigationBounds.start}
+            navigationBoundsEnd={renderedNavigationBounds.end}
 
             allDayEventHeight={this.plugin.settings.allDayEventHeight}
             allDayMaxRows={this.plugin.settings.allDayMaxRows}
@@ -9203,18 +9209,8 @@ export class CalendarView extends BasesView {
     ) {
       return false;
     }
-    const requested = new Date(date);
-    const next = clampCalendarNavigationDate(
-      requested,
-      this.navigationBoundsStart ?? undefined,
-      this.navigationBoundsEnd ?? undefined,
-    );
-    if (
-      Number.isNaN(next.getTime())
-      || snapshotCalendarDateKey(next) !== snapshotCalendarDateKey(requested)
-    ) {
-      return false;
-    }
+    const next = new Date(date);
+    if (Number.isNaN(next.getTime())) return false;
     if (
       this.saveDateTimeout
       && this.saveDateTimeoutSource !== "user"
