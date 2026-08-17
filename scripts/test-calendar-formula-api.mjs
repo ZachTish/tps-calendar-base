@@ -327,6 +327,7 @@ function createBareView({
       ['working', '[/]'],
       ['holding', '[?]'],
       ['wont-do', '[-]'],
+      ['migrated', '[>]'],
     ]);
     const statusesByState = new Map(Array.from(checkboxStates, ([status, state]) => [state, status]));
     const resolvedStatusService = statusService === undefined
@@ -1166,6 +1167,71 @@ test("inline task completion aliases, filters, and styles require authoritative 
     eventStatusUtility.isCalendarEntryNonActive({ status: "complete", entry: {} }, ["complete"]),
     true,
     "native and external entries retain Calendar's standalone status-list behavior",
+  );
+});
+
+test("Calendar task status filters use checkbox workflow state and support negated multi-value clauses", async () => {
+  const { api } = makeFormulaApi(() => value("noop", null));
+  const view = createBareView({ api });
+  await view.prepareFormulaRuntime();
+  const source = createFile("Inbox/Production Status Filters.md");
+  const makeEntry = (checkbox, authoredStatus = "authored-row-status") => {
+    const task = view.parseInlineScheduledTask(
+      source,
+      0,
+      `- ${checkbox} Filter me [scheduled:: 2026-08-17] [status:: ${authoredStatus}]`,
+      "scheduled",
+      "timeEstimate",
+      new Map(),
+    );
+    assert.ok(task);
+    return view.createInlineTaskBasesEntry(task);
+  };
+
+  const todo = makeEntry("[ ]");
+  const wontDo = makeEntry("[-]");
+  const migrated = makeEntry("[>]");
+  const note = {
+    file: createFile("Projects/Active Project.md"),
+    getValue: (property) => String(property) === "status" ? "active" : null,
+  };
+
+  assert.equal(migrated.getValue("status"), "authored-row-status", "formula row metadata remains unchanged");
+  assert.equal(migrated.getValue("row.status"), "authored-row-status");
+  assert.equal(migrated.getValue("task.status"), "migrated");
+
+  const separateNativeFilters = {
+    and: ['status != "wont-do"', 'status != "migrated"'],
+  };
+  assert.deepEqual(view.evaluateEntryFilterSource(separateNativeFilters, todo), { applied: true, result: true });
+  assert.deepEqual(view.evaluateEntryFilterSource(separateNativeFilters, wontDo), { applied: true, result: false });
+  assert.deepEqual(view.evaluateEntryFilterSource(separateNativeFilters, migrated), { applied: true, result: false });
+  assert.deepEqual(view.evaluateEntryFilterSource(separateNativeFilters, note), { applied: true, result: true });
+
+  assert.deepEqual(
+    view.evaluateEntryFilterSource(
+      { property: "status", operator: "does not contain", value: ["wont-do", "migrated"] },
+      migrated,
+    ),
+    { applied: true, result: false },
+    "runtime object filters use the same multi-value negative semantics as serialized expressions",
+  );
+
+  const combinedNativeFilter = '!status.containsAny("wont-do", "migrated")';
+  assert.deepEqual(view.evaluateEntryFilterSource(combinedNativeFilter, todo), { applied: true, result: true });
+  assert.deepEqual(view.evaluateEntryFilterSource(combinedNativeFilter, wontDo), { applied: true, result: false });
+  assert.deepEqual(view.evaluateEntryFilterSource(combinedNativeFilter, migrated), { applied: true, result: false });
+  assert.deepEqual(view.evaluateEntryFilterSource(combinedNativeFilter, note), { applied: true, result: true });
+
+  assert.deepEqual(
+    view.evaluateEntryFilterSource('row.status == "authored-row-status"', migrated),
+    { applied: true, result: true },
+    "explicit row.status continues to address authored inline metadata",
+  );
+  assert.deepEqual(
+    view.evaluateEntryFilterSource('task.status == "migrated"', migrated),
+    { applied: true, result: true },
+    "explicit task.status continues to address checkbox workflow state",
   );
 });
 

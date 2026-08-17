@@ -6832,7 +6832,9 @@ export class CalendarView extends BasesView {
       const operator =
         method === "isempty"
           ? (negated ? "is not empty" : "is empty")
-          : `${negated ? "does not " : ""}${method}`;
+          : method === "containsany"
+            ? (negated ? "does not contain any" : "contains any")
+            : `${negated ? "does not " : ""}${method}`;
       return {
         property: methodMatch[2],
         operator,
@@ -6862,7 +6864,14 @@ export class CalendarView extends BasesView {
     const positiveEquality = new Set(["", "=", "==", "===", "is", "equal", "equals"]);
     const negativeEquality = new Set(["!=", "!==", "isnot", "not", "notequal", "notequals", "doesnotequal"]);
     const positiveContains = new Set(["contains", "containsany", "has"]);
-    const negativeContains = new Set(["!contains", "notcontains", "doesnotcontain"]);
+    const negativeContains = new Set([
+      "!contains",
+      "notcontains",
+      "doesnotcontain",
+      "!containsany",
+      "notcontainsany",
+      "doesnotcontainany",
+    ]);
     const positiveStarts = new Set(["startswith", "starts"]);
     const negativeStarts = new Set(["!startswith", "notstartswith", "doesnotstartwith"]);
     const positiveEnds = new Set(["endswith", "ends"]);
@@ -6999,6 +7008,14 @@ export class CalendarView extends BasesView {
     if (lower.includes("file.path") || compact === "filepath" || compact === "path") return entry.file?.path;
     if (lower.includes("file.folder") || compact === "filefolder" || compact === "folder") return entry.file?.parent?.path || "";
     if (lower.includes("file.name") || compact === "filename" || compact === "basename") return entry.file?.basename || entry.file?.name;
+    // Native Bases exposes bare `status` in its filter editor. For synthesized
+    // checkbox rows that means the live GCM workflow mapping, while note rows
+    // retain their ordinary note property. Explicit row.status remains the
+    // authored inline field and task.status remains the unambiguous workflow
+    // namespace for formulas and hand-authored filters.
+    if (compact === "status" && (entry as any)?.inlineTask) {
+      return (entry as any).inlineTask.status || null;
+    }
     return this.tryGetValue(entry, raw as BasesPropertyId);
   }
 

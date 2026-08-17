@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.5.2
+
+- Bare `status` filters now behave like users expect across mixed Calendar rows: synthesized checkbox tasks compare against their live GCM workflow status, while ordinary note rows continue to compare against the note's `status` property. Separate `status is not wont-do` and `status is not migrated` clauses therefore exclude `[-]` and `[>]` task rows without removing active notes.
+- Explicit namespaces remain stable. `task.status` continues to address checkbox workflow state, while `row.status` and formula row context continue to expose authored inline metadata. Filter evaluation never substitutes an authored inline status for an unmapped checkbox state.
+- Negated multi-value filters such as `!status.containsAny("wont-do", "migrated")` now compile to a supported negative-any comparison instead of failing closed and hiding every row. Serialized expressions and runtime object filters share the same case-insensitive semantics.
+- This backward-compatible correctness patch changes no settings, commands, Base files, task syntax, plugin APIs, or minimum supported Obsidian version. Existing filters do not require migration.
+- Validation passed all 227 declared tests, including the production-shaped open/won’t-do/migrated/note filter matrix, followed by the required separate production-mode build. The build deployed only to the isolated test runtime, and all four source/runtime artifacts are byte-identical. Interactive Obsidian QA was intentionally not attempted because the visible app window was the production vault; production remained untouched.
+
 ## 0.5.1
 
 - TishOS Calendar taps now follow the workspace leaf Obsidian actually activates instead of reactivating the pre-launch leaf. This closes the mobile handoff race where the correct Base opened in a replacement tab but Calendar waited on the stale tab and reported that it could not find the requested view or date.
