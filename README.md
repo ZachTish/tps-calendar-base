@@ -1,5 +1,11 @@
 # TPS Calendar Base
 
+## 0.5.3
+
+- Inline calendar tasks whose visible title exactly resolves to an existing Markdown note now open that note instead of incorrectly offering **Create associated note**. This restores legacy plain-title tasks such as recurring calendar events created before linked-title metadata was introduced.
+- Association priority remains conservative: hidden `associatedNotePath` metadata and visible links win first, then an exact same-occurrence calendar identity, then Obsidian's normal title resolution. The final title fallback is accepted only when the resolved file's frontmatter `title` or basename exactly matches the task title; partial and unrelated names are rejected.
+- Existing task lines, notes, calendar settings, recurring-event strategy, and plugin APIs are unchanged. No task or note is rewritten by this patch.
+
 ## 0.5.2
 
 - Bare `status` filters now behave like users expect across mixed Calendar rows: synthesized checkbox tasks compare against their live GCM workflow status, while ordinary note rows continue to compare against the note's `status` property. Separate `status is not wont-do` and `status is not migrated` clauses therefore exclude `[-]` and `[>]` task rows without removing active notes.

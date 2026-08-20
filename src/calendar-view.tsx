@@ -62,6 +62,7 @@ import { parseTagInput } from "./utils/tag-utils";
 import {
   getTaskAssociatedNoteCandidates,
   selectUniqueParentLinkedTaskNote,
+  taskAssociationTitlesMatch,
   type TaskAssociatedNoteCandidate,
 } from "./utils/task-associated-note";
 import {
@@ -230,7 +231,7 @@ type CalendarFilterEvaluationState = {
 type InlineTaskNoteAssociation = {
   linkedFile: TFile | null;
   externalEvent: ExternalCalendarEvent | null;
-  source: TaskAssociatedNoteCandidate["source"] | "parent-title" | "external-identity" | "none";
+  source: TaskAssociatedNoteCandidate["source"] | "parent-title" | "resolved-title" | "external-identity" | "none";
 };
 
 class CalendarTaskDropConfirmModal extends Modal {
@@ -5444,13 +5445,35 @@ export class CalendarView extends BasesView {
     }
     if (externalEvent) {
       const linkedFile = this.findLinkedNoteForExternalEventInstance(externalEvent, task, occurrenceDate);
-      return {
-        linkedFile,
-        externalEvent,
-        source: linkedFile ? "external-identity" : "none",
-      };
+      if (linkedFile) {
+        return {
+          linkedFile,
+          externalEvent,
+          source: "external-identity",
+        };
+      }
     }
-    return { linkedFile: null, externalEvent: null, source: "none" };
+    const titleLinkedFile = this.findResolvedTitleNoteForInlineTask(task);
+    return {
+      linkedFile: titleLinkedFile,
+      externalEvent,
+      source: titleLinkedFile ? "resolved-title" : "none",
+    };
+  }
+
+  private findResolvedTitleNoteForInlineTask(task: InlineScheduledTask): TFile | null {
+    const linkpath = String(task.title || "").trim();
+    if (!linkpath) return null;
+    const candidate = this.app.metadataCache.getFirstLinkpathDest(linkpath, task.file.path);
+    if (!(candidate instanceof TFile) || candidate.path === task.file.path) return null;
+
+    const frontmatter = this.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, any> | undefined;
+    return taskAssociationTitlesMatch(task.title, [
+      this.getFrontmatterValueCaseInsensitive(frontmatter, "title"),
+      candidate.basename,
+    ])
+      ? candidate
+      : null;
   }
 
   private findLinkedNoteForExternalEventInstance(event: ExternalCalendarEvent, task: InlineScheduledTask, occurrenceDate?: Date): TFile | null {

@@ -74,6 +74,16 @@ export function selectUniqueParentLinkedTaskNote<T>(
   return matches.length === 1 ? matches[0] : null;
 }
 
+export function taskAssociationTitlesMatch(
+  taskTitle: unknown,
+  candidateTitles: readonly unknown[],
+): boolean {
+  const expectedTitle = normalizeTaskAssociationTitle(taskTitle);
+  return !!expectedTitle && candidateTitles.some(
+    (title) => normalizeTaskAssociationTitle(title) === expectedTitle,
+  );
+}
+
 function extractLeadingTaskNoteLink(rawLine: string): string {
   const taskBody = String(rawLine || "").match(TASK_BODY_PATTERN)?.[1]?.trim() || "";
   if (!taskBody) return "";
