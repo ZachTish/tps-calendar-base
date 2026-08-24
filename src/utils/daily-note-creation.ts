@@ -53,6 +53,14 @@ export async function ensureCalendarDailyNote(
   }
 }
 
+export async function getCalendarDailyNotePath(
+  app: App,
+  date: Date,
+  options: CalendarDailyNoteCreationOptions = {},
+): Promise<string> {
+  return (await resolveDailyNoteTarget(app, date, options.fallbackDateFormat)).path;
+}
+
 async function ensureCalendarDailyNoteOnce(
   app: App,
   date: Date,

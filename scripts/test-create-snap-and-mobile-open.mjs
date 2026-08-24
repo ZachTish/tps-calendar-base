@@ -1323,12 +1323,12 @@ test("calendar task drops apply only canonical GCM status mappings", () => {
   assert.doesNotMatch(calendarViewSource, /Set checkbox state for Base status filter[\s\S]{0,120}\|\| "\[ \]"/);
 });
 
-test("calendar drag-created daily-note tasks append to the note body", async () => {
+test("calendar drag-created Daily Note tasks use Scheduled while dedicated targets append", async () => {
   const newEventServiceSource = readFileSync(new URL("../src/services/new-event-service.ts", import.meta.url), "utf8");
   assert.match(newEventServiceSource, /createTaskInDailyNote/);
   assert.match(newEventServiceSource, /vault\.process\(dailyFile, \(content\) => \{/);
   assert.match(newEventServiceSource, /if \(externalId && this\.hasTaskWithExternalId\(content, externalId\)\)/);
-  assert.match(newEventServiceSource, /return insertLineAfterFrontmatter\(content, taskLine\)/);
+  assert.match(newEventServiceSource, /insertLineInMarkdownSection\(content, taskLine, "Scheduled", 2, scheduledKey\)/);
   assert.match(newEventServiceSource, /"task-line:skip-duplicate"/);
   assert.match(newEventServiceSource, /from "\.\.\/utils\/frontmatter-insert"/);
   assert.doesNotMatch(newEventServiceSource, /\$\{content\}\$\{taskLine\}\\n/);

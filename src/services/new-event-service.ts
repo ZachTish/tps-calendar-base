@@ -18,10 +18,10 @@ import { resolveTemplateFile } from "../utils/template-resolution-service";
 import { mergeTagInputs, normalizeTagValue } from "../utils/tag-utils";
 import { applyParentLinkToChild } from "./parent-child-link";
 import { getPluginById } from "../core";
-import { insertLineAfterFrontmatter } from "../utils/frontmatter-insert";
+import { insertLineAfterFrontmatter, insertLineInMarkdownSection } from "../utils/frontmatter-insert";
 import { normalizeCalendarTaskTargetPath } from "../utils/task-target-path";
 import { normalizeTaskAssociatedNotePath } from "../utils/task-associated-note";
-import { ensureCalendarDailyNote } from "../utils/daily-note-creation";
+import { ensureCalendarDailyNote, getCalendarDailyNotePath } from "../utils/daily-note-creation";
 import { getGcmApi, getGcmTaskCheckboxStateForStatus, isGcmInlinePropertyAllowed } from "../tps-gcm-api";
 
 export interface NewEventServiceConfig {
@@ -461,6 +461,8 @@ export class NewEventService {
       return null;
     }
     const taskLine = this.buildTaskLine(title, start, end, tags, overrides, allDay, refreshedCheckboxState);
+    const scheduledKey = this.getNoteFieldName(this.config.startProperty) || "scheduled";
+    const isDailyNoteTarget = await this.isDailyNoteTaskTarget(dailyFile, start);
     const externalId = this.getTaskExternalId(overrides);
     let duplicate = false;
     let mappingChanged = false;
@@ -473,7 +475,9 @@ export class NewEventService {
         duplicate = true;
         return content;
       }
-      return insertLineAfterFrontmatter(content, taskLine);
+      return isDailyNoteTarget
+        ? insertLineInMarkdownSection(content, taskLine, "Scheduled", 2, scheduledKey)
+        : insertLineAfterFrontmatter(content, taskLine);
     });
     if (mappingChanged) {
       const desiredStatus = this.getDesiredTaskStatus(overrides);
@@ -499,8 +503,28 @@ export class NewEventService {
       targetPath: targetPath || "",
       title,
       taskLineLength: taskLine.length,
+      insertionSection: isDailyNoteTarget ? "Scheduled" : null,
+      insertionOrder: isDailyNoteTarget ? "future-first" : "append",
     });
     return dailyFile;
+  }
+
+  private async isDailyNoteTaskTarget(file: TFile, scheduledDate: Date): Promise<boolean> {
+    const canonicalPath = await getCalendarDailyNotePath(this.config.app, scheduledDate, {
+      fallbackDateFormat: this.config.dailyNoteDateFormat,
+    });
+    if (file.path === canonicalPath) return true;
+
+    const cache = this.config.app.metadataCache.getFileCache?.(file);
+    const frontmatter = cache?.frontmatter || {};
+    const kindKey = Object.keys(frontmatter).find((key) => key.trim().toLowerCase() === "kind");
+    if (kindKey && String(frontmatter[kindKey] ?? "").trim().toLowerCase() === "dailynote") return true;
+
+    const frontmatterTags = Object.entries(frontmatter)
+      .filter(([key]) => key.trim().toLowerCase() === "tag" || key.trim().toLowerCase() === "tags")
+      .flatMap(([, value]) => Array.isArray(value) ? value : String(value ?? "").split(","));
+    if (frontmatterTags.some((tag) => String(tag).replace(/^#/u, "").trim().toLowerCase() === "dailynote")) return true;
+    return cache?.tags?.some((tag) => tag.tag.replace(/^#/u, "").trim().toLowerCase() === "dailynote") ?? false;
   }
 
   private getTaskExternalId(overrides: Record<string, any>): string {

@@ -218,7 +218,10 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
       plugins: pluginRegistry,
       getPlugin: (id) => pluginRegistry[id] ?? null,
     },
-    metadataCache: { getTags: () => ({}) },
+    metadataCache: {
+      getTags: () => ({}),
+      getFileCache: (file) => options.fileCaches?.[file.path] ?? null,
+    },
     internalPlugins: {
       getPluginById: (id) => id === "daily-notes" ? dailyNotesPlugin : null,
       plugins: dailyNotesPlugin ? { "daily-notes": dailyNotesPlugin } : {},
@@ -575,6 +578,131 @@ test("NewEventService task mode writes an inline scheduled task to the resolved 
     fake.read("Inbox/Calendar Tasks.md"),
     "---\ntitle: Calendar Tasks\n---\n\nExisting body\n- [ ] Follow Up [scheduled:: 2027-01-03 14:00:00] [timeEstimate:: 30] #deep-work\n",
   );
+});
+
+test("NewEventService places Daily Note tasks in Scheduled instead of the final Food section", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const original = [
+    "---",
+    "title: Sun, Jan 03 2027",
+    "---",
+    "",
+    "## Scheduled",
+    "",
+    "- [ ] Existing appointment",
+    "",
+    "## Food",
+    "",
+    "- breakfast",
+    "",
+  ].join("\n");
+  const fake = createFakeCalendarApp(TFile, { "2027-01-03.md": original });
+  const service = new NewEventService({
+    app: fake.app,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
+
+  const created = await service.createEvent(
+    new Date("2027-01-03T14:00:00"),
+    new Date("2027-01-03T14:30:00"),
+    undefined,
+    {
+      titleOverride: "Calendar follow-up",
+      createMode: "task",
+      taskTargetPath: "2027-01-03.md",
+    },
+  );
+
+  assert.equal(created?.path, "2027-01-03.md");
+  assert.equal(
+    fake.read("2027-01-03.md"),
+    [
+      "---",
+      "title: Sun, Jan 03 2027",
+      "---",
+      "",
+      "## Scheduled",
+      "",
+      "- [ ] Existing appointment",
+      "- [ ] Calendar follow-up [scheduled:: 2027-01-03 14:00:00] [timeEstimate:: 30]",
+      "",
+      "## Food",
+      "",
+      "- breakfast",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("NewEventService creates a Scheduled section when a Daily Note does not have one", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {
+    "2027-01-04.md": "---\ntitle: Mon, Jan 04 2027\n---\n\n## Food\n\n- lunch\n",
+  });
+  const service = new NewEventService({ app: fake.app, createMode: "task", taskDestination: "daily-note" });
+
+  await service.createEvent(
+    new Date("2027-01-04T09:00:00"),
+    new Date("2027-01-04T09:15:00"),
+    undefined,
+    { titleOverride: "Morning check-in", createMode: "task", taskTargetPath: "2027-01-04.md" },
+  );
+
+  assert.equal(
+    fake.read("2027-01-04.md"),
+    "---\ntitle: Mon, Jan 04 2027\n---\n\n## Food\n\n- lunch\n\n## Scheduled\n\n- [ ] Morning check-in [scheduled:: 2027-01-04 09:00:00] [timeEstimate:: 15]\n",
+  );
+});
+
+test("NewEventService recognizes a Daily Note target by metadata when its path differs from the event date", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(
+    TFile,
+    { "Dashboard note.md": "---\nKind: dailynote\n---\n\n## Scheduled\n\n## Food\n\n- dinner\n" },
+    { fileCaches: { "Dashboard note.md": { frontmatter: { Kind: "dailynote" } } } },
+  );
+  const service = new NewEventService({ app: fake.app, createMode: "task", taskDestination: "daily-note" });
+
+  await service.createEvent(
+    new Date("2027-01-06T13:00:00"),
+    new Date("2027-01-06T13:30:00"),
+    undefined,
+    { titleOverride: "Embedded Base event", createMode: "task", taskTargetPath: "Dashboard note.md" },
+  );
+
+  assert.match(
+    fake.read("Dashboard note.md"),
+    /## Scheduled\n\n- \[ \] Embedded Base event \[scheduled:: 2027-01-06 13:00:00\] \[timeEstimate:: 30\]\n\n## Food/u,
+  );
+});
+
+test("NewEventService keeps Daily Note calendar tasks future-first inside Scheduled", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile, {
+    "2027-01-07.md": [
+      "## Scheduled",
+      "",
+      "- [ ] Afternoon [scheduled:: 2027-01-07 15:00:00]",
+      "- [ ] Morning [scheduled:: 2027-01-07 09:00:00]",
+      "",
+      "## Food",
+      "",
+    ].join("\n"),
+  });
+  const service = new NewEventService({ app: fake.app, createMode: "task", taskDestination: "daily-note" });
+
+  await service.createEvent(
+    new Date("2027-01-07T12:00:00"),
+    new Date("2027-01-07T12:30:00"),
+    undefined,
+    { titleOverride: "Noon", createMode: "task", taskTargetPath: "2027-01-07.md" },
+  );
+
+  const output = fake.read("2027-01-07.md");
+  assert.ok(output.indexOf("Afternoon") < output.indexOf("Noon"));
+  assert.ok(output.indexOf("Noon") < output.indexOf("Morning"));
+  assert.ok(output.indexOf("Morning") < output.indexOf("## Food"));
 });
 
 test("NewEventService task creation uses the authoritative custom status mapping", async () => {
