@@ -3,6 +3,7 @@ import { getPluginById } from "./core";
 import { ExternalCalendarConfig } from "./types";
 
 export interface TPSCalendarSettingsSnapshot {
+  calendarStorageMode?: "legacy" | "native-records";
   externalCalendars: ExternalCalendarConfig[];
   externalCalendarFilter: string;
 }

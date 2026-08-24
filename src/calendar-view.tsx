@@ -695,10 +695,35 @@ export class CalendarView extends BasesView {
       new Notice("This Calendar uses a computed start formula, which cannot be written. Create the item through a view with a writable start property.");
       return;
     }
-    const filterSources = await this.readBaseFileFilterSources();
+    const nativeRecordMode = this.plugin.getCalendarStorageMode?.() === "native-records";
+    const filterSources = nativeRecordMode ? [] : await this.readBaseFileFilterSources();
     const nowRange = this.resolveCurrentTimeCreateRange();
     const createOptions = this.buildCalendarNewEventOptions(filterSources);
-    const createMode = createOptions.createMode;
+    const createMode = nativeRecordMode ? "note" : createOptions.createMode;
+    if (nativeRecordMode) {
+      const nativeRecords = this.getGcmApi()?.nativeRecords;
+      if (!nativeRecords || Number(nativeRecords.version) < 1 || nativeRecords.isEnabled?.() !== true) {
+        new Notice("Native Calendar creation requires GCM native-record mode.");
+        return;
+      }
+      const durationMinutes = Math.max(1, Math.round((nowRange.end.getTime() - nowRange.start.getTime()) / 60_000));
+      const created = await nativeRecords.create("calendar-event", {
+        title: "Untitled",
+        status: "scheduled",
+        scheduled: nowRange.start.toISOString(),
+        end: nowRange.end.toISOString(),
+        durationMinutes,
+        allDay: false,
+        tags: ["calendar-event"],
+      }, {
+        cause: { kind: "user", sourcePluginId: "tps-calendar-base", surface: "calendar-create" },
+      });
+      if (created?.file) {
+        await this.updateCalendar();
+        await this.openCreatedFileIfConfigured(created.file, "note");
+      }
+      return;
+    }
     if (createMode === "task") {
       const file = await this.newEventService.createEvent(nowRange.start, nowRange.end, undefined, createOptions);
       if (file) {
@@ -1593,11 +1618,20 @@ export class CalendarView extends BasesView {
     }
 
     this.pendingDataRetryCount = 0;
+    const nativeRecordMode = this.plugin.getCalendarStorageMode?.() === "native-records";
     this.updateExternalCalendarVisibility();
     const filterSourcesStartedAt = performance.now();
     this.formulaNow = new Date();
-    this.currentBaseFileFilterSources = await this.readBaseFileFilterSources();
-    await this.prepareFormulaRuntime();
+    if (nativeRecordMode) {
+      this.currentBaseFileFilterSources = [];
+      this.formulaDefinitions = {};
+      this.formulaApi = null;
+      this.compiledFormulaSet = null;
+      this.formulaEvaluationEnabled = false;
+    } else {
+      this.currentBaseFileFilterSources = await this.readBaseFileFilterSources();
+      await this.prepareFormulaRuntime();
+    }
     this.trace("updateCalendar:base-filter-sources", {
       durationMs: Math.round(performance.now() - filterSourcesStartedAt),
       sourceCount: this.currentBaseFileFilterSources.length,
@@ -1622,7 +1656,7 @@ export class CalendarView extends BasesView {
     // We use cached events for immediate render, and trigger a background fetch if needed
     const visibleCalendars = new Set(this.visibleExternalCalendarUrls);
     const hiddenExternalEvents = this.getHiddenExternalEventKeySetForCurrentBase();
-    const sourceVisibleExternalEvents: ExternalCalendarEvent[] = this.cachedExternalEvents.filter(
+    const sourceVisibleExternalEvents: ExternalCalendarEvent[] = (nativeRecordMode ? [] : this.cachedExternalEvents).filter(
       (event) =>
         (!event.sourceUrl || visibleCalendars.has(event.sourceUrl)),
     );
@@ -1645,6 +1679,8 @@ export class CalendarView extends BasesView {
     });
     // Trigger background fetch (throttled to 1 minute to prevent infinite loops)
     if (
+      !nativeRecordMode
+      &&
       this.shouldRefreshExternalEvents(
         visibleExternalRange.start,
         visibleExternalRange.end,
@@ -1676,7 +1712,13 @@ export class CalendarView extends BasesView {
     const archiveFolder = this.plugin.settings.archiveFolder
       ? normalizePath(this.plugin.settings.archiveFolder.trim())
       : "";
-    const vaultExternalSuppressions = this.collectVaultExternalEventSuppressions(allExternalEvents);
+    const vaultExternalSuppressions = nativeRecordMode
+      ? {
+        handledExternalEventKeys: new Set<string>(),
+        suppressedExternalEventIds: new Set<string>(),
+        localNoteExternalUidStartByUid: new Map<string, number[]>(),
+      }
+      : this.collectVaultExternalEventSuppressions(allExternalEvents);
     const mergeVaultExternalSuppressions = () => {
       for (const key of vaultExternalSuppressions.handledExternalEventKeys) {
         handledExternalEventKeys.add(key);
@@ -1698,7 +1740,7 @@ export class CalendarView extends BasesView {
       localNoteExternalUidStartKeys: vaultExternalSuppressions.localNoteExternalUidStartByUid.size,
     });
 
-    const inlineTaskEntries = await this.collectInlineScheduledTaskEntries();
+    const inlineTaskEntries = nativeRecordMode ? [] : await this.collectInlineScheduledTaskEntries();
     for (const inlineEntry of inlineTaskEntries) {
       const inlineExternalMatch = this.findExternalEventForInlineTask(
         (inlineEntry.entry as any).inlineTask as InlineScheduledTask | undefined,
@@ -1735,7 +1777,7 @@ export class CalendarView extends BasesView {
       const entryFrontmatter = entryCache?.frontmatter as Record<string, any> | undefined;
       const entryFrontmatterTitle = this.getFrontmatterStringCaseInsensitive(entryFrontmatter, "title") || undefined;
       const entryDisplayTitle = this.resolveEntryDisplayTitle(entry, entryFile, entryFrontmatterTitle);
-      const entryPassesFilters = this.entryPassesCalendarFilters(entry, [
+      const entryPassesFilters = nativeRecordMode || this.entryPassesCalendarFilters(entry, [
         entryDisplayTitle,
         entryFrontmatterTitle,
         entryFile?.basename,
@@ -1968,7 +2010,7 @@ export class CalendarView extends BasesView {
         }
 
 
-        if (!this.entryPassesCalendarFilters(entry, [
+        if (!nativeRecordMode && !this.entryPassesCalendarFilters(entry, [
           baseTitle,
           frontmatterTitle,
           entryFile?.basename,

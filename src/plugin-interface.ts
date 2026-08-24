@@ -2,6 +2,7 @@ export interface CalendarPluginBridge {
   getDefaultCondenseLevel(): number;
   getExternalCalendarUrls(): string[];
   getExternalCalendarFilter(): string;
+  getCalendarStorageMode?(): "legacy" | "native-records";
   getExternalCalendarConfig(url: string): any;
   getExternalCalendarAutoCreateMap(): Record<string, any>;
   getCalendarColor(url: string): string;

@@ -45,6 +45,7 @@ export default class ObsidianCalendarPlugin
   private deletedLinkCleanupPending = 0;
   private controllerExternalCalendars: ExternalCalendarConfig[] = [];
   private controllerExternalCalendarFilter: string | null = null;
+  private controllerCalendarStorageMode: "legacy" | "native-records" = "legacy";
   private activeCalendarViews = new Set<CalendarView>();
   private calendarOpenRequestGeneration = 0;
   private calendarOpenChain: Promise<void> = Promise.resolve();
@@ -251,6 +252,9 @@ export default class ObsidianCalendarPlugin
         this.controllerExternalCalendarFilter = typeof snapshot?.externalCalendarFilter === "string"
           ? snapshot.externalCalendarFilter
           : null;
+        this.controllerCalendarStorageMode = snapshot?.calendarStorageMode === "native-records"
+          ? "native-records"
+          : "legacy";
         return;
       } catch (error) {
         logger.warn("[TPS Calendar] Failed to load Controller calendar settings from API.", error);
@@ -267,6 +271,7 @@ export default class ObsidianCalendarPlugin
 
     this.controllerExternalCalendars = [];
     this.controllerExternalCalendarFilter = null;
+    this.controllerCalendarStorageMode = "legacy";
     for (const path of paths) {
       try {
         if (!(await this.app.vault.adapter.exists(path))) continue;
@@ -277,6 +282,9 @@ export default class ObsidianCalendarPlugin
         }
         if (typeof parsed?.externalCalendarFilter === "string") {
           this.controllerExternalCalendarFilter = parsed.externalCalendarFilter;
+        }
+        if (parsed?.calendarStorageMode === "native-records") {
+          this.controllerCalendarStorageMode = "native-records";
         }
         if (this.controllerExternalCalendars.length > 0 || this.controllerExternalCalendarFilter !== null) return;
       } catch (error) {
@@ -407,6 +415,15 @@ export default class ObsidianCalendarPlugin
       return this.controllerExternalCalendarFilter;
     }
     return this.settings.externalCalendarFilter ?? "";
+  }
+
+  getCalendarStorageMode(): "legacy" | "native-records" {
+    const controllerApi = getTPSControllerApi(this.app);
+    const snapshot = controllerApi?.getCalendarSettingsSnapshot?.();
+    if (snapshot && !(snapshot instanceof Promise)) {
+      return snapshot.calendarStorageMode === "native-records" ? "native-records" : "legacy";
+    }
+    return this.controllerCalendarStorageMode;
   }
 
   getExternalCalendarConfig(url: string): ExternalCalendarConfig | null {

@@ -1,5 +1,11 @@
 # TPS Calendar Base
 
+## 0.6.0
+
+- Adds the native-record presentation path used when Controller reports **Native Markdown records** calendar storage. The Calendar view consumes the real file rows already filtered by the core Base controller.
+- Native mode performs no external calendar fetch, inline-task synthesis, vault-wide task scan, custom formula/filter evaluation, or duplicate event suppression. Creating an item writes one ordinary `calendar-event` record through GCM.
+- Legacy Controller/calendar task behavior remains unchanged for existing vaults. Native mode requires Controller 0.11.0 and GCM 1.38.0; minimum supported Obsidian remains 1.10.0.
+
 ## 0.5.4
 
 - Calendar task creation now places tasks routed to a Daily Note inside its exact `## Scheduled` section instead of appending beneath whichever section happens to be last, such as `## Food`. Scheduled task lines are inserted future-first, with later events toward the top and past/earlier events toward the bottom.

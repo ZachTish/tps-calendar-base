@@ -1252,7 +1252,7 @@ test("calendar task clicks open an associated-note/source-line chooser", () => {
 });
 
 test("calendar storage notes do not steal clicks from matching inline task events", () => {
-  assert.match(calendarViewSource, /const inlineTaskEntries = await this\.collectInlineScheduledTaskEntries\(\)/);
+  assert.match(calendarViewSource, /const inlineTaskEntries = nativeRecordMode \? \[\] : await this\.collectInlineScheduledTaskEntries\(\)/);
   assert.match(calendarViewSource, /const hasMatchingInlineTaskEntry = shouldRenderEntry\s+\? this\.hasMatchingInlineScheduledTaskEntry\(inlineTaskEntries, entryFile, startDate, endDate, title, externalMatch\)/);
   assert.match(calendarViewSource, /else if \(shouldRenderEntry && !hasMatchingInlineTaskEntry\)/);
   assert.match(calendarViewSource, /if \(shouldRenderEntry && !hasMatchingInlineTaskEntry\) \{/);
