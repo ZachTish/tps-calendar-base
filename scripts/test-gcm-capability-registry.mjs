@@ -7,7 +7,12 @@ import * as esbuild from 'esbuild';
 
 async function loadRegistry() {
   const build = await esbuild.build({
-    entryPoints: [fileURLToPath(new URL('../src/tps-gcm-api.ts', import.meta.url))],
+    stdin: {
+      contents: `export * from './src/tps-gcm-api.ts'; export { TFile } from 'obsidian';`,
+      resolveDir: fileURLToPath(new URL('..', import.meta.url)),
+      sourcefile: 'gcm-capability-registry-test-entry.ts',
+      loader: 'ts',
+    },
     bundle: true,
     format: 'esm',
     platform: 'node',
@@ -158,6 +163,38 @@ test('registry supports late load, replacement, unload, and rejects spoofed or m
     [second, first],
     [null, second],
   ]);
+  owner.unload();
+});
+
+test('calendar consumes shared GCM template identity and fails closed on malformed results', async () => {
+  const { TFile, installGcmApiRegistry, isGcmTemplateFile, listGcmTemplateFiles } = await loadRegistry();
+  const workspace = createWorkspace();
+  const app = { workspace };
+  const owner = createOwner(workspace);
+  installGcmApiRegistry(owner, app);
+
+  const template = new TFile();
+  workspace.trigger('tps:gcm-api-changed', availablePayload({
+    templates: {
+      version: 1,
+      getMode: () => 'property',
+      matches: file => file === template,
+      list: () => [template, {}, null],
+    },
+  }));
+  assert.equal(isGcmTemplateFile(app, template), true);
+  assert.equal(isGcmTemplateFile(app, new TFile()), false);
+  assert.deepEqual(listGcmTemplateFiles(app), [template]);
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({ templates: { version: 1 } }));
+  assert.equal(isGcmTemplateFile(app, template), null);
+  assert.equal(listGcmTemplateFiles(app), null);
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({
+    templates: { version: 2, matches: () => true, list: () => [template] },
+  }));
+  assert.equal(isGcmTemplateFile(app, template), null);
+  assert.equal(listGcmTemplateFiles(app), null);
   owner.unload();
 });
 

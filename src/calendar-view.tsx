@@ -37,6 +37,8 @@ import {
   ensureInternalIdInFrontmatter,
   getExternalId,
   getGcmApi,
+  isGcmTemplateFile,
+  listGcmTemplateFiles,
   getGcmTaskCheckboxIconForState,
   getGcmTaskCheckboxStateForStatus,
   getGcmTaskStatusForCheckboxState,
@@ -3769,6 +3771,12 @@ export class CalendarView extends BasesView {
       }
     }
 
+    const sharedTemplates = listGcmTemplateFiles(this.app);
+    if (sharedTemplates) {
+      sharedTemplates.forEach(add);
+      return Array.from(byPath.values()).sort((a, b) => a.path.localeCompare(b.path));
+    }
+
     const templater = (this.app as any)?.plugins?.plugins?.["templater-obsidian"];
     const templaterRoot = typeof templater?.settings?.templates_folder === "string"
       ? normalizePath(templater.settings.templates_folder.trim()).replace(/^\/+|\/+$/g, "")
@@ -5041,6 +5049,11 @@ export class CalendarView extends BasesView {
     const templatePath = this.baseTemplatePath;
     if (templatePath && normalizePath(templatePath) === normalizePath(file.path)) {
       return true;
+    }
+
+    const sharedMatch = isGcmTemplateFile(this.app, file);
+    if (sharedMatch !== null) {
+      return sharedMatch;
     }
 
     const templater = (this.app as any)?.plugins?.plugins?.["templater-obsidian"];

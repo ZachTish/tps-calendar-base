@@ -62,6 +62,12 @@ export interface GcmApi {
     revealForFile?: (filePath: string, lineNumber?: number) => void;
   };
   taskCheckboxes?: GcmTaskCheckboxesApi;
+  templates?: {
+    version?: number;
+    getMode?: () => unknown;
+    matches?: (file: TFile) => unknown;
+    list?: () => unknown;
+  };
   identity?: {
     internalIdKey?: string;
     externalIdKey?: string;
@@ -223,6 +229,29 @@ export interface EventOwner {
 
 export function getGcmApi(app: App): GcmApi | null {
   return gcmApiRegistries.get(app)?.api ?? null;
+}
+
+/** Returns null when GCM does not provide the shared template-identity contract. */
+export function isGcmTemplateFile(app: App, file: TFile): boolean | null {
+  const templates = getGcmApi(app)?.templates;
+  if (templates?.version !== 1 || typeof templates.matches !== 'function') return null;
+  try {
+    return templates.matches(file) === true;
+  } catch {
+    return false;
+  }
+}
+
+export function listGcmTemplateFiles(app: App): TFile[] | null {
+  const templates = getGcmApi(app)?.templates;
+  if (templates?.version !== 1 || typeof templates.list !== 'function') return null;
+  try {
+    const value = templates.list();
+    if (!Array.isArray(value)) return [];
+    return value.filter((entry): entry is TFile => entry instanceof TFile);
+  } catch {
+    return [];
+  }
 }
 
 export function getGcmStatusOptions(app: App): string[] {

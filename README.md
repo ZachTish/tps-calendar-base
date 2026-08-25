@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.7.0
+
+- Calendar template discovery now consumes GCM's version-1 template identity rule. A calendar template may live at the vault root and be identified by tag or property key/value instead of requiring a template folder.
+- Exact per-calendar template paths continue to win. If the shared capability is unavailable, Calendar retains its prior Templater-folder and configured-folder fallback rather than guessing.
+- The change affects template candidates and template-file exclusion only. Calendar events, native-record persistence, Base filtering, recurrence, and existing settings are unchanged.
+- This is a backward-compatible integration feature requiring GCM 1.42.0 for metadata-defined templates. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.6.0
 
 - Adds the native-record presentation path used when Controller reports **Native Markdown records** calendar storage. The Calendar view consumes the real file rows already filtered by the core Base controller.
