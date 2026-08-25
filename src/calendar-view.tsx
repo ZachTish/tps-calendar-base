@@ -156,6 +156,7 @@ import {
 } from "./utils/date-value-utils";
 import * as logger from "./logger";
 import { parseDateFromFilename } from "./utils/daily-file-date";
+import { resolveCalendarDisplayTitle } from "./utils/calendar-display-title";
 
 export const CalendarViewType = "calendar";
 const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
@@ -1778,7 +1779,12 @@ export class CalendarView extends BasesView {
       const entryCache = entryFile ? this.app.metadataCache.getFileCache(entryFile) : null;
       const entryFrontmatter = entryCache?.frontmatter as Record<string, any> | undefined;
       const entryFrontmatterTitle = this.getFrontmatterStringCaseInsensitive(entryFrontmatter, "title") || undefined;
-      const entryDisplayTitle = this.resolveEntryDisplayTitle(entry, entryFile, entryFrontmatterTitle);
+      const entryDisplayTitle = this.resolveEntryDisplayTitle(
+        entry,
+        entryFile,
+        entryFrontmatter,
+        entryFrontmatterTitle,
+      );
       const entryPassesFilters = nativeRecordMode || this.entryPassesCalendarFilters(entry, [
         entryDisplayTitle,
         entryFrontmatterTitle,
@@ -1841,10 +1847,6 @@ export class CalendarView extends BasesView {
             priorityValue = this.tryGetValue(entry, this.priorityField);
           }
         }
-
-        let baseTitle = this.titleProp
-          ? (valueToString(entry.getValue(this.titleProp)) as string | undefined)
-          : undefined;
 
         const cache = entryCache;
         const formulaAllDayConfigured = isCalendarFormulaProperty(this.allDayProperty);
@@ -1978,7 +1980,7 @@ export class CalendarView extends BasesView {
             if (sourceUrlForMatch && normalizeCalendarUrl(extEvent.sourceUrl || "") !== normalizedSourceUrlForScan) continue;
 
             // Match Title (case insensitive, trimmed)
-            const titleMatch = (baseTitle || "").trim().toLowerCase() === extEvent.title.trim().toLowerCase();
+            const titleMatch = entryDisplayTitle.trim().toLowerCase() === extEvent.title.trim().toLowerCase();
 
             // Match Start Time (within 1 minute tolerance)
             const timeDiff = Math.abs(startDate.getTime() - extEvent.startDate.getTime());
@@ -2013,7 +2015,7 @@ export class CalendarView extends BasesView {
 
 
         if (!nativeRecordMode && !this.entryPassesCalendarFilters(entry, [
-          baseTitle,
+          entryDisplayTitle,
           frontmatterTitle,
           entryFile?.basename,
           entryFile?.path,
@@ -2094,13 +2096,7 @@ export class CalendarView extends BasesView {
           }
         }
 
-        let title = baseTitle || frontmatterTitle || entryFile.basename;
-        if (title) {
-          const { cleanTitle } = this.parseFilenameComponents(title);
-          if (cleanTitle) {
-            title = cleanTitle;
-          }
-        }
+        const title = entryDisplayTitle;
 
         // Resolve styles
         const statusStr = statusValue ? String(statusValue) : undefined;
@@ -7698,14 +7694,24 @@ export class CalendarView extends BasesView {
   private resolveEntryDisplayTitle(
     entry: BasesEntry,
     entryFile: TFile | undefined,
+    frontmatter: Record<string, any> | undefined,
     frontmatterTitle: string | undefined,
   ): string {
-    let baseTitle = this.titleProp
+    const configuredTitle = this.titleProp
       ? (valueToString(this.tryGetEntryValue(entry, this.titleProp)) as string | undefined)
       : undefined;
 
-    let title = baseTitle || frontmatterTitle || entryFile?.basename || "Untitled";
-    if (title) {
+    const resolved = resolveCalendarDisplayTitle({
+      kind: this.getFrontmatterValueCaseInsensitive(frontmatter, "kind"),
+      eventTitle: this.getFrontmatterValueCaseInsensitive(frontmatter, "eventTitle"),
+      configuredTitle,
+      frontmatterTitle,
+      fileTitle: entryFile?.basename,
+      titleProperty: this.titleProp,
+    });
+
+    let title = resolved.title;
+    if (resolved.source !== "event-title") {
       const { cleanTitle } = this.parseFilenameComponents(title);
       if (cleanTitle) title = cleanTitle;
     }

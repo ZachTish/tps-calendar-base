@@ -1,5 +1,12 @@
 # TPS Calendar Base
 
+## 0.7.1
+
+- Native `calendar-event` cards now display the record's plain `eventTitle` instead of exposing the link-valued `title` property on the calendar block.
+- The stored `title` link and associated-note fields remain unchanged and clickable through their existing property and event actions. Calendar changes presentation only; it does not rewrite records.
+- An explicitly configured custom or formula title still wins. The native event label takes precedence only when the Calendar view uses the ordinary `title` / `note.title` field or its default title behavior.
+- This is a backward-compatible presentation fix with no settings, Base, record, or API migration. Minimum supported Obsidian remains 1.10.0.
+
 ## 0.7.0
 
 - Calendar template discovery now consumes GCM's version-1 template identity rule. A calendar template may live at the vault root and be identified by tag or property key/value instead of requiring a template folder.

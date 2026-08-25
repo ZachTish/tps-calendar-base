@@ -1551,6 +1551,41 @@ test("external records use formula dates and configured display fields", async (
   assert.equal(calendarEntry.externalEvent.isAllDay, true);
 });
 
+test("native calendar occurrence cards show eventTitle without flattening the associated-note link", () => {
+  const view = createBareView();
+  const file = createFile("2026-08-25 - Daily Standup.md");
+  const frontmatter = {
+    kind: "calendar-event",
+    eventTitle: "Daily Standup for GCP App Support",
+    title: "[[Calendar Events/2026-08-25/Calendar event--def71b28|Daily Standup for GCP App Support]]",
+  };
+  const entry = {
+    file,
+    getValue(property) {
+      return property === "note.title" ? frontmatter.title : null;
+    },
+  };
+  view.titleProp = "note.title";
+
+  assert.equal(
+    view.resolveEntryDisplayTitle(entry, file, frontmatter, frontmatter.title),
+    "Daily Standup for GCP App Support",
+  );
+  assert.equal(
+    frontmatter.title,
+    "[[Calendar Events/2026-08-25/Calendar event--def71b28|Daily Standup for GCP App Support]]",
+    "the clickable associated-note property remains intact",
+  );
+
+  view.titleProp = "formula.cardTitle";
+  entry.getValue = (property) => property === "formula.cardTitle" ? "Formula override" : null;
+  assert.equal(
+    view.resolveEntryDisplayTitle(entry, file, frontmatter, frontmatter.title),
+    "Formula override",
+    "an explicit custom/formula title still wins",
+  );
+});
+
 test("native note formula dates remain authoritative and formula columns stay non-writable", async () => {
   const view = createBareView();
   Object.assign(view, {
