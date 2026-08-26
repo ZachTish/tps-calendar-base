@@ -1019,6 +1019,25 @@ test("dedicated calendar tabs preserve configured day counts while constrained e
   assert.equal(getAdaptiveTimeGridDayCount(3, 0, true, false), 3);
 });
 
+test("per-view embedded day-count preservation is opt-in and leaves dedicated views unchanged", async () => {
+  const { getAdaptiveTimeGridDayCount } = await importCalendarDayCountUtility();
+
+  assert.equal(getAdaptiveTimeGridDayCount(3, 400, true, false, true), 3);
+  assert.equal(getAdaptiveTimeGridDayCount(3, 400, true, false, false), 1);
+  assert.equal(getAdaptiveTimeGridDayCount(3, 400, true, false), 1);
+  assert.equal(getAdaptiveTimeGridDayCount(3, 400, false, false, false), 3);
+  assert.equal(getAdaptiveTimeGridDayCount(3, 400, false, false, true), 3);
+
+  assert.match(viewOptionsSource, /key: PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY/);
+  assert.match(viewOptionsSource, /PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY = "tps_preserveEmbeddedDayCount"/);
+  assert.match(calendarViewSource, /import \{ PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY \} from "\.\/view-options"/);
+  assert.match(
+    calendarViewSource,
+    /this\.preserveEmbeddedDayCount =\s*this\.directPreserveEmbeddedDayCount\s*\|\| this\.parseBooleanLike\(this\.config\.get\(PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY\), false\)/,
+  );
+  assert.match(calendarViewSource, /preserveEmbeddedDayCount=\{this\.preserveEmbeddedDayCount\}/);
+});
+
 test("exact filter ranges do not shift into their midpoint in constrained embeds", async () => {
   const {
     getAdaptiveTimeGridDayCount,

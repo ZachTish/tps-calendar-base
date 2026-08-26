@@ -157,6 +157,7 @@ import {
 import * as logger from "./logger";
 import { parseDateFromFilename } from "./utils/daily-file-date";
 import { resolveCalendarDisplayTitle } from "./utils/calendar-display-title";
+import { PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY } from "./view-options";
 
 export const CalendarViewType = "calendar";
 const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
@@ -548,6 +549,7 @@ export class CalendarView extends BasesView {
   private showNavButtons: boolean = true;
   private embeddedHeight: number = 520;
   private preserveEmbeddedDayCount: boolean = false;
+  private directPreserveEmbeddedDayCount: boolean = false;
   private showEmbeddedHeader: boolean = true;
   private newEventService: NewEventService;
   private externalCalendarUrls: string[] = [];
@@ -1373,6 +1375,9 @@ export class CalendarView extends BasesView {
     this.navStep = this.parseNumberConfig(this.plugin.settings.navStep, 7);
     this.showNavButtons = this.plugin.settings.showNavButtons !== false;
     this.embeddedHeight = this.normalizeEmbeddedHeight(this.config.get("embeddedHeight"));
+    this.preserveEmbeddedDayCount =
+      this.directPreserveEmbeddedDayCount
+      || this.parseBooleanLike(this.config.get(PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY), false);
     this.showEmbeddedHeader = this.parseBooleanLike(this.config.get("showEmbeddedHeader"), true);
     this.applyEmbeddedHeightVariable();
 
@@ -9011,6 +9016,16 @@ export class CalendarView extends BasesView {
     return Math.max(260, Math.min(1600, parsed));
   }
 
+  public setDirectEmbeddedDayCountPreservation(preserve: boolean): void {
+    this.directPreserveEmbeddedDayCount = preserve === true;
+    this.preserveEmbeddedDayCount =
+      this.directPreserveEmbeddedDayCount
+      || this.parseBooleanLike(
+        this.config?.get(PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY),
+        false,
+      );
+  }
+
   private applyEmbeddedHeightVariable(): void {
     const isEmbedded = this.isEmbeddedCalendarContext();
     const canvasEmbedHost = this.containerEl.closest<HTMLElement>(".canvas-node-content, .canvas-node");
@@ -11291,6 +11306,16 @@ export class CalendarView extends BasesView {
               month: "Month",
               continuous: "Continuous",
               "filter-based": "Filter-based (Auto)",
+            },
+          },
+          {
+            displayName: "Embedded day count",
+            type: "dropdown",
+            key: PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY,
+            default: "false",
+            options: {
+              false: "Fit available width",
+              true: "Keep configured days",
             },
           },
           {

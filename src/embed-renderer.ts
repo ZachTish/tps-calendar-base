@@ -95,7 +95,7 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
         this.view = new CalendarView(controller, contentEl, this.plugin);
         (this.view as any).config = new InlineBaseConfig(this.withCalendarDefaults(this.viewConfig));
         (this.view as any).forceDirectEmbedRender = true;
-        (this.view as any).preserveEmbeddedDayCount = this.options.preserveDayCount === true;
+        this.view.setDirectEmbeddedDayCountPreservation(this.options.preserveDayCount === true);
         (this.view as any).data = queryResult;
         (this.view as any).queryResult = queryResult;
         (this.view as any).result = queryResult;

@@ -4,6 +4,7 @@ import { DEFAULT_CONDENSE_LEVEL, MAX_CONDENSE_LEVEL } from "./utils";
 
 export const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
 export const LEGACY_CONTEXT_DATE_CONFIG_KEY = "contextDateEnabled";
+export const PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY = "tps_preserveEmbeddedDayCount";
 
 export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOption[] {
   const externalCalendarItems = getExternalCalendarViewOptions(plugin);
@@ -96,6 +97,16 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
             month: "Month",
             continuous: "Continuous",
             "filter-based": "Filter-based (Auto)",
+          },
+        },
+        {
+          displayName: "Embedded day count",
+          type: "dropdown",
+          key: PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY,
+          default: "false",
+          options: {
+            false: "Fit available width",
+            true: "Keep configured days",
           },
         },
         {
