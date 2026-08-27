@@ -484,6 +484,110 @@ export class CalendarView extends BasesView {
     return null;
   }
 
+  private resolveNativeCalendarRecordEndDate(
+    frontmatter: Record<string, any> | undefined,
+    startDate: Date,
+    nativeRecordMode: boolean,
+  ): Date | null {
+    if (!nativeRecordMode || !frontmatter) return null;
+
+    const nativeRecords = this.getGcmApi()?.nativeRecords;
+    const nativeRecordsVersion = Number(nativeRecords?.version);
+    if (
+      !nativeRecords ||
+      !Number.isFinite(nativeRecordsVersion) ||
+      nativeRecordsVersion < 2 ||
+      typeof nativeRecords.inspect !== "function"
+    ) {
+      return null;
+    }
+
+    try {
+      if (nativeRecords.isEnabled?.() !== true) return null;
+      const inspection = nativeRecords.inspect(frontmatter);
+      if (inspection?.kind !== "calendar-event") return null;
+
+      const canonicalFrontmatter =
+        inspection.frontmatter &&
+        typeof inspection.frontmatter === "object" &&
+        !Array.isArray(inspection.frontmatter)
+          ? inspection.frontmatter as Record<string, any>
+          : frontmatter;
+      const durationMinutes = this.parseDurationMinutesFromValue(
+        this.getFrontmatterValueCaseInsensitive(canonicalFrontmatter, "durationMinutes"),
+      );
+      if (durationMinutes !== null && durationMinutes > 0) {
+        const durationEnd = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
+        if (Number.isFinite(durationEnd.getTime()) && durationEnd.getTime() > startDate.getTime()) {
+          return durationEnd;
+        }
+      }
+
+      const canonicalEnd = this.parseFrontmatterDateValue(
+        this.getFrontmatterValueCaseInsensitive(canonicalFrontmatter, "end"),
+      );
+      return canonicalEnd && canonicalEnd.getTime() > startDate.getTime()
+        ? canonicalEnd
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveNoteDisplayInterval(
+    entry: BasesEntry,
+    frontmatter: Record<string, any> | undefined,
+    startDate: Date,
+    configuredDurationMinutes: number | null,
+    nativeRecordMode: boolean,
+  ): { endDate: Date; hasExplicitEnd: boolean } {
+    let endDate: Date | undefined;
+    let hasExplicitEnd = false;
+
+    if (this.endDateProp) {
+      if (this.useEndDuration) {
+        const durationMinutes = this.resolveDurationMinutes(
+          entry,
+          this.endDateProp,
+          frontmatter,
+        );
+        if (durationMinutes !== null && durationMinutes > 0) {
+          endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
+          hasExplicitEnd = true;
+        }
+      } else {
+        const configuredEnd = extractDate(entry, this.endDateProp, this.getDailyNoteDateFormat());
+        if (configuredEnd && configuredEnd.getTime() > startDate.getTime()) {
+          endDate = configuredEnd;
+          hasExplicitEnd = true;
+        }
+      }
+    }
+
+    if (configuredDurationMinutes !== null) {
+      endDate = new Date(startDate.getTime() + configuredDurationMinutes * 60 * 1000);
+      hasExplicitEnd = true;
+    } else if (!endDate) {
+      const nativeRecordEnd = this.resolveNativeCalendarRecordEndDate(
+        frontmatter,
+        startDate,
+        nativeRecordMode,
+      );
+      if (nativeRecordEnd) {
+        endDate = nativeRecordEnd;
+        hasExplicitEnd = true;
+      }
+    }
+
+    if (!endDate) {
+      endDate = new Date(
+        startDate.getTime() + this.getMinimumEventDurationMinutes() * 60 * 1000,
+      );
+    }
+
+    return { endDate, hasExplicitEnd };
+  }
+
   private getGcmTimeTrackingService(): any | null {
     return this.getGcmApi()?.timeTracking ?? null;
   }
@@ -2027,37 +2131,16 @@ export class CalendarView extends BasesView {
         ])) {
           continue;
         }
-        let endDate: Date | undefined;
-        let hasExplicitEnd = false;
-
-        if (this.endDateProp) {
-          if (this.useEndDuration) {
-            // Duration mode: compute end from start + duration (in minutes)
-            const durationMinutes = this.resolveDurationMinutes(
-              entry,
-              this.endDateProp,
-              cache?.frontmatter as Record<string, any> | undefined,
-            );
-            if (durationMinutes !== null && durationMinutes > 0) {
-              endDate = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
-              hasExplicitEnd = true;
-            }
-          } else {
-            // End datetime mode: extract end date directly
-            endDate = extractDate(entry, this.endDateProp, this.getDailyNoteDateFormat()) ?? undefined;
-            hasExplicitEnd = !!endDate;
-          }
-        }
-
         const configuredDurationMinutes = this.getSourceDurationMinutes(startResolution.slot);
-        if (configuredDurationMinutes !== null) {
-          endDate = new Date(startDate.getTime() + configuredDurationMinutes * 60 * 1000);
-          hasExplicitEnd = true;
-        } else if (!endDate) {
-          // If no per-source duration is set, force a minimum event span.
-          const minDurationMinutes = this.getMinimumEventDurationMinutes();
-          endDate = new Date(startDate.getTime() + minDurationMinutes * 60 * 1000);
-        }
+        const displayInterval = this.resolveNoteDisplayInterval(
+          entry,
+          cache?.frontmatter as Record<string, any> | undefined,
+          startDate,
+          configuredDurationMinutes,
+          nativeRecordMode,
+        );
+        let endDate: Date | undefined = displayInterval.endDate;
+        let hasExplicitEnd = displayInterval.hasExplicitEnd;
         const startsAtMidnight =
           startDate.getHours() === 0 &&
           startDate.getMinutes() === 0 &&

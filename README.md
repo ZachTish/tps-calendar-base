@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.8.1
+
+- In native-record Calendar mode, a `calendar-event` row verified through GCM's version-2 native-record inspection API now uses canonical `durationMinutes`, then a valid canonical `end`, when the Calendar view's configured interval is empty. Authored view duration/end fields and per-source fixed durations remain authoritative; missing, disabled, incompatible, or failing inspection capabilities fall back without trusting raw record fields.
+- Canonical native intervals are marked explicit, preserving proportional 15-, 60-, and 180-minute event geometry even when a condensed mobile view intentionally sets **Fallback event height** to zero. The CSS and `minEventHeight` contract are unchanged.
+- Mixed Base task rows retain their existing semantics: configured task intervals still work, while a task or unverified note never inherits native calendar-event fields. No settings, Base definitions, or records are migrated.
+- GCM native-record API v2 or newer is required only for the canonical interval fallback. Missing, disabled, incompatible, or failing providers retain Calendar's existing readability fallback. Minimum supported Obsidian remains 1.10.0.
+- Validation passed 34/34 focused duration checks and all 20 package-declared test files, followed by the separate production build and byte-identical test-vault deployment. Obsidian 1.13.7 reloaded 0.8.1 and rendered a reversible 180-minute mobile-width fixture as an explicit 122 px event block; the prior note/provider/view state was restored, and production was not accessed.
+
 ## 0.8.0
 
 - Calendar Base views now expose **Embedded day count**. Choose **Keep configured days** when a Markdown or Canvas embed must retain its authored one-, three-, five-, or seven-day range even in a narrow pane.

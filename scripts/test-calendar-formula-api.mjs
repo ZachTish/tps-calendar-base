@@ -277,10 +277,12 @@ function createFile(path, contents = "") {
 function createBareView({
   api = null,
   lineMetadata = undefined,
+  nativeRecords = undefined,
   baseDefinition = {},
   markdownFiles = [],
   frontmatterByPath = {},
   statusService = undefined,
+  calendarStorageMode = "legacy",
 } = {}) {
   const view = Object.create(CalendarView.prototype);
   const baseFile = createFile("Inbox/Schedule.base", JSON.stringify(baseDefinition));
@@ -320,7 +322,7 @@ function createBareView({
     registerEvent() {},
   };
   installGcmApiRegistry(owner, view.app);
-  if (api || resolvedLineMetadata) {
+  if (api || resolvedLineMetadata || nativeRecords) {
     const checkboxStates = new Map([
       ['todo', '[ ]'],
       ['complete', '[x]'],
@@ -342,6 +344,7 @@ function createBareView({
       api: {
         formulas: api,
         lineMetadata: resolvedLineMetadata,
+        nativeRecords,
         services: {
           status: {
             getStatusPropertyKey: () => 'status',
@@ -373,6 +376,7 @@ function createBareView({
       noteEventFrontmatterColorTarget: "off",
     },
     getCalendarColor: () => "#123456",
+    getCalendarStorageMode: () => calendarStorageMode,
   };
   view.resolveContainerLeafFile = () => baseFile;
   view.getFilterExpressionContextFile = () => null;
@@ -1584,6 +1588,177 @@ test("native calendar occurrence cards show eventTitle without flattening the as
     "Formula override",
     "an explicit custom/formula title still wins",
   );
+});
+
+test("verified native calendar records retain canonical 15, 60, and 180 minute intervals in mixed Bases", () => {
+  const nativeRecords = {
+    version: 2,
+    isEnabled: () => true,
+    inspect(frontmatter) {
+      if (!frontmatter?.verifiedRecordKind) return null;
+      return {
+        kind: frontmatter.verifiedRecordKind,
+        frontmatter,
+      };
+    },
+  };
+  const view = createBareView({ nativeRecords, calendarStorageMode: "native-records" });
+  Object.assign(view, {
+    endDateProp: "note.timeEstimate",
+    useEndDuration: true,
+    getMinimumEventDurationMinutes: () => 5,
+  });
+  const startDate = new Date("2026-08-26T13:15:00-05:00");
+  const makeEntry = (frontmatter) => ({
+    file: createFile(`Calendar Events/${frontmatter.verifiedRecordKind}.md`),
+    getValue(property) {
+      const key = String(property || "").replace(/^note\./u, "");
+      return frontmatter[key] ?? null;
+    },
+  });
+  const resolve = (frontmatter, configuredDurationMinutes = null, nativeRecordMode = true) =>
+    view.resolveNoteDisplayInterval(
+      makeEntry(frontmatter),
+      frontmatter,
+      startDate,
+      configuredDurationMinutes,
+      nativeRecordMode,
+    );
+  const minutes = (interval) =>
+    (interval.endDate.getTime() - startDate.getTime()) / 60_000;
+
+  const canonicalIntervals = [15, 60, 180].map((durationMinutes) =>
+    resolve({ verifiedRecordKind: "calendar-event", durationMinutes }),
+  );
+  assert.deepEqual(canonicalIntervals.map(minutes), [15, 60, 180]);
+  assert.ok(
+    canonicalIntervals.every((interval) => interval.hasExplicitEnd),
+    "canonical native intervals bypass the readability-only minimum height",
+  );
+
+  const configuredFieldWins = resolve({
+    verifiedRecordKind: "calendar-event",
+    timeEstimate: 45,
+    durationMinutes: 180,
+  });
+  assert.equal(minutes(configuredFieldWins), 45);
+  assert.equal(configuredFieldWins.hasExplicitEnd, true);
+
+  const configuredSourceWins = resolve({
+    verifiedRecordKind: "calendar-event",
+    durationMinutes: 180,
+  }, 30);
+  assert.equal(minutes(configuredSourceWins), 30);
+  assert.equal(configuredSourceWins.hasExplicitEnd, true);
+
+  const canonicalEndFallback = resolve({
+    verifiedRecordKind: "calendar-event",
+    durationMinutes: 0,
+    end: "2026-08-26T14:15:00-05:00",
+  });
+  assert.equal(minutes(canonicalEndFallback), 60);
+  assert.equal(canonicalEndFallback.hasExplicitEnd, true);
+
+  const taskWithConfiguredDuration = resolve({
+    verifiedRecordKind: "task",
+    timeEstimate: 25,
+    durationMinutes: 180,
+  });
+  assert.equal(minutes(taskWithConfiguredDuration), 25);
+  assert.equal(taskWithConfiguredDuration.hasExplicitEnd, true);
+
+  const taskWithoutConfiguredDuration = resolve({
+    verifiedRecordKind: "task",
+    durationMinutes: 180,
+    end: "2026-08-26T16:15:00-05:00",
+  });
+  assert.equal(minutes(taskWithoutConfiguredDuration), 5);
+  assert.equal(
+    taskWithoutConfiguredDuration.hasExplicitEnd,
+    false,
+    "mixed task rows keep their existing configured-field and readability-fallback semantics",
+  );
+
+  const unverifiedCalendarEvent = resolve({
+    kind: "calendar-event",
+    durationMinutes: 180,
+  });
+  assert.equal(minutes(unverifiedCalendarEvent), 5);
+  assert.equal(unverifiedCalendarEvent.hasExplicitEnd, false);
+
+  const verifiedLegacyModeEvent = resolve({
+    verifiedRecordKind: "calendar-event",
+    durationMinutes: 180,
+  }, null, false);
+  assert.equal(minutes(verifiedLegacyModeEvent), 5);
+  assert.equal(verifiedLegacyModeEvent.hasExplicitEnd, false);
+
+  const incompatibleApis = [
+    {
+      label: "version 1 without the inspection contract",
+      api: {
+        version: 1,
+        isEnabled: () => true,
+        inspect: () => ({
+          kind: "calendar-event",
+          frontmatter: { verifiedRecordKind: "calendar-event", durationMinutes: 180 },
+        }),
+      },
+    },
+    {
+      label: "disabled native-record service",
+      api: {
+        version: 2,
+        isEnabled: () => false,
+        inspect: () => ({
+          kind: "calendar-event",
+          frontmatter: { verifiedRecordKind: "calendar-event", durationMinutes: 180 },
+        }),
+      },
+    },
+    {
+      label: "version 2 API missing inspect",
+      api: {
+        version: 2,
+        isEnabled: () => true,
+      },
+    },
+    {
+      label: "throwing inspection provider",
+      api: {
+        version: 2,
+        isEnabled: () => true,
+        inspect: () => {
+          throw new Error("inspection unavailable");
+        },
+      },
+    },
+  ];
+  for (const { label, api } of incompatibleApis) {
+    const incompatibleView = createBareView({
+      nativeRecords: api,
+      calendarStorageMode: "native-records",
+    });
+    Object.assign(incompatibleView, {
+      endDateProp: "note.timeEstimate",
+      useEndDuration: true,
+      getMinimumEventDurationMinutes: () => 5,
+    });
+    const frontmatter = {
+      verifiedRecordKind: "calendar-event",
+      durationMinutes: 180,
+      end: "2026-08-26T16:15:00-05:00",
+    };
+    const interval = incompatibleView.resolveNoteDisplayInterval(
+      makeEntry(frontmatter),
+      frontmatter,
+      startDate,
+      null,
+      true,
+    );
+    assert.equal(minutes(interval), 5, `${label} cannot supply a canonical duration or end`);
+    assert.equal(interval.hasExplicitEnd, false, `${label} keeps the readability fallback non-explicit`);
+  }
 });
 
 test("native note formula dates remain authoritative and formula columns stay non-writable", async () => {
