@@ -30,6 +30,7 @@ interface ContinuousScrollViewProps {
   defaultScrollTime: string;
   slotDurationMinutes?: number;
   snapDurationMinutes?: number;
+  eventMinHeight?: number;
   resolvedShowFullDay: boolean;
   safeWeekStartDay: number;
   allowEdit: boolean;
@@ -70,6 +71,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   defaultScrollTime,
   slotDurationMinutes = 30,
   snapDurationMinutes = 5,
+  eventMinHeight = 0,
   resolvedShowFullDay,
   safeWeekStartDay,
   allowEdit,
@@ -415,7 +417,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
             editable={allowEdit}
             eventStartEditable={allowEdit}
             eventDurationEditable={allowEdit && !!onEventResize}
-            eventMinHeight={0}
+            eventMinHeight={eventMinHeight}
             selectable={allowSelect}
             selectMirror={allowSelect}
             selectLongPressDelay={isMobile ? 600 : 300}

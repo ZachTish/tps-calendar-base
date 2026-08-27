@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { SegHierarchy } from "@fullcalendar/core/internal.js";
 import * as esbuild from "esbuild";
 import "./test-external-source-normalization.mjs";
 async function importBundled(entry, plugins = []) {
@@ -75,7 +76,8 @@ test("done statuses normalize once and preserve event classification", async () 
   assert.equal(trimCalls, doneStatuses.length);
 });
 
-test("explicit calendar intervals keep exact FullCalendar geometry", async () => {
+test("explicit intervals keep exact data while embedded time grids get a readable host floor", async () => {
+  const { calculateSlotHeightFromZoom, calculateSlotZoom } = await importBundled("../src/utils.ts");
   const { useCalendarEvents } = await importBundled(
     "../src/hooks/useCalendarEvents.ts",
     [reactStub],
@@ -98,13 +100,47 @@ test("explicit calendar intervals keep exact FullCalendar geometry", async () =>
   assert.equal(events[1].extendedProps.minEventHeight, 20);
   assert.ok(!events[1].classNames.includes("has-explicit-display-interval"));
 
+  // Reproduce the reported host's actual 13:30–14:00 boundary followed by
+  // two genuinely overlapping 14:00 events. Condense 260 produces a 16px
+  // row, so the embedded host must clamp it to the same 18px visual floor.
+  const configuredSlotHeight = calculateSlotHeightFromZoom(calculateSlotZoom(260));
+  assert.equal(configuredSlotHeight, 16);
+  const embeddedSlotHeight = Math.max(configuredSlotHeight, 18);
+  const top = (minutes) => minutes / 30 * embeddedSlotHeight;
+  const spans = [[0, 30], [30, 120], [30, 90]].map(([start, end], index) => ({
+    index,
+    thickness: 1,
+    span: {
+      start: Math.round(top(start)),
+      end: Math.round(Math.max(top(start) + 18, top(end))),
+    },
+  }));
+  const hierarchy = new SegHierarchy();
+  hierarchy.addSegs(spans);
+  assert.deepEqual(
+    hierarchy.entriesByLevel.map((entries) => entries.map(({ index }) => index)),
+    [[0, 1], [2]],
+  );
+
   const reactSource = readFileSync(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
   const continuousSource = readFileSync(new URL("../src/components/ContinuousScrollView.tsx", import.meta.url), "utf8");
   const calendarCss = readFileSync(new URL("../src/calendar.css", import.meta.url), "utf8");
   const embedCss = readFileSync(new URL("../src/embed-calendar.css", import.meta.url), "utf8");
   assert.match(reactSource, /"--tps-calendar-fallback-event-height": `\$\{minEventHeight\}px`/u);
-  assert.match(reactSource, /<FullCalendar[\s\S]*?eventMinHeight=\{0\}/u);
-  assert.match(continuousSource, /<FullCalendar[\s\S]*?eventMinHeight=\{0\}/u);
+  assert.match(
+    reactSource,
+    /const EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX = 18;[\s\S]*?<FullCalendar[\s\S]*?eventMinHeight=\{isEmbedMode \? EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX : 0\}/u,
+  );
+  assert.match(
+    reactSource,
+    /const computedSlotHeight = isEmbedMode\s*\? Math\.max\(baseSlotHeight, EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX\)\s*: baseSlotHeight;/u,
+  );
+  assert.match(continuousSource, /eventMinHeight\?: number/u);
+  assert.match(continuousSource, /<FullCalendar[\s\S]*?eventMinHeight=\{eventMinHeight\}/u);
+  assert.match(
+    reactSource,
+    /<ContinuousScrollView[\s\S]*?eventMinHeight=\{isEmbedMode \? EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX : 0\}/u,
+  );
   assert.match(
     calendarCss,
     /\.fc-timegrid-event\.bases-calendar-event:not\(\.has-explicit-display-interval\)\s*\{\s*min-height:\s*var\(--tps-calendar-fallback-event-height,\s*20px\)\s*!important/u,

@@ -1184,6 +1184,8 @@ export class CalendarView extends BasesView {
 
 
   private isEmbeddedCalendarContext(): boolean {
+    if ((this as any).forceDirectEmbedRender === true) return true;
+
     const leafType = this.containerEl.closest('.workspace-leaf-content')?.getAttribute('data-type');
     if (leafType === 'calendar') return false;
 

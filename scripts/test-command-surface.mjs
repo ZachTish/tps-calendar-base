@@ -88,6 +88,10 @@ test("calendar exposes direct Base embed rendering for rendered plugin views", (
   assert.match(calendarViewSource, /\(nativeRecordMode \? \[\] : this\.cachedExternalEvents\)\.filter/);
   assert.match(calendarViewSource, /nativeRecords\.create\("calendar-event"/);
   assert.match(embedRendererSource, /\(this\.view as any\)\.forceDirectEmbedRender = true/);
+  assert.match(
+    calendarViewSource,
+    /private isEmbeddedCalendarContext\(\): boolean \{\s*if \(\(this as any\)\.forceDirectEmbedRender === true\) return true;/u,
+  );
   assert.match(embedRendererSource, /export interface CalendarEmbedRenderOptions/);
   assert.match(embedRendererSource, /this\.view\.setDirectEmbeddedDayCountPreservation\(this\.options\.preserveDayCount === true\)/);
   assert.match(embedRendererSource, /updateCalendar\?\.\(true\)/);

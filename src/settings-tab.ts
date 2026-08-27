@@ -835,7 +835,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     new Setting(appearanceSection)
       .setName("Fallback Event Height")
-      .setDesc("Minimum pixel height only for timed events with no authored duration or end. Explicit intervals keep their exact proportional height.")
+      .setDesc("Minimum pixel height for timed events with no authored duration or end. Embedded time-grid calendars independently keep timed cards and time rows at least 18px tall for one readable title line.")
       .addSlider((slider) =>
         slider
           .setLimits(0, 120, 2)
