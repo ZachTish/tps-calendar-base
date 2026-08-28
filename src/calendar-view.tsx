@@ -100,6 +100,7 @@ import {
   getCalendarStartForAnchor,
   resolveCalendarRangeAnchor,
   shiftCalendarMonthStart,
+  type CalendarRangeAnchor,
 } from "./utils/calendar-day-count";
 import {
   extractCalendarCreationModeFromFilters,
@@ -654,6 +655,7 @@ export class CalendarView extends BasesView {
   private embeddedHeight: number = 520;
   private preserveEmbeddedDayCount: boolean = false;
   private directPreserveEmbeddedDayCount: boolean = false;
+  private directHostNotePath: string | null = null;
   private showEmbeddedHeader: boolean = true;
   private newEventService: NewEventService;
   private externalCalendarUrls: string[] = [];
@@ -1360,6 +1362,9 @@ export class CalendarView extends BasesView {
       this.entryBoundsMin = null;
       this.entryBoundsMax = null;
       this.navigationLockedByAutoRange = false;
+      this.contextDateDetected = null;
+      this.contextDateLastAppliedKey = null;
+      this.contextDateLastAppliedParentPath = null;
       this.currentDate = null;
       this.jumpTargetDate = null;
       this.transientProtocolDateKey = null;
@@ -1503,6 +1508,10 @@ export class CalendarView extends BasesView {
     // If context date detection is enabled, detect the date from parent note
     if (this.contextDateEnabled) {
       this.detectContextDate();
+    } else {
+      this.contextDateDetected = null;
+      this.contextDateLastAppliedKey = null;
+      this.contextDateLastAppliedParentPath = null;
     }
 
     // Event creation (type-folder first, template support is legacy fallback)
@@ -1700,6 +1709,15 @@ export class CalendarView extends BasesView {
     // Ensure config is loaded if available (fixes issue where embedded views allow data update before config is ready)
     if (this.config && (!this.startDateProp || !this.endDateProp)) {
       this.loadConfig();
+    }
+
+    // A Base view can mount before Obsidian has attached its containing
+    // Markdown leaf. Reconcile again at the first runnable update so a stale
+    // saved Base date cannot win merely because the initial lookup was early.
+    // contextDateLastAppliedKey keeps same-host refreshes from undoing later
+    // explicit user navigation.
+    if (this.contextDateEnabled) {
+      this.detectContextDate();
     }
 
     const recentlyTyping = this.lastEditorChangeAt && Date.now() - this.lastEditorChangeAt < this.typingQuietWindowMs;
@@ -2765,6 +2783,7 @@ export class CalendarView extends BasesView {
       if (
         !this.autoRangeInitialized
         && this.canApplyAutomaticDateForActiveUpdate()
+        && !this.contextDateDetected
       ) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -2928,18 +2947,22 @@ export class CalendarView extends BasesView {
    * Defaults to today when the parent note has no scheduled/start value.
    */
   private detectContextDate(): void {
-    this.contextDateDetected = null;
-
-    // Try to find the parent note from the DOM hierarchy
+    // Try to find the parent note from the render-scoped host identity.
     const parentNote = this.findParentNotePath();
+    const attributedDate = this.extractContextDateFromHostAttributes();
 
-    if (parentNote) {
-      const detectedDate = this.extractContextDateFromFrontmatter(parentNote);
+    if (parentNote || attributedDate) {
+      const detectedDate = parentNote
+        ? this.extractContextDateFromFrontmatter(parentNote)
+          ?? this.extractDateFromPath(parentNote)
+          ?? attributedDate
+        : attributedDate;
+      const contextIdentity = parentNote || "embedded-host";
       if (detectedDate) {
         this.contextDateDetected = detectedDate;
-        const dateLogKey = `${parentNote}::${detectedDate.getFullYear()}-${detectedDate.getMonth()}-${detectedDate.getDate()}`;
+        const dateLogKey = `${contextIdentity}::${detectedDate.getFullYear()}-${detectedDate.getMonth()}-${detectedDate.getDate()}`;
         if (this.lastLoggedContextDateDetectedKey !== dateLogKey) {
-          logger.log(`[CalendarView] Detected context date: ${detectedDate.toDateString()} from "${parentNote}"`);
+          logger.log(`[CalendarView] Detected context date: ${detectedDate.toDateString()} from "${contextIdentity}"`);
           this.lastLoggedContextDateDetectedKey = dateLogKey;
         }
 
@@ -2961,21 +2984,85 @@ export class CalendarView extends BasesView {
         this.loggedMissingContextParent = false;
         this.contextDateLastAppliedParentPath = parentNote;
       } else {
-        const noDateKey = `${parentNote}::no-date`;
+        const noDateKey = `${contextIdentity}::no-date`;
         if (this.contextDateLastAppliedKey === noDateKey) return;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         if (this.canApplyAutomaticDateForActiveUpdate()) {
+          this.contextDateDetected = today;
           this.currentDate = today;
           this.persistCurrentDate(today);
+          this.contextDateLastAppliedKey = noDateKey;
         }
         this.contextDateLastAppliedParentPath = parentNote;
-        this.contextDateLastAppliedKey = noDateKey;
         this.lastLoggedContextDateDetectedKey = null;
         this.lastLoggedContextDateAppliedKey = null;
-        logger.log(`[CalendarView] No scheduled context date for "${parentNote}", defaulting calendar to today`);
+        logger.log(`[CalendarView] No context date for "${contextIdentity}", defaulting calendar to today`);
       }
     }
+  }
+
+  private extractContextDateFromHostAttributes(): Date | null {
+    const host = this.containerEl?.closest?.<HTMLElement>(
+      "[data-tps-context-date], [data-tps-context-scheduled]",
+    );
+    if (!host) return null;
+    return this.parseContextDateValue(
+      host.getAttribute("data-tps-context-date")
+        ?? host.getAttribute("data-tps-context-scheduled"),
+    );
+  }
+
+  /**
+   * Resolves only Markdown files scoped to this rendered Calendar. Native
+   * Bases expose the Base definition as controller.file, so a `.base` must not
+   * mask the containing Daily Note.
+   */
+  private resolveScopedContextHostPath(): string | null {
+    const acceptPath = (raw: unknown): string | null => {
+      if (typeof raw !== "string") return null;
+      const normalized = normalizePath(raw.trim());
+      return normalized.toLowerCase().endsWith(".md") ? normalized : null;
+    };
+    const acceptFile = (raw: unknown): string | null =>
+      acceptPath((raw as { path?: unknown } | null | undefined)?.path);
+
+    const direct = acceptPath(this.directHostNotePath);
+    if (direct) return direct;
+
+    const attributedHost = this.containerEl?.closest?.<HTMLElement>("[data-tps-context-path]");
+    const attributedPath = acceptPath(attributedHost?.getAttribute("data-tps-context-path"));
+    if (attributedPath) return attributedPath;
+
+    const leafContent = this.containerEl?.closest?.<HTMLElement>(".workspace-leaf-content");
+    const leafDataPath = acceptPath(leafContent?.getAttribute("data-path"));
+    if (leafDataPath) return leafDataPath;
+
+    const leafEl = this.containerEl?.closest?.<HTMLElement>(".workspace-leaf");
+    if (leafEl) {
+      let scopedLeafPath: string | null = null;
+      this.app.workspace.iterateAllLeaves((leaf) => {
+        if (scopedLeafPath) return;
+        const leafContainer = (leaf as any).containerEl as HTMLElement | undefined;
+        if (!leafContainer) return;
+        if (
+          leafContainer !== leafEl
+          && !leafEl.contains(leafContainer)
+          && !leafContainer.contains(leafEl)
+        ) {
+          return;
+        }
+        scopedLeafPath = acceptFile((leaf.view as any)?.file);
+      });
+      if (scopedLeafPath) return scopedLeafPath;
+    }
+
+    const ctrl = (this.controller ?? null) as any;
+    for (const candidate of [ctrl?.hostNoteFile, ctrl?.hostFile, ctrl?.sourceFile]) {
+      const path = acceptFile(candidate);
+      if (path) return path;
+    }
+    return null;
   }
 
   /**
@@ -2986,6 +3073,16 @@ export class CalendarView extends BasesView {
     try {
       const isMarkdownPath = (path: string | null | undefined): path is string =>
         typeof path === "string" && path.trim().toLowerCase().endsWith(".md");
+
+      const scopedHostPath = this.resolveScopedContextHostPath();
+      if (scopedHostPath) {
+        if (this.lastLoggedContextParentPath !== scopedHostPath) {
+          logger.log(`[CalendarView] Found scoped host note: ${scopedHostPath}`);
+          this.lastLoggedContextParentPath = scopedHostPath;
+        }
+        this.loggedMissingContextParent = false;
+        return scopedHostPath;
+      }
 
       // Method 1: Look for data-path on workspace leaf content (most reliable)
       const leafContent = this.containerEl.closest('.workspace-leaf-content');
@@ -3434,10 +3531,7 @@ export class CalendarView extends BasesView {
       resolvedMode,
       configuredDayCount,
       safeWeekStartDay,
-      resolveCalendarRangeAnchor(
-        this.filterRangeAuto,
-        this.hasExplicitFilterRange,
-      ),
+      this.resolvePresentationRangeAnchor(),
     );
     const end = new Date(start);
     end.setDate(end.getDate() + configuredDayCount);
@@ -6043,6 +6137,7 @@ export class CalendarView extends BasesView {
             navigationLocked={this.navigationLockedByAutoRange}
             filterRangeAuto={this.filterRangeAuto}
             hasExplicitFilterRange={this.hasExplicitFilterRange}
+            rangeAnchorOverride={this.resolvePresentationRangeAnchor()}
             entryBoundsStart={this.filterRangeAuto && this.filterRangeStart ? this.filterRangeStart : undefined}
             entryBoundsEnd={this.filterRangeAuto && this.filterRangeEnd ? this.filterRangeEnd : undefined}
             navigationBoundsStart={renderedNavigationBounds.start}
@@ -9109,6 +9204,28 @@ export class CalendarView extends BasesView {
         this.config?.get(PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY),
         false,
       );
+  }
+
+  public setDirectHostNotePath(path: string | null | undefined): void {
+    const normalized = typeof path === "string" ? normalizePath(path.trim()) : "";
+    this.directHostNotePath = normalized.toLowerCase().endsWith(".md")
+      ? normalized
+      : null;
+  }
+
+  private resolvePresentationRangeAnchor(): CalendarRangeAnchor {
+    if (
+      this.contextDateEnabled
+      && this.contextDateDetected
+      && this.contextDateLastAppliedKey
+      && this.isEmbeddedCalendarContext()
+    ) {
+      return "host-start";
+    }
+    return resolveCalendarRangeAnchor(
+      this.filterRangeAuto,
+      this.hasExplicitFilterRange,
+    );
   }
 
   private applyEmbeddedHeightVariable(): void {

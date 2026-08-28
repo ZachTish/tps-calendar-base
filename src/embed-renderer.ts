@@ -11,6 +11,7 @@ import { CalendarPluginBridge } from "./plugin-interface";
 
 export interface CalendarEmbedRenderOptions {
     preserveDayCount?: boolean;
+    hostNotePath?: string;
 }
 
 // Mock QueryController since we can't easily instantiate the real one without internal API access.
@@ -95,6 +96,10 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
         this.view = new CalendarView(controller, contentEl, this.plugin);
         (this.view as any).config = new InlineBaseConfig(this.withCalendarDefaults(this.viewConfig));
         (this.view as any).forceDirectEmbedRender = true;
+        this.view.setDirectHostNotePath(
+            this.options.hostNotePath
+            ?? (this.file?.extension === "md" ? this.file.path : null),
+        );
         this.view.setDirectEmbeddedDayCountPreservation(this.options.preserveDayCount === true);
         (this.view as any).data = queryResult;
         (this.view as any).queryResult = queryResult;
@@ -198,7 +203,14 @@ export const EmbedRenderer = (plugin: Plugin & CalendarPluginBridge) => async (
 
             // If we are here, we want to replace the default embed (which is likely broken or raw text) with our view.
             // The `embed` element is the container.
-            const component = new CalendarEmbedRenderChild(embed as HTMLElement, file, plugin, viewConfig || {}, parsedBase || {});
+            const component = new CalendarEmbedRenderChild(
+                embed as HTMLElement,
+                file,
+                plugin,
+                viewConfig || {},
+                parsedBase || {},
+                { hostNotePath: ctx.sourcePath },
+            );
             ctx.addChild(component);
         }
     });

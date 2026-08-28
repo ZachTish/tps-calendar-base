@@ -820,8 +820,24 @@ test('calendar day-count paths use shared calendar-day helper', () => {
 
 test('host-note anchoring cannot be overwritten by an unrelated active note timer', () => {
   const hostSource = fs.readFileSync(new URL('../src/calendar-view.tsx', import.meta.url), 'utf8');
+  const reactSource = fs.readFileSync(new URL('../src/CalendarReactView.tsx', import.meta.url), 'utf8');
 
   assert.match(hostSource, /if \(this\.contextDateEnabled\) \{\s*this\.detectContextDate\(\);\s*\}/);
+  assert.match(
+    hostSource,
+    /private async updateCalendarCore[\s\S]*?if \(this\.contextDateEnabled\) \{\s*this\.detectContextDate\(\);\s*\}/,
+    'a host that attaches after initial config load must be retried before rendering',
+  );
+  assert.match(hostSource, /rangeAnchorOverride=\{this\.resolvePresentationRangeAnchor\(\)\}/);
+  assert.match(
+    reactSource,
+    /const rangeAnchor = rangeAnchorOverride\s*\?\? resolveCalendarRangeAnchor\(filterRangeAuto, hasExplicitFilterRange\)/,
+  );
+  assert.match(
+    reactSource,
+    /resolvedFilterViewMode === "week"[\s\S]*?targetDayCount === 7[\s\S]*?rangeAnchor !== "host-start" \? "timeGridWeek"/,
+    'host-start week embeds must use the exact seven-day range instead of FullCalendar week alignment',
+  );
   assert.doesNotMatch(hostSource, /scheduleFollowActiveNoteDay/);
   assert.doesNotMatch(hostSource, /private followActiveNoteDay/);
   assert.doesNotMatch(hostSource, /activeNoteFollowTimer/);

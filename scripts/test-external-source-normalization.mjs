@@ -126,6 +126,7 @@ async function importBundled(relativePath) {
 
 const { CalendarView } = await importBundled("../src/calendar-view.tsx");
 const { normalizeCalendarUrl } = await importBundled("../src/utils.ts");
+const { getCalendarStartForAnchor } = await importBundled("../src/utils/calendar-day-count.ts");
 const optimizedPrototype = CalendarView.prototype;
 const hasOptimizedScanNormalizer =
   typeof optimizedPrototype.normalizeSourceForExternalEventScan === "function";
@@ -195,6 +196,120 @@ function createBareView() {
   view.scheduleRefresh = () => {};
   return view;
 }
+
+test("embedded host-note mode starts on the host day without changing standalone centering", () => {
+  const view = createBareView();
+  const hostDay = new Date(2026, 7, 28);
+  Object.assign(view, {
+    contextDateEnabled: true,
+    contextDateDetected: hostDay,
+    contextDateLastAppliedKey: "Inbox/Daily/2026-08-28.md::2026-7-28",
+    filterRangeAuto: false,
+    hasExplicitFilterRange: false,
+    isEmbeddedCalendarContext: () => true,
+  });
+
+  const embeddedAnchor = view.resolvePresentationRangeAnchor();
+  assert.equal(embeddedAnchor, "host-start");
+  assert.equal(
+    getCalendarStartForAnchor(hostDay, "7d", 7, 1, embeddedAnchor).getTime(),
+    hostDay.getTime(),
+    "a seven-day host-note embed must not begin three days before its host",
+  );
+  assert.equal(
+    getCalendarStartForAnchor(hostDay, "week", 7, 1, embeddedAnchor).getTime(),
+    hostDay.getTime(),
+    "host-note week mode must not snap back to the configured weekday",
+  );
+
+  view.isEmbeddedCalendarContext = () => false;
+  const standaloneAnchor = view.resolvePresentationRangeAnchor();
+  assert.equal(standaloneAnchor, "center");
+  assert.equal(
+    getCalendarStartForAnchor(hostDay, "7d", 7, 1, standaloneAnchor).getTime(),
+    new Date(2026, 7, 25).getTime(),
+    "ordinary standalone calendars retain their focal-day contract",
+  );
+});
+
+test("late filename-only Daily Note detection replaces stale state once and follows host transitions", () => {
+  const view = createBareView();
+  let hostPath = null;
+  Object.assign(view, {
+    currentDate: new Date(2026, 7, 25),
+    viewMode: "7d",
+    contextDateLastAppliedKey: null,
+    findParentNotePath: () => hostPath,
+    extractContextDateFromHostAttributes: () => null,
+    extractContextDateFromFrontmatter: () => null,
+    extractDateFromPath: (path) => {
+      const match = String(path).match(/(\d{4})-(\d{2})-(\d{2})\.md$/);
+      return match
+        ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+        : null;
+    },
+  });
+
+  view.detectContextDate();
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 25).getTime());
+
+  hostPath = "Inbox/Daily/2026-08-28.md";
+  view.detectContextDate();
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 28).getTime());
+
+  Object.assign(view, {
+    autoRangeInitialized: false,
+    filterRangeAuto: false,
+    getFilterRangeBoundsFromConfig: () => ({ start: null, end: null }),
+  });
+  view.computeFilterDateRange([]);
+  assert.equal(
+    view.currentDate.getTime(),
+    new Date(2026, 7, 28).getTime(),
+    "an empty Calendar must not replace an already resolved host date with today",
+  );
+
+  view.currentDate = new Date(2026, 7, 30);
+  view.detectContextDate();
+  assert.equal(
+    view.currentDate.getTime(),
+    new Date(2026, 7, 30).getTime(),
+    "same-host refreshes must preserve explicit user navigation",
+  );
+
+  hostPath = "Inbox/Daily/2026-08-29.md";
+  view.detectContextDate();
+  assert.equal(view.currentDate.getTime(), new Date(2026, 7, 29).getTime());
+});
+
+test("scoped Markdown host candidates outrank a controller Base file", () => {
+  const view = createBareView();
+  Object.assign(view, {
+    directHostNotePath: null,
+    controller: {
+      file: { path: "Calendar.base" },
+      sourceFile: { path: "Inbox/Daily/2026-08-28.md" },
+    },
+    containerEl: { closest: () => null },
+  });
+
+  assert.equal(
+    view.resolveScopedContextHostPath(),
+    "Inbox/Daily/2026-08-28.md",
+  );
+  view.setDirectHostNotePath("Inbox/Daily/2026-08-29.md");
+  assert.equal(
+    view.resolveScopedContextHostPath(),
+    "Inbox/Daily/2026-08-29.md",
+  );
+  view.setDirectHostNotePath(null);
+  view.controller.sourceFile = null;
+  assert.equal(
+    view.resolveScopedContextHostPath(),
+    null,
+    "a dedicated Base must not borrow an unrelated Markdown host",
+  );
+});
 
 test("protocol preparation suppresses range writes and cleans up only its own request", async () => {
   const view = createBareView();
