@@ -843,7 +843,7 @@ test("reading-mode embedded calendars stay compact and preserve Bases chrome by 
   assert.match(reactViewSource, /const effectiveZoom = isEmbedMode \? Math\.min\(zoom, isMobile \? 0\.75 : 0\.82\) : zoom/);
   assert.match(
     reactViewSource,
-    /const computedSlotHeight = isEmbedMode\s*\? Math\.max\(baseSlotHeight, EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX\)\s*: baseSlotHeight/,
+    /const computedSlotHeight = isEmbedMode\s*\? Math\.max\(baseSlotHeight, TIMEGRID_EVENT_MIN_HEIGHT_PX\)\s*: baseSlotHeight/,
   );
   assert.match(reactViewSource, /slot\.style\.setProperty\("height", `\$\{slotHeight\}px`, "important"\)/);
   assert.match(zoomHookSource, /Math\.max\(5, Math\.min\(90, current \+ adjustment\)\)/);

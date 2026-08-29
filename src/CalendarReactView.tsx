@@ -67,7 +67,7 @@ const DEFAULT_SLOT_MAX_TIME = "24:00:00";
 const DEFAULT_SCROLL_TIME = "08:00:00";
 const PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 const HEADER_HEIGHT_VAR = "var(--tps-bases-header-height, 84px)";
-const EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX = 18;
+const TIMEGRID_EVENT_MIN_HEIGHT_PX = 18;
 const CALENDAR_EVENT_DENSITY_CSS = `
 .bases-calendar-wrapper .bases-calendar-event-title,
 .bases-calendar-wrapper .fc-event-title {
@@ -1216,11 +1216,11 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   const zoom = calculateSlotZoom(effectiveCondenseLevel);
   const effectiveZoom = isEmbedMode ? Math.min(zoom, isMobile ? 0.75 : 0.82) : zoom;
   const baseSlotHeight = calculateSlotHeightFromZoom(effectiveZoom);
-  // Keep the host row at least as tall as the embedded event floor. Without
+  // Keep an embedded host row at least as tall as the event floor. Without
   // this, a 30-minute card can visually overlap the next 30-minute interval
   // solely because a heavily condensed row is shorter than eventMinHeight.
   const computedSlotHeight = isEmbedMode
-    ? Math.max(baseSlotHeight, EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX)
+    ? Math.max(baseSlotHeight, TIMEGRID_EVENT_MIN_HEIGHT_PX)
     : baseSlotHeight;
 
   const applyCalendarSlotHeight = useCallback((root: HTMLElement | null, slotHeight: number) => {
@@ -3997,10 +3997,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               editable={allowEdit}
               eventStartEditable={allowEdit}
               eventDurationEditable={allowEdit && !!onEventResize}
-              // Preserve authoritative start/end values while giving a
-              // condensed note embed enough visual height for one title line.
-              // Dedicated calendars keep exact proportional geometry.
-              eventMinHeight={isEmbedMode ? EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX : 0}
+              // FullCalendar keeps the authoritative start coordinate and
+              // extends only the visual bottom of a shorter event. Stored
+              // start/end values and drag/resize payloads remain unchanged.
+              eventMinHeight={TIMEGRID_EVENT_MIN_HEIGHT_PX}
               events={eventsWithExternalDropPreview}
               eventContent={(info) => { return renderEventContent(info); }}
               eventClick={handleEventClick}
@@ -4104,7 +4104,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               onDateClick={onDateClick}
               slotDurationMinutes={slotDurationMinutes}
               snapDurationMinutes={snapDurationMinutes}
-              eventMinHeight={isEmbedMode ? EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX : 0}
+              eventMinHeight={TIMEGRID_EVENT_MIN_HEIGHT_PX}
               handleMoreLinkClick={handleMoreLinkClick}
               renderMoreLinkContent={renderMoreLinkContent}
               allDayExpanded={allDayExpanded}

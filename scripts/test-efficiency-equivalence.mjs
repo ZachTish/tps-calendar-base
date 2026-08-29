@@ -76,13 +76,14 @@ test("done statuses normalize once and preserve event classification", async () 
   assert.equal(trimCalls, doneStatuses.length);
 });
 
-test("explicit intervals keep exact data while embedded time grids get a readable host floor", async () => {
+test("explicit intervals keep exact data while every time grid gets a readable host floor", async () => {
   const { calculateSlotHeightFromZoom, calculateSlotZoom } = await importBundled("../src/utils.ts");
   const { useCalendarEvents } = await importBundled(
     "../src/hooks/useCalendarEvents.ts",
     [reactStub],
   );
   const explicit = calendarEntry(0, "open");
+  explicit.endDate = new Date(explicit.startDate.getTime() + 5 * 60 * 1000);
   explicit.hasExplicitDisplayInterval = true;
   const fallback = calendarEntry(1, "open");
   fallback.hasExplicitDisplayInterval = false;
@@ -94,7 +95,7 @@ test("explicit intervals keep exact data while embedded time grids get a readabl
     doneStatuses: [],
   });
 
-  assert.equal(events[0].end.getTime() - events[0].start.getTime(), 30 * 60 * 1000);
+  assert.equal(events[0].end.getTime() - events[0].start.getTime(), 5 * 60 * 1000);
   assert.equal(events[0].extendedProps.minEventHeight, 0);
   assert.ok(events[0].classNames.includes("has-explicit-display-interval"));
   assert.equal(events[1].extendedProps.minEventHeight, 20);
@@ -122,6 +123,18 @@ test("explicit intervals keep exact data while embedded time grids get a readabl
     [[0, 1], [2]],
   );
 
+  // FullCalendar anchors the visual span to the exact start coordinate and
+  // extends only its bottom when a real interval is shorter than the floor.
+  const exactStartTop = 240;
+  const fiveMinuteEndTop = exactStartTop + (5 / 30) * 24;
+  const readableVisualEnd = Math.max(exactStartTop + 18, fiveMinuteEndTop);
+  const oneHourEndTop = exactStartTop + (60 / 30) * 24;
+  const naturalVisualEnd = Math.max(exactStartTop + 18, oneHourEndTop);
+  assert.equal(exactStartTop, 240);
+  assert.equal(readableVisualEnd, 258);
+  assert.equal(naturalVisualEnd, oneHourEndTop);
+  assert.equal(events[0].end.getTime() - events[0].start.getTime(), 5 * 60 * 1000);
+
   const reactSource = readFileSync(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
   const continuousSource = readFileSync(new URL("../src/components/ContinuousScrollView.tsx", import.meta.url), "utf8");
   const calendarCss = readFileSync(new URL("../src/calendar.css", import.meta.url), "utf8");
@@ -129,18 +142,19 @@ test("explicit intervals keep exact data while embedded time grids get a readabl
   assert.match(reactSource, /"--tps-calendar-fallback-event-height": `\$\{minEventHeight\}px`/u);
   assert.match(
     reactSource,
-    /const EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX = 18;[\s\S]*?<FullCalendar[\s\S]*?eventMinHeight=\{isEmbedMode \? EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX : 0\}/u,
+    /const TIMEGRID_EVENT_MIN_HEIGHT_PX = 18;[\s\S]*?<FullCalendar[\s\S]*?eventMinHeight=\{TIMEGRID_EVENT_MIN_HEIGHT_PX\}/u,
   );
   assert.match(
     reactSource,
-    /const computedSlotHeight = isEmbedMode\s*\? Math\.max\(baseSlotHeight, EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX\)\s*: baseSlotHeight;/u,
+    /const computedSlotHeight = isEmbedMode\s*\? Math\.max\(baseSlotHeight, TIMEGRID_EVENT_MIN_HEIGHT_PX\)\s*: baseSlotHeight;/u,
   );
   assert.match(continuousSource, /eventMinHeight\?: number/u);
   assert.match(continuousSource, /<FullCalendar[\s\S]*?eventMinHeight=\{eventMinHeight\}/u);
   assert.match(
     reactSource,
-    /<ContinuousScrollView[\s\S]*?eventMinHeight=\{isEmbedMode \? EMBEDDED_TIMEGRID_EVENT_MIN_HEIGHT_PX : 0\}/u,
+    /<ContinuousScrollView[\s\S]*?eventMinHeight=\{TIMEGRID_EVENT_MIN_HEIGHT_PX\}/u,
   );
+  assert.doesNotMatch(reactSource, /eventMinHeight=\{isEmbedMode \?/u);
   assert.match(
     calendarCss,
     /\.fc-timegrid-event\.bases-calendar-event:not\(\.has-explicit-display-interval\)\s*\{\s*min-height:\s*var\(--tps-calendar-fallback-event-height,\s*20px\)\s*!important/u,
