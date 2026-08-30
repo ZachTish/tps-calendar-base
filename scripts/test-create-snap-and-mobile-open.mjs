@@ -228,6 +228,65 @@ test("saved empty style rules and supported color targets survive settings migra
   assert.doesNotMatch(settingsTabSource, /const debouncedSave = debounce/);
 });
 
+test("post-create behavior migrates the legacy toggle and stays visible for note and task creation", async () => {
+  const { migrateSettings, DEFAULT_SETTINGS } = await importSettingsMigration();
+
+  for (const behavior of ["preview", "open", "stay"]) {
+    assert.equal(
+      migrateSettings({
+        postCreateBehavior: behavior,
+        openTaskDestinationAfterCreate: behavior === "stay",
+      }).postCreateBehavior,
+      behavior,
+      "a valid post-create behavior must win over the legacy task-only toggle",
+    );
+  }
+  assert.equal(
+    migrateSettings({ openTaskDestinationAfterCreate: false })
+      .postCreateBehavior,
+    "stay",
+  );
+  assert.equal(
+    migrateSettings({ openTaskDestinationAfterCreate: true })
+      .postCreateBehavior,
+    "open",
+  );
+  assert.equal(migrateSettings({}).postCreateBehavior, "open");
+  assert.equal(
+    migrateSettings({ postCreateBehavior: "unsupported" }).postCreateBehavior,
+    "open",
+  );
+  assert.equal(DEFAULT_SETTINGS.postCreateBehavior, "open");
+
+  const optionValues = [
+    ...settingsTabSource.matchAll(/\.addOption\("(preview|open|stay)",/g),
+  ].map((match) => match[1]);
+  assert.deepEqual(optionValues.sort(), ["open", "preview", "stay"]);
+  assert.equal(
+    optionValues.length,
+    3,
+    "the dropdown must expose exactly the three supported outcomes",
+  );
+
+  const postCreateControl = settingsTabSource.indexOf("postCreateBehavior");
+  const taskOnlyControls = settingsTabSource.indexOf(
+    'if ((this.plugin.settings.initialCreateMode || "note") === "task")',
+  );
+  assert.ok(postCreateControl >= 0, "the post-create dropdown is rendered");
+  assert.ok(
+    taskOnlyControls >= 0 && postCreateControl < taskOnlyControls,
+    "the post-create dropdown stays outside the task-only conditional",
+  );
+  assert.doesNotMatch(
+    settingsTabSource,
+    /\.setName\("Open task destination after create"\)/,
+  );
+  assert.doesNotMatch(
+    settingsTabSource,
+    /\.addToggle\([\s\S]{0,500}openTaskDestinationAfterCreate/,
+  );
+});
+
 test("two-day and six-day calendar modes survive migration and remain configurable", async () => {
   const { migrateSettings } = await importSettingsMigration();
 
@@ -449,12 +508,13 @@ test("creation callsites pass resolved create mode and explicit task target over
   assert.match(calendarViewSource, /return this\.extractCreationModeFromFilters\(filters\) \?\? this\.plugin\.settings\.initialCreateMode \?\? "note";/);
   assert.match(calendarViewSource, /from "\.\/utils\/calendar-create-options"/);
   assert.match(calendarViewSource, /private buildCalendarNewEventOptions\(/);
+  assert.match(calendarViewSource, /const mergedProcessor = \(frontmatter: Record<string, unknown>\) => \{/);
   assert.match(calendarViewSource, /const filteredFolder = normalizePath\(String\(createOptions\.typeFolderOverride \|\| ""\)\)/);
   assert.match(calendarViewSource, /frontmatter\[endField\] = this\.useEndDuration[\s\S]*Math\.max\(1, Math\.round\(\(nowRange\.end\.getTime\(\) - nowRange\.start\.getTime\(\)\) \/ 60000\)\)[\s\S]*formatDateTimeForFrontmatter\(nowRange\.end\)/);
   assert.match(calendarViewSource, /if \(filteredFolder\) await this\.ensureCalendarCreationFolder\(filteredFolder\)/);
   assert.match(calendarViewSource, /const resolvedBaseFileName = baseFileName \|\| \(filteredFolder \? `\$\{filteredFolder\}\/Untitled` : undefined\)/);
-  assert.match(calendarViewSource, /private async ensureCalendarCreationFolder\(folderPath: string\): Promise<void>/);
-  assert.match(calendarViewSource, /if \(!existing\) await this\.app\.vault\.createFolder\(current\)/);
+  assert.match(calendarViewSource, /"note-base-route"/);
+  assert.match(calendarViewSource, /await super\.createFileForView\(resolvedBaseFileName, mergedProcessor\)/);
   assert.match(calendarViewSource, /buildCalendarNewEventOptionsFromFilters\(\{/);
   assert.match(calendarViewSource, /initialCreateMode: this\.plugin\.settings\.initialCreateMode/);
   assert.match(calendarViewSource, /creationDefaults: this\.getFilterCreationDefaults\(filterSources\)/);
@@ -470,7 +530,7 @@ test("creation callsites pass resolved create mode and explicit task target over
   assert.match(calendarViewSource, /createEvent\(request\.start, request\.end, undefined, request\.options\)/);
   assert.match(calendarViewSource, /if \(createMode === "note"\) await this\.linkExistingNoteToEvent\(created, file\)/);
   assert.match(calendarViewSource, /const overrides: Record<string, any> = \{ associatedNotePath: file\.path \}/);
-  assert.match(calendarViewSource, /createTaskInDailyNote\(file\.basename, start, end, filterDefaults\.tags, overrides/);
+  assert.match(calendarViewSource, /createTaskInDailyNote\([\s\S]*?file\.basename,[\s\S]*?start,[\s\S]*?end,[\s\S]*?filterDefaults\.tags,[\s\S]*?overrides/);
   assert.doesNotMatch(calendarViewSource, /buildTaskLinkForFile/);
   assert.match(calendarViewSource, /this\.buildCalendarNewEventOptions\(filterSources, \{[\s\S]*?taskTitleOverride: taskTitle,[\s\S]*?typeFolderOverride: finalFolderPath/);
   assert.match(calendarViewSource, /const createMode = this\.resolveEffectiveCreateMode\(filterSources\);[\s\S]*?if \(createMode === "task"\) \{/);
@@ -1711,11 +1771,11 @@ test("calendar creation uses Base task filters as task defaults without leaking 
 test("task target paths fall back to settings and normalize link-shaped values", async () => {
   assert.match(taskTargetPathSource, /export function normalizeCalendarTaskTargetPath/);
   assert.match(newEventServiceSource, /optionTaskTargetPath \|\| normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\) \|\| null/);
-  assert.match(calendarViewSource, /private async openCreatedFileIfConfigured\(file: TFile, createMode: "note" \| "task"\): Promise<void>/);
-  assert.match(calendarViewSource, /createMode === "task" && this\.plugin\.settings\.openTaskDestinationAfterCreate === false/);
   assert.match(calendarViewSource, /private handleCalendarBaseToolbarCreateClick\(evt: MouseEvent\): void/);
+  assert.match(calendarViewSource, /const target = evt\.target instanceof Element \? evt\.target : null/);
   assert.match(calendarViewSource, /const createOwner = this\.getCalendarBaseToolbarCreateOwner\(target\)/);
-  assert.match(calendarViewSource, /private getCalendarBaseToolbarCreateOwner\(target: HTMLElement\): HTMLElement \| null/);
+  assert.match(calendarViewSource, /private getCalendarBaseToolbarCreateOwner\(target: Element\): HTMLElement \| null/);
+  assert.doesNotMatch(calendarViewSource, /evt\.target instanceof HTMLElement/);
   assert.match(calendarViewSource, /"\.tps-home-panel"/);
   assert.match(calendarViewSource, /if \(owner\) return owner\.contains\(this\.containerEl\) \? owner : null/);
   assert.match(calendarViewSource, /const calendarRoots = Array\.from\(leaf\.querySelectorAll<HTMLElement>\("\.bases-calendar-container"\)\)/);
@@ -1735,6 +1795,231 @@ test("task target paths fall back to settings and normalize link-shaped values",
   assert.equal(normalizeCalendarTaskTargetPath("[Task Inbox](Inbox/Tasks.md#Today)"), "Inbox/Tasks.md");
   assert.equal(normalizeCalendarTaskTargetPath("/Inbox/Tasks#Today"), "Inbox/Tasks.md");
   assert.equal(normalizeCalendarTaskTargetPath(""), null);
+});
+
+test("every create-new route uses one post-create dispatcher without a read-only preview fallback", () => {
+  const between = (start, end) => {
+    const startIndex = calendarViewSource.indexOf(start);
+    const endIndex = calendarViewSource.indexOf(end, startIndex + start.length);
+    assert.ok(startIndex >= 0, `missing source boundary: ${start}`);
+    assert.ok(endIndex > startIndex, `missing source boundary: ${end}`);
+    return calendarViewSource.slice(startIndex, endIndex);
+  };
+
+  const dispatcher = between(
+    "private async handlePostCreateBehavior(",
+    "private findOwningCalendarLeaf()",
+  );
+  assert.match(dispatcher, /const generation = \+\+this\.postCreateGeneration/);
+  assert.equal(
+    (dispatcher.match(/generation !== this\.postCreateGeneration/g) || [])
+      .length,
+    4,
+    "a superseded request stops after each awaited navigation, anchor, or provider step",
+  );
+  assert.match(dispatcher, /const behavior = this\.getPostCreateBehavior\(\)/);
+  assert.match(
+    dispatcher,
+    /if \(behavior === "open"\) \{[\s\S]*?await this\.openOrFocusFile\(file\);[\s\S]*?return;/,
+  );
+  assert.match(
+    dispatcher,
+    /await this\.restoreCalendarSurface\(calendarLeaf\)/,
+  );
+  assert.match(
+    dispatcher,
+    /if \(behavior === "stay"\) \{[\s\S]*?this\.containerEl\.focus\(\{ preventScroll: true \}\);[\s\S]*?return;/,
+  );
+  assert.match(
+    dispatcher,
+    /await this\.findCreatedEventAnchor\(file\.path, generation\)/,
+  );
+  assert.match(dispatcher, /context\.invokingAnchor\?\.isConnected/);
+  assert.match(dispatcher, /this\.containerEl\.isConnected/);
+  assert.match(
+    dispatcher,
+    /openGcmEditableNotePreview\(this\.app, \{[\s\S]*?filePath: file\.path,[\s\S]*?anchorEl,[\s\S]*?sourcePluginId: "tps-calendar-base",[\s\S]*?focusEditor: !Platform\.isMobile,[\s\S]*?\}\)/,
+  );
+  assert.match(
+    dispatcher,
+    /if \(result !== "opened"\) this\.noticePostCreatePreviewFallback\(\)/,
+  );
+  assert.equal(
+    (dispatcher.match(/openOrFocusFile\(/g) || []).length,
+    1,
+    "preview unavailable/declined/failed outcomes must not navigate to the note",
+  );
+  assert.doesNotMatch(
+    dispatcher,
+    /hover-link|workspace\.trigger|shouldForceBaseLinkPreview/,
+  );
+
+  const toolbarCreate = between(
+    "async createFileForView(",
+    "private handleCalendarBaseToolbarCreateClick(",
+  );
+  assert.equal(
+    (toolbarCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
+    3,
+    "toolbar native-note, task-destination, and Base-native note routes all dispatch",
+  );
+  assert.equal(
+    (toolbarCreate.match(/invokingAnchor: this\.toolbarCreateAnchor/g) || [])
+      .length,
+    2,
+    "native and task toolbar routes use the current invoking button directly",
+  );
+  assert.match(
+    toolbarCreate,
+    /const invokingAnchor = this\.toolbarCreateAnchor/,
+  );
+  assert.match(
+    toolbarCreate,
+    /const calendarLeaf = this\.findOwningCalendarLeaf\(\)/,
+  );
+  assert.match(
+    toolbarCreate,
+    /const observedMarkdownCreates = new Map<string, TFile>\(\)/,
+  );
+  assert.match(toolbarCreate, /const observedFileOpens = new Set<string>\(\)/);
+  assert.match(
+    toolbarCreate,
+    /this\.app\.vault\.on\("create", \(file\) => \{[\s\S]*?file instanceof TFile && file\.extension\.toLowerCase\(\) === "md"/,
+  );
+  assert.match(
+    toolbarCreate,
+    /this\.app\.workspace\.on\("file-open", \(file\) => \{[\s\S]*?observedFileOpens\.add\(file\.path\)/,
+  );
+  assert.match(
+    toolbarCreate,
+    /try \{[\s\S]*?await super\.createFileForView\(resolvedBaseFileName, mergedProcessor\);[\s\S]*?\} finally \{[\s\S]*?this\.app\.vault\.offref\(createRef\);[\s\S]*?await this\.closeCalendarBaseNewItemMenu\(\)/,
+  );
+  assert.match(
+    toolbarCreate,
+    /await this\.waitForCalendarBasePhoneCreateSettlement\(createdFile, observedFileOpens\)[\s\S]*?\} finally \{[\s\S]*?this\.app\.workspace\.offref\(fileOpenRef\)/,
+  );
+  assert.match(
+    toolbarCreate,
+    /activeFile instanceof TFile && observedMarkdownCreates\.has\(activeFile\.path\)[\s\S]*?observedMarkdownCreates\.size === 1[\s\S]*?: null/,
+  );
+  assert.match(
+    toolbarCreate,
+    /await this\.updateCalendar\(true\);[\s\S]*?await this\.handlePostCreateBehavior\(createdFile, \{ invokingAnchor, calendarLeaf \}\)/,
+  );
+  assert.match(
+    toolbarCreate,
+    /"note-base-result-unresolved"[\s\S]*?if \(behavior !== "open"\)[\s\S]*?await this\.restoreCalendarSurface\(calendarLeaf\)/,
+  );
+  assert.match(
+    toolbarCreate,
+    /if \(behavior === "stay"\)[\s\S]*?this\.containerEl\.focus[\s\S]*?else \{[\s\S]*?this\.noticePostCreatePreviewFallback\(\)/,
+  );
+  assert.match(toolbarCreate, /this\.newEventService\.createEvent\(/);
+  assert.match(toolbarCreate, /super\.createFileForView/);
+  assert.doesNotMatch(toolbarCreate, /openOrFocusFile|openFile/);
+
+  const closeNativeEditor = between(
+    "private async closeCalendarBaseNewItemMenu(",
+    "private async waitForCalendarBasePhoneCreateSettlement(",
+  );
+  assert.match(
+    closeNativeEditor,
+    /typeof menu\.close === "function"[\s\S]*?menu\.close\.call\(menu\)/,
+  );
+  assert.match(
+    closeNativeEditor,
+    /typeof menu\.popover\?\.hide === "function"[\s\S]*?menu\.cleanupAutoDestroy\.call\(menu\)[\s\S]*?menu\.popover\.hide\.call\(menu\.popover\)[\s\S]*?menu\.popover = null[\s\S]*?menu\.newlyCreatedFile = null/,
+  );
+  assert.doesNotMatch(
+    closeNativeEditor,
+    /querySelector|dispatchEvent|KeyboardEvent/,
+  );
+
+  const phoneSettlement = between(
+    "private async waitForCalendarBasePhoneCreateSettlement(",
+    "private async ensureCalendarCreationFolder(",
+  );
+  assert.match(phoneSettlement, /if \(!Platform\.isPhone\) return/);
+  assert.match(phoneSettlement, /const deadline = Date\.now\(\) \+ 1500/);
+  assert.match(
+    phoneSettlement,
+    /observedFileOpens\.has\(file\.path\) \|\| activeExactTarget/,
+  );
+  assert.match(phoneSettlement, /activeLeaf === openLeaf/);
+  assert.match(phoneSettlement, /activeFile\.path === file\.path/);
+  assert.match(phoneSettlement, /ownerWindow\.setTimeout\(resolve, 25\)/);
+
+  const toolbarClick = between(
+    "private handleCalendarBaseToolbarCreateClick(",
+    "private getCalendarBaseToolbarCreateOwner(",
+  );
+  assert.match(toolbarClick, /this\.toolbarCreateAnchor = actionEl/);
+  assert.match(
+    toolbarClick,
+    /\.finally\(\(\) => \{[\s\S]*?this\.toolbarCreateAnchor = null/,
+  );
+
+  const rangeCreate = between(
+    "private async handleCreateRange(",
+    "private resolveDefaultCreateRange(",
+  );
+  assert.equal(
+    (rangeCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
+    1,
+    "only the create-new-item branch dispatches; track/schedule-existing stays in its current workflow",
+  );
+  assert.match(
+    rangeCreate,
+    /this\.newEventService\.createEvent\([\s\S]*?this\.handlePostCreateBehavior\(file\)/,
+  );
+
+  const externalCreate = between(
+    "private async handleCreateMeetingNote(",
+    "private buildExternalEventTaskTitle(",
+  );
+  assert.equal(
+    (externalCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
+    3,
+    "external daily-note task, dedicated task-note, and note routes all dispatch",
+  );
+  assert.match(
+    externalCreate,
+    /createMeetingNoteFromExternalEvent\([\s\S]*?this\.handlePostCreateBehavior\(file\)/,
+  );
+  assert.doesNotMatch(externalCreate, /openOrFocusFile|openFileInNewTab/);
+
+  const externalDrop = between(
+    "private async handleExternalDrop(",
+    "private async handleExternalTaskDrop(",
+  );
+  assert.equal(
+    (externalDrop.match(/this\.handlePostCreateBehavior\(/g) || []).length,
+    2,
+    "template and unscheduled-note create-new drop routes both dispatch",
+  );
+
+  assert.equal(
+    (calendarViewSource.match(/this\.handlePostCreateBehavior\(/g) || [])
+      .length,
+    9,
+    "the complete create-new surface stays wired to one dispatcher",
+  );
+  assert.doesNotMatch(
+    calendarViewSource,
+    /openCreatedFileIfConfigured|openTaskDestinationAfterCreate/,
+  );
+  assert.match(
+    calendarViewSource,
+    /onunload\(\): void \{[\s\S]*?this\.postCreateGeneration \+= 1/,
+  );
+  assert.match(
+    calendarViewSource,
+    /private noticePostCreatePreviewFallback\(\): void \{[\s\S]*?Your item was created and Calendar stayed open\./,
+  );
+  assert.match(
+    calendarViewSource,
+    /querySelectorAll<HTMLElement>\("\.tps-calendar-entry\[data-path\]"\)/,
+  );
 });
 
 test("host-note start mode anchors once without following unrelated active notes", () => {

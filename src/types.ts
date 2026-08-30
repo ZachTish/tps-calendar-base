@@ -1,5 +1,6 @@
 export type CalendarStyleMatch = "all" | "any";
 export type CalendarField = "status" | "priority" | string;
+export type CalendarPostCreateBehavior = "preview" | "open" | "stay";
 export type CalendarViewMode =
     | "day"
     | "2d"
@@ -89,7 +90,7 @@ export interface CalendarPluginSettings {
     initialCreateMode: "note" | "task";
     taskCreateDestination: "daily-note" | "event-note";
     taskCreateTargetPath: string;
-    openTaskDestinationAfterCreate: boolean;
+    postCreateBehavior: CalendarPostCreateBehavior;
 
     primaryControllerId: string | null; // Synced setting to identify the controller device
 

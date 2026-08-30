@@ -5,7 +5,7 @@ import { getPluginById } from "./core";
 import { renderListWithControls } from "./utils/list-renderer";
 import { CalendarStyleBuilderModal } from "./services/visual-builder";
 import { createDefaultCondition } from "./services/style-rule-service";
-import type { CalendarStyleRule } from "./types";
+import type { CalendarPostCreateBehavior, CalendarStyleRule } from "./types";
 
 const createCalendarId = () =>
   `calendar-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
@@ -365,6 +365,21 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(generalSection)
+      .setName("After creating an item")
+      .setDesc("Stay on Calendar, open the created item or task destination, or show an editable preview for adding body content.")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("preview", "Editable preview over Calendar")
+          .addOption("open", "Open created item")
+          .addOption("stay", "Stay on Calendar")
+          .setValue(this.plugin.settings.postCreateBehavior || "open")
+          .onChange(async (value: CalendarPostCreateBehavior) => {
+            this.plugin.settings.postCreateBehavior = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
     if ((this.plugin.settings.initialCreateMode || "note") === "task") {
       new Setting(generalSection)
         .setName("Task item destination")
@@ -394,17 +409,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
             }),
         );
 
-      new Setting(generalSection)
-        .setName("Open task destination after create")
-        .setDesc("After creating a task item, open the note that the task was written into.")
-        .addToggle((toggle) =>
-          toggle
-            .setValue(this.plugin.settings.openTaskDestinationAfterCreate !== false)
-            .onChange(async (value) => {
-              this.plugin.settings.openTaskDestinationAfterCreate = value;
-              await this.plugin.saveSettings();
-            }),
-        );
     }
 
     const fileSection = createSettingsGroup(

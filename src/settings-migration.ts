@@ -14,7 +14,7 @@ export const DEFAULT_SETTINGS: CalendarPluginSettings = {
     initialCreateMode: "note",
     taskCreateDestination: "daily-note",
     taskCreateTargetPath: "",
-    openTaskDestinationAfterCreate: true,
+    postCreateBehavior: "open",
     primaryControllerId: null,
     priorityValues: PRIORITY_KEYS,
     statusValues: STATUS_KEYS,
@@ -115,6 +115,11 @@ export function migrateSettings(stored: any): CalendarPluginSettings {
         typeof storedMinEventHeight === "number" && Number.isFinite(storedMinEventHeight)
             ? Math.max(0, Math.min(120, storedMinEventHeight))
             : 20;
+    const postCreateBehavior = ["preview", "open", "stay"].includes(stored?.postCreateBehavior)
+        ? stored.postCreateBehavior
+        : stored?.openTaskDestinationAfterCreate === false
+            ? "stay"
+            : "open";
 
     const hiddenExternalEventsByBase =
         stored?.hiddenExternalEventsByBase && typeof stored.hiddenExternalEventsByBase === "object"
@@ -165,9 +170,7 @@ export function migrateSettings(stored: any): CalendarPluginSettings {
         initialCreateMode: stored?.initialCreateMode === "task" ? "task" : "note",
         taskCreateDestination: stored?.taskCreateDestination === "event-note" ? "event-note" : "daily-note",
         taskCreateTargetPath: typeof stored?.taskCreateTargetPath === "string" ? stored.taskCreateTargetPath.trim() : "",
-        openTaskDestinationAfterCreate: typeof stored?.openTaskDestinationAfterCreate === "boolean"
-            ? stored.openTaskDestinationAfterCreate
-            : DEFAULT_SETTINGS.openTaskDestinationAfterCreate,
+        postCreateBehavior,
         viewMode,
         filterRangeAuto: stored?.filterRangeAuto ?? false,
         contextDateEnabled: stored?.contextDateEnabled ?? false,
