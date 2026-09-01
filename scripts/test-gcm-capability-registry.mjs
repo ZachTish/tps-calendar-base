@@ -198,6 +198,45 @@ test('calendar consumes shared GCM template identity and fails closed on malform
   owner.unload();
 });
 
+test('native Calendar mutations require the complete enabled GCM nativeRecords v6 boundary', async () => {
+  const {
+    GCM_NATIVE_RECORDS_API_VERSION,
+    getGcmNativeRecordsApi,
+    installGcmApiRegistry,
+  } = await loadRegistry();
+  const workspace = createWorkspace();
+  const app = { workspace };
+  const owner = createOwner(workspace);
+  installGcmApiRegistry(owner, app);
+
+  const compatible = {
+    version: 6,
+    isEnabled: () => true,
+    inspect: () => null,
+    resolve: async () => null,
+    create: async () => null,
+    update: async () => null,
+  };
+  assert.equal(GCM_NATIVE_RECORDS_API_VERSION, 6);
+  workspace.trigger('tps:gcm-api-changed', availablePayload({ nativeRecords: compatible }));
+  assert.equal(getGcmNativeRecordsApi(app), compatible);
+
+  for (const incompatible of [
+    { ...compatible, version: 5 },
+    { ...compatible, isEnabled: () => false },
+    { ...compatible, isEnabled: () => { throw new Error('not ready'); } },
+    { ...compatible, inspect: undefined },
+    { ...compatible, resolve: undefined },
+    { ...compatible, create: undefined },
+    { ...compatible, update: undefined },
+  ]) {
+    workspace.trigger('tps:gcm-api-changed', availablePayload({ nativeRecords: incompatible }));
+    assert.equal(getGcmNativeRecordsApi(app), null);
+  }
+
+  owner.unload();
+});
+
 test('editable note previews require the exact UI v1 capability and normalize every provider outcome', async () => {
   const { installGcmApiRegistry, openGcmEditableNotePreview } = await loadRegistry();
   const workspace = createWorkspace();

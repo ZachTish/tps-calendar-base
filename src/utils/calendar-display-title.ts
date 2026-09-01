@@ -30,9 +30,9 @@ function usesCanonicalTitleProperty(property: unknown): boolean {
 }
 
 /**
- * Native calendar occurrence records keep their clickable associated-note link in
- * `title` and their human event label in `eventTitle`. Calendar cards must show
- * the human label without changing or flattening the stored link property.
+ * Current native calendar records use `title` as their sole display name.
+ * `eventTitle` remains a read-only presentation fallback for records created by
+ * the older occurrence importer; Calendar never copies it into a new write.
  */
 export function resolveCalendarDisplayTitle(
   input: CalendarDisplayTitleInput,

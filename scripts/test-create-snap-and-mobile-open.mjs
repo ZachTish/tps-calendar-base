@@ -1965,8 +1965,8 @@ test("every create-new route uses one post-create dispatcher without a read-only
   );
   assert.equal(
     (rangeCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
-    1,
-    "only the create-new-item branch dispatches; track/schedule-existing stays in its current workflow",
+    3,
+    "native track-note and native/legacy event creation dispatch, while legacy schedule-existing stays in place",
   );
   assert.match(
     rangeCreate,
@@ -1994,14 +1994,14 @@ test("every create-new route uses one post-create dispatcher without a read-only
   );
   assert.equal(
     (externalDrop.match(/this\.handlePostCreateBehavior\(/g) || []).length,
-    2,
-    "template and unscheduled-note create-new drop routes both dispatch",
+    3,
+    "native associated-record, template, and unscheduled-note create-new drop routes dispatch",
   );
 
   assert.equal(
     (calendarViewSource.match(/this\.handlePostCreateBehavior\(/g) || [])
       .length,
-    9,
+    12,
     "the complete create-new surface stays wired to one dispatcher",
   );
   assert.doesNotMatch(

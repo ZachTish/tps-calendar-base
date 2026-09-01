@@ -28,6 +28,76 @@ export interface GcmTaskCheckboxMapping {
   label?: string;
 }
 
+export const GCM_NATIVE_RECORDS_API_VERSION = 6;
+
+export type GcmNativeRecordKind =
+  | 'task'
+  | 'calendar-event'
+  | 'food-entry'
+  | 'activity-entry'
+  | 'workout-session'
+  | 'workout-exercise'
+  | 'food'
+  | 'exercise'
+  | 'recipe'
+  | 'workout-plan'
+  | 'workflow'
+  | 'time-entry'
+  | 'asset';
+
+export interface GcmNativeRecordMutationCause {
+  kind: 'user' | 'automation';
+  sourcePluginId?: string;
+  surface?: string;
+}
+
+export interface GcmNativeRecordEnvelope extends Record<string, unknown> {
+  tpsId: string;
+  tpsSchemaVersion: number;
+  kind: GcmNativeRecordKind;
+  title: string;
+  createdDate: string;
+  modifiedDate: string;
+}
+
+export interface GcmNativeRecordInspection {
+  id: string;
+  kind: GcmNativeRecordKind;
+  schemaVersion: number;
+  frontmatter: GcmNativeRecordEnvelope;
+  profile?: Record<string, unknown>;
+}
+
+export interface GcmNativeRecordHandle {
+  file: TFile;
+  path: string;
+  id: string;
+  kind: GcmNativeRecordKind;
+  frontmatter: GcmNativeRecordEnvelope;
+}
+
+export type GcmNativeRecordReference =
+  | string
+  | TFile
+  | { path?: string; id?: string; tpsId?: string };
+
+export interface GcmNativeRecordsApi {
+  version: typeof GCM_NATIVE_RECORDS_API_VERSION;
+  isEnabled: () => boolean;
+  inspect: (frontmatter: unknown) => GcmNativeRecordInspection | null;
+  resolve: (reference: GcmNativeRecordReference) => Promise<GcmNativeRecordHandle | null>;
+  create: (
+    kind: GcmNativeRecordKind,
+    properties: Record<string, unknown>,
+    options?: { cause?: GcmNativeRecordMutationCause },
+  ) => Promise<GcmNativeRecordHandle>;
+  update: (
+    reference: GcmNativeRecordReference,
+    updates: Record<string, unknown>,
+    cause?: GcmNativeRecordMutationCause,
+  ) => Promise<GcmNativeRecordHandle | null>;
+}
+
 export interface GcmApi {
   services?: {
     frontmatter?: {
@@ -78,6 +148,7 @@ export interface GcmApi {
     buildCalendarExternalId?: (event: Partial<ExternalCalendarEvent>) => string;
     getExternalId?: (frontmatter: Record<string, unknown>) => string | null;
   };
+  nativeRecords?: GcmNativeRecordsApi;
   [capability: string]: unknown;
 }
 
@@ -259,6 +330,28 @@ export interface EventOwner {
 
 export function getGcmApi(app: App): GcmApi | null {
   return gcmApiRegistries.get(app)?.api ?? null;
+}
+
+/**
+ * Returns only GCM's exact canonical native-record mutation boundary. Calendar
+ * must fail closed rather than falling back to generic frontmatter writes when
+ * this contract is unavailable, disabled, or from another API generation.
+ */
+export function getGcmNativeRecordsApi(app: App): GcmNativeRecordsApi | null {
+  const nativeRecords = getGcmApi(app)?.nativeRecords;
+  if (
+    nativeRecords?.version !== GCM_NATIVE_RECORDS_API_VERSION
+    || typeof nativeRecords.isEnabled !== 'function'
+    || typeof nativeRecords.inspect !== 'function'
+    || typeof nativeRecords.resolve !== 'function'
+    || typeof nativeRecords.create !== 'function'
+    || typeof nativeRecords.update !== 'function'
+  ) return null;
+  try {
+    return nativeRecords.isEnabled() === true ? nativeRecords : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Returns null when GCM does not provide the shared template-identity contract. */

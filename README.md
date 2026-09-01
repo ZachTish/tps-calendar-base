@@ -1,5 +1,15 @@
 # TPS Calendar Base
 
+## 0.10.0
+
+- Native Calendar mode now requires the exact enabled TPS Global Context Menu `nativeRecords` API v6. Calendar never falls back to generic frontmatter mutation for a native record: an absent, disabled, incomplete, older, or newer capability fails closed before a write.
+- GCM owns the only TPS identity, `tpsId`, plus the native `kind`/`title` envelope. Calendar does not supply or rewrite an ID, schema version, timestamp, storage-profile key, provider/calendar identity alias, or `eventTitle`. New `calendar-event` records contain only the public business fields `title`, `status`, `scheduled`, `end`, optional true-only `allDay`, and optional `associatedNote`.
+- Toolbar creation, range creation, tracked-note creation, ordinary-note drop, native-record drop, drag, and resize all use GCM's atomic `create`/`update` methods. Schedule and association updates bind both the verified path and `tpsId`, so a concurrently replaced or reidentified file cannot receive the pending edit. `scheduled` plus `end` is the authoritative interval: timed values are ISO instants, all-day values are local `YYYY-MM-DD` dates with an exclusive end, false `allDay` is omitted/removed, and updates remove a stale derived `durationMinutes` rather than creating another interval source.
+- Associating a separate ordinary note writes one Obsidian wikilink to public `associatedNote`. Calendar refuses self-links and native-record targets and never writes the task-only `associatedNotePath` or legacy parent/child fields on a native record. Dropping a task line or a non-calendar native record in native mode is unsupported and fails closed before task/frontmatter mutation.
+- Native rows no longer receive auxiliary markers synthesized from GCM envelope or event fields. Existing `eventTitle`, `durationMinutes`, old storage-profile fields, external-event identity fields, `subitemId`, and task `associatedNotePath` remain read-only compatibility inputs only; this change does not bulk-migrate records or task lines.
+- This is a backward-compatible native-record boundary change. Existing verbose records remain readable and are cleaned by the coordinated vault migration; ordinary Bases and inline task rows retain their existing field behavior. Minimum supported Obsidian remains 1.10.0.
+- Validation passes 44/44 native-boundary, capability-registry, and adjacent formula checks plus the complete 253/253 declared Node suite and no-emit TypeScript check. The final versioned build is deployed and verified in the isolated test vault before publication; production is not accessed.
+
 ## 0.9.0
 
 - **After creating an item** is now an always-visible dropdown under **Rules & creation** with **Editable preview over Calendar**, **Open created item**, and **Stay on Calendar**. It applies to note events and to the exact file that receives a new task, including a Daily Note or configured shared task note.
@@ -317,8 +327,16 @@ A FullCalendar-powered time-grid calendar view that renders inside Obsidian **Ba
 - Calendar uses only TPS Global Context Menu's exact `plugin.api.formulas` version 1 and `plugin.api.lineMetadata` version 1 contracts. Formula-bearing synthetic views fail closed if either required API is absent or incompatible. Inline checkbox-task synthesis also requires line metadata's document-aware `scanDocument` capability even when no formulas are configured; missing, incompatible, throwing, or malformed scanner results suppress task synthesis with one deduplicated diagnostic instead of reviving Calendar's legacy regex scan. Native note and external-calendar rows remain available independently.
 - Checkbox-task contexts expose inline fields as row-first bare names plus `row`, containing-note frontmatter as `note`, source identity as `file`, the Base host as `this`, checkbox structure as `task`, and one-based physical-line metadata as `line`. Structural identity stays available through `row.kind`, `row.itemKind`, and `row.itemType`; additive identities are available in `row.kinds`, while `row.explicitKind` contains only the line's explicit Kind value.
 - Persisted inline Markdown values remain strings because a line has no authoritative Base property schema. Formulas should convert deliberately, for example `number(points)`, `date(scheduled)`, `allDay == "true"`, `labels.split(",")`, or `link(owner)`. `list(value)` wraps one scalar and does not parse comma or bracket syntax.
-- Formula-backed fields are computed and therefore read-only. If a creation, drag, or resize operation would have to write the configured formula start field, Calendar refuses the mutation and directs the user to a view with a writable property.
+- Formula-backed fields are computed and therefore read-only. Legacy note/task mode refuses a creation, drag, or resize operation that would have to write the configured formula start field and directs the user to a view with a writable property. Native mode does not write that formula field: it mutates the verified record's public `scheduled`/`end` interval through GCM API v6.
 - Filter groups evaluate children in stored order with normal `and`/`or` short-circuiting. An evaluated error cannot be inverted by `not` or bypassed by a later sibling; an unreachable branch is not evaluated.
+
+### Native Calendar record contract
+
+- Controller's **Native Markdown records** selection chooses this path; GCM `nativeRecords` API v6 owns record discovery, one globally unique `tpsId`, file placement, and atomic source-preserving writes. Calendar accepts only verified `calendar-event` records for mutation and does not infer permission from raw `kind` or legacy identity fields.
+- Calendar's create payload is deliberately small: public `title`, `status: scheduled`, `scheduled`, `end`, optional true-only `allDay`, and optional wikilink `associatedNote`. No Calendar route writes `eventTitle`, `durationMinutes`, `associatedNotePath`, `calendarId`, `calendarSourceId`, `calendarUid`, occurrence identity aliases, `subitemId`, or GCM envelope/storage-profile properties.
+- A toolbar or range **Create event** action creates one record. **Track existing event** and an ordinary-note drop create one record whose `associatedNote` points to that separate user note. Dropping an existing verified native calendar record updates its interval. Drag and resize update the same record and preserve its GCM-owned `tpsId`; task-line drops and other native kinds are rejected.
+- Existing `eventTitle` and `durationMinutes` values remain presentation/read fallbacks for older records, with canonical `end` taking priority over a legacy derived duration. Auxiliary-date discovery is disabled for native rows so envelope timestamps and event interval fields cannot appear as duplicate event markers.
+- Native association context-menu actions change only `associatedNote`. Legacy note/task mode retains its existing parent/child, external-event, task `associatedNotePath`, and exact task identity readers/writers; native mode does not repurpose those contracts.
 
 ### External Calendar Sync
 - Reads iCal feed configurations from **TPS-Controller** settings (no duplicate config).
@@ -546,7 +564,7 @@ src/
 | Plugin | Relationship |
 |--------|-------------|
 | TPS-Controller | Reads iCal config; shares 4 service files (to be consolidated) |
-| TPS-GCM | Required canonical line-metadata/document-scan API for inline checkbox-task synthesis; optional shared formula and versioned configuration APIs for other Calendar behavior |
+| TPS-GCM | Exact nativeRecords API v6 is required for native Calendar mode; canonical line-metadata/document-scan API is required for inline checkbox-task synthesis; shared formula and versioned configuration APIs support other Calendar behavior |
 | TPS-Notifier | Independent |
 | TPS-NNC | Independent |
 

@@ -37,6 +37,7 @@ import {
   ensureInternalIdInFrontmatter,
   getExternalId,
   getGcmApi,
+  getGcmNativeRecordsApi,
   isGcmTemplateFile,
   listGcmTemplateFiles,
   getGcmTaskCheckboxIconForState,
@@ -50,6 +51,9 @@ import {
   registerFilesUpdated,
   revealCompletedCheckboxesForFile,
   shouldForceBaseLinkPreview,
+  type GcmNativeRecordHandle,
+  type GcmNativeRecordInspection,
+  type GcmNativeRecordsApi,
 } from "./tps-gcm-api";
 import {
   DEFAULT_CONDENSE_LEVEL,
@@ -160,6 +164,11 @@ import * as logger from "./logger";
 import { parseDateFromFilename } from "./utils/daily-file-date";
 import { resolveCalendarDisplayTitle } from "./utils/calendar-display-title";
 import { PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY } from "./view-options";
+import {
+  buildNativeCalendarAssociatedNote,
+  buildNativeCalendarCreateProperties,
+  buildNativeCalendarScheduleUpdate,
+} from "./utils/native-calendar-record";
 
 export const CalendarViewType = "calendar";
 const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
@@ -498,19 +507,10 @@ export class CalendarView extends BasesView {
   ): Date | null {
     if (!nativeRecordMode || !frontmatter) return null;
 
-    const nativeRecords = this.getGcmApi()?.nativeRecords;
-    const nativeRecordsVersion = Number(nativeRecords?.version);
-    if (
-      !nativeRecords ||
-      !Number.isFinite(nativeRecordsVersion) ||
-      nativeRecordsVersion < 2 ||
-      typeof nativeRecords.inspect !== "function"
-    ) {
-      return null;
-    }
+    const nativeRecords = getGcmNativeRecordsApi(this.app);
+    if (!nativeRecords) return null;
 
     try {
-      if (nativeRecords.isEnabled?.() !== true) return null;
       const inspection = nativeRecords.inspect(frontmatter);
       if (inspection?.kind !== "calendar-event") return null;
 
@@ -520,21 +520,20 @@ export class CalendarView extends BasesView {
         !Array.isArray(inspection.frontmatter)
           ? inspection.frontmatter as Record<string, any>
           : frontmatter;
-      const durationMinutes = this.parseDurationMinutesFromValue(
-        this.getFrontmatterValueCaseInsensitive(canonicalFrontmatter, "durationMinutes"),
-      );
-      if (durationMinutes !== null && durationMinutes > 0) {
-        const durationEnd = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
-        if (Number.isFinite(durationEnd.getTime()) && durationEnd.getTime() > startDate.getTime()) {
-          return durationEnd;
-        }
-      }
-
       const canonicalEnd = this.parseFrontmatterDateValue(
         this.getFrontmatterValueCaseInsensitive(canonicalFrontmatter, "end"),
       );
-      return canonicalEnd && canonicalEnd.getTime() > startDate.getTime()
-        ? canonicalEnd
+      if (canonicalEnd && canonicalEnd.getTime() > startDate.getTime()) return canonicalEnd;
+
+      // durationMinutes is a read-only compatibility fallback. New Calendar
+      // writes persist the authoritative scheduled/end interval instead.
+      const durationMinutes = this.parseDurationMinutesFromValue(
+        this.getFrontmatterValueCaseInsensitive(canonicalFrontmatter, "durationMinutes"),
+      );
+      if (durationMinutes === null || durationMinutes <= 0) return null;
+      const durationEnd = new Date(startDate.getTime() + durationMinutes * 60 * 1000);
+      return Number.isFinite(durationEnd.getTime()) && durationEnd.getTime() > startDate.getTime()
+        ? durationEnd
         : null;
     } catch {
       return null;
@@ -807,6 +806,27 @@ export class CalendarView extends BasesView {
     baseFileName?: string,
     frontmatterProcessor?: (frontmatter: Record<string, unknown>) => void,
   ): Promise<void> {
+    const nativeRecordMode = this.isNativeCalendarRecordMode();
+    const nowRange = this.resolveCurrentTimeCreateRange();
+    if (nativeRecordMode) {
+      try {
+        const created = await this.createNativeCalendarRecord({
+          title: "Untitled",
+          start: nowRange.start,
+          end: nowRange.end,
+          allDay: false,
+          surface: "calendar-create",
+        });
+        await this.updateCalendar();
+        await this.handlePostCreateBehavior(created.file, {
+          invokingAnchor: this.toolbarCreateAnchor,
+        });
+      } catch (error) {
+        logger.error("[CalendarView] Native toolbar creation failed", error);
+        new Notice(error instanceof Error ? error.message : "Native Calendar creation failed.");
+      }
+      return;
+    }
     if (isCalendarFormulaProperty(this.startDateProp)) {
       logger.warn("[CalendarView] Refusing Base create through computed start formula", {
         startProperty: this.startDateProp,
@@ -814,37 +834,9 @@ export class CalendarView extends BasesView {
       new Notice("This Calendar uses a computed start formula, which cannot be written. Create the item through a view with a writable start property.");
       return;
     }
-    const nativeRecordMode = this.plugin.getCalendarStorageMode?.() === "native-records";
-    const filterSources = nativeRecordMode ? [] : await this.readBaseFileFilterSources();
-    const nowRange = this.resolveCurrentTimeCreateRange();
+    const filterSources = await this.readBaseFileFilterSources();
     const createOptions = this.buildCalendarNewEventOptions(filterSources);
-    const createMode = nativeRecordMode ? "note" : createOptions.createMode;
-    if (nativeRecordMode) {
-      const nativeRecords = this.getGcmApi()?.nativeRecords;
-      if (!nativeRecords || Number(nativeRecords.version) < 1 || nativeRecords.isEnabled?.() !== true) {
-        new Notice("Native Calendar creation requires GCM native-record mode.");
-        return;
-      }
-      const durationMinutes = Math.max(1, Math.round((nowRange.end.getTime() - nowRange.start.getTime()) / 60_000));
-      const created = await nativeRecords.create("calendar-event", {
-        title: "Untitled",
-        status: "scheduled",
-        scheduled: nowRange.start.toISOString(),
-        end: nowRange.end.toISOString(),
-        durationMinutes,
-        allDay: false,
-        tags: ["calendar-event"],
-      }, {
-        cause: { kind: "user", sourcePluginId: "tps-calendar-base", surface: "calendar-create" },
-      });
-      if (created?.file) {
-        await this.updateCalendar();
-        await this.handlePostCreateBehavior(created.file, {
-          invokingAnchor: this.toolbarCreateAnchor,
-        });
-      }
-      return;
-    }
+    const createMode = createOptions.createMode;
     if (createMode === "task") {
       const file = await this.newEventService.createEvent(nowRange.start, nowRange.end, undefined, createOptions);
       if (file) {
@@ -1126,6 +1118,169 @@ export class CalendarView extends BasesView {
 
   private getGcmApi(): any {
     return getGcmApi(this.app);
+  }
+
+  private isNativeCalendarRecordMode(): boolean {
+    return this.plugin.getCalendarStorageMode?.() === "native-records";
+  }
+
+  private requireNativeCalendarRecordsApi(): GcmNativeRecordsApi {
+    const nativeRecords = getGcmNativeRecordsApi(this.app);
+    if (!nativeRecords) {
+      throw new Error("Native Calendar requires enabled GCM native-record API v6.");
+    }
+    return nativeRecords;
+  }
+
+  private inspectNativeCalendarRecord(file: TFile): GcmNativeRecordInspection | null {
+    const nativeRecords = getGcmNativeRecordsApi(this.app);
+    if (!nativeRecords) return null;
+    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!frontmatter || typeof frontmatter !== "object") return null;
+    try {
+      return nativeRecords.inspect(frontmatter);
+    } catch {
+      return null;
+    }
+  }
+
+  private nativeCalendarFileHasIdentityEvidence(file: TFile): boolean {
+    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+    if (!frontmatter || typeof frontmatter !== "object") return false;
+    return Object.entries(frontmatter).some(([key, value]) => (
+      key.trim().toLowerCase() === "tpsid"
+      && typeof value === "string"
+      && value.trim().length > 0
+    ));
+  }
+
+  private async resolveNativeCalendarRecord(file: TFile): Promise<GcmNativeRecordHandle | null> {
+    return this.requireNativeCalendarRecordsApi().resolve(file);
+  }
+
+  private resolveNativeCalendarWriteEnd(
+    file: TFile | null,
+    start: Date,
+    requestedEnd: Date | undefined,
+    allDay: boolean,
+  ): Date {
+    if (allDay) {
+      const startDay = new Date(start);
+      startDay.setHours(0, 0, 0, 0);
+      if (requestedEnd && Number.isFinite(requestedEnd.getTime())) {
+        const requestedDay = new Date(requestedEnd);
+        requestedDay.setHours(0, 0, 0, 0);
+        if (requestedDay.getTime() > startDay.getTime()) return requestedDay;
+      }
+      if (file) {
+        const existing = this.entries.find((candidate) => candidate.entry.file.path === file.path);
+        if (existing?.endDate) {
+          const oldStartDay = Date.UTC(
+            existing.startDate.getFullYear(),
+            existing.startDate.getMonth(),
+            existing.startDate.getDate(),
+          );
+          const oldEndDay = Date.UTC(
+            existing.endDate.getFullYear(),
+            existing.endDate.getMonth(),
+            existing.endDate.getDate(),
+          );
+          const dayCount = Math.round((oldEndDay - oldStartDay) / 86_400_000);
+          if (dayCount > 0) {
+            const preservedEnd = new Date(startDay);
+            preservedEnd.setDate(preservedEnd.getDate() + dayCount);
+            return preservedEnd;
+          }
+        }
+      }
+      const nextDay = new Date(startDay);
+      nextDay.setDate(nextDay.getDate() + 1);
+      return nextDay;
+    }
+    if (requestedEnd && Number.isFinite(requestedEnd.getTime()) && requestedEnd.getTime() > start.getTime()) {
+      return requestedEnd;
+    }
+    if (file) {
+      const existing = this.entries.find((candidate) => candidate.entry.file.path === file.path);
+      const existingDuration = existing?.endDate
+        ? existing.endDate.getTime() - existing.startDate.getTime()
+        : 0;
+      if (Number.isFinite(existingDuration) && existingDuration > 0) {
+        return new Date(start.getTime() + existingDuration);
+      }
+    }
+    const durationMinutes = Math.max(this.defaultEventDuration || 0, 15);
+    return new Date(start.getTime() + durationMinutes * 60_000);
+  }
+
+  private async createNativeCalendarRecord(args: {
+    title: string;
+    start: Date;
+    end: Date;
+    allDay: boolean;
+    associatedNoteFile?: TFile | null;
+    surface: string;
+  }): Promise<GcmNativeRecordHandle> {
+    const nativeRecords = this.requireNativeCalendarRecordsApi();
+    const associatedNote = args.associatedNoteFile
+      ? buildNativeCalendarAssociatedNote(args.associatedNoteFile.path)
+      : null;
+    const properties = buildNativeCalendarCreateProperties({
+      title: args.title,
+      start: args.start,
+      end: args.end,
+      allDay: args.allDay,
+      associatedNote,
+    });
+    const created = await nativeRecords.create("calendar-event", properties, {
+      cause: {
+        kind: "user",
+        sourcePluginId: "tps-calendar-base",
+        surface: args.surface,
+      },
+    });
+    if (!created || created.kind !== "calendar-event" || !(created.file instanceof TFile)) {
+      throw new Error("GCM did not create a canonical Calendar record.");
+    }
+    logger.flow("NativeCalendar", "create:done", {
+      path: created.file.path,
+      surface: args.surface,
+      associatedNote: Boolean(associatedNote),
+      allDay: args.allDay,
+    });
+    return created;
+  }
+
+  private async updateNativeCalendarRecordSchedule(args: {
+    file: TFile;
+    start: Date;
+    end: Date;
+    allDay: boolean;
+    surface: string;
+  }): Promise<GcmNativeRecordHandle> {
+    const nativeRecords = this.requireNativeCalendarRecordsApi();
+    const record = await nativeRecords.resolve(args.file);
+    if (record?.kind !== "calendar-event") {
+      throw new Error("Only a verified native calendar-event record can be scheduled here.");
+    }
+    const updated = await nativeRecords.update(
+      { path: record.path, id: record.id },
+      buildNativeCalendarScheduleUpdate(args.start, args.end, args.allDay),
+      {
+        kind: "user",
+        sourcePluginId: "tps-calendar-base",
+        surface: args.surface,
+      },
+    );
+    if (!updated || updated.kind !== "calendar-event") {
+      throw new Error("GCM refused the native Calendar update.");
+    }
+    logger.flow("NativeCalendar", "update:done", {
+      path: updated.file.path,
+      surface: args.surface,
+      allDay: args.allDay,
+    });
+    return updated;
   }
 
   private getGcmServices(): any {
@@ -2066,7 +2221,13 @@ export class CalendarView extends BasesView {
         ? normalizePath(entryFile.path).startsWith(`${archiveFolder}/`)
         : false;
 
-      if (entryFile && entryPassesFilters && !entryIsArchived && this.shouldRenderNoteEvent(entryFile, entryCache)) {
+      if (
+        !nativeRecordMode
+        && entryFile
+        && entryPassesFilters
+        && !entryIsArchived
+        && this.shouldRenderNoteEvent(entryFile, entryCache)
+      ) {
         for (const marker of this.getAuxiliaryDateMarkers(entryFrontmatter)) {
           const markerEnd = marker.isDateOnly
             ? new Date(marker.date.getFullYear(), marker.date.getMonth(), marker.date.getDate() + 1)
@@ -3688,14 +3849,13 @@ export class CalendarView extends BasesView {
     }
   }
   private async handleCreateRange(start: Date, end: Date, allDay?: boolean): Promise<void> {
-    if (!this.startDateProp) return;
+    const nativeRecordMode = this.isNativeCalendarRecordMode();
+    if (!this.startDateProp && !nativeRecordMode) return;
 
     try {
       const createRange = allDay ? { start, end } : this.resolveDefaultCreateRange(start, end);
       const selection = await this.promptForCalendarCreateSelection();
       if (!selection) return;
-      const filterSources = await this.readBaseFileFilterSources();
-      const createMode = this.resolveEffectiveCreateMode(filterSources);
 
       if (selection.action === "track-time") {
         const timeSelection = await this.promptForTimeTrackingTarget(createRange.start, createRange.end);
@@ -3704,6 +3864,30 @@ export class CalendarView extends BasesView {
           return;
         }
         const target = timeSelection.target;
+        if (nativeRecordMode) {
+          if (
+            await this.resolveNativeCalendarRecord(target.file)
+            || this.inspectNativeCalendarRecord(target.file)
+            || this.nativeCalendarFileHasIdentityEvidence(target.file)
+          ) {
+            throw new Error("Native Calendar can associate only an ordinary note, not another native record.");
+          }
+          const created = await this.createNativeCalendarRecord({
+            title: target.title || target.file.basename,
+            start: createRange.start,
+            end: createRange.end,
+            allDay: allDay === true,
+            associatedNoteFile: target.file,
+            surface: "calendar-range-track-note",
+          });
+          await this.updateCalendar();
+          await this.handlePostCreateBehavior(created.file);
+          new Notice(`Created calendar event for ${target.file.basename}.`);
+          return;
+        }
+
+        const filterSources = await this.readBaseFileFilterSources();
+        const createMode = this.resolveEffectiveCreateMode(filterSources);
         logger.log("[CalendarView] Scheduling note for time tracking from drag-create", {
           targetPath: target.file.path,
           taskAssociationPath: createMode === "task" ? target.file.path : "",
@@ -3728,6 +3912,20 @@ export class CalendarView extends BasesView {
       if (!titlePrompt) return;
       const title = titlePrompt.title;
 
+      if (nativeRecordMode) {
+        const created = await this.createNativeCalendarRecord({
+          title,
+          start: createRange.start,
+          end: createRange.end,
+          allDay: allDay === true,
+          surface: "calendar-range-create",
+        });
+        await this.updateCalendar();
+        await this.handlePostCreateBehavior(created.file);
+        return;
+      }
+
+      const filterSources = await this.readBaseFileFilterSources();
       const createOptions = this.buildCalendarNewEventOptions(filterSources, {
         allDay: !!allDay,
         titleOverride: title,
@@ -4849,6 +5047,45 @@ export class CalendarView extends BasesView {
       return;
     }
 
+    if (this.isNativeCalendarRecordMode()) {
+      try {
+        const end = this.resolveNativeCalendarWriteEnd(file, start, undefined, allDay);
+        const nativeRecord = await this.resolveNativeCalendarRecord(file);
+        if (nativeRecord?.kind === "calendar-event") {
+          await this.updateNativeCalendarRecordSchedule({
+            file,
+            start,
+            end,
+            allDay,
+            surface: "calendar-file-drop-reschedule",
+          });
+          await this.updateCalendar();
+          return;
+        }
+        if (
+          nativeRecord
+          || this.inspectNativeCalendarRecord(file)
+          || this.nativeCalendarFileHasIdentityEvidence(file)
+        ) {
+          throw new Error("Only an ordinary note or a native calendar-event can be dropped on this Calendar.");
+        }
+        const created = await this.createNativeCalendarRecord({
+          title: this.resolveDroppedFileEventTitle(file),
+          start,
+          end,
+          allDay,
+          associatedNoteFile: file,
+          surface: "calendar-note-drop",
+        });
+        await this.updateCalendar();
+        await this.handlePostCreateBehavior(created.file);
+      } catch (error) {
+        logger.error("[CalendarView] Native file drop failed", error);
+        new Notice(error instanceof Error ? error.message : "Native Calendar drop failed.");
+      }
+      return;
+    }
+
     // If the dropped file is a template, create a new event from it instead of modifying the template
     if (this.isTemplateFile(file)) {
       try {
@@ -4944,6 +5181,14 @@ export class CalendarView extends BasesView {
     start: Date,
     allDay: boolean,
   ): Promise<void> {
+    if (this.isNativeCalendarRecordMode()) {
+      logger.warn("[CalendarView] Native Calendar rejected unsupported task drop", {
+        path: file.path,
+        line: payload.line,
+      });
+      new Notice("Native Calendar cannot schedule a task-line drop; drop an ordinary note instead.");
+      return;
+    }
     const plan = await this.buildCalendarTaskDropPlan(file, payload, start, allDay);
     if (plan.filterStatus && !plan.filterCheckboxState) {
       logger.warn('[CalendarView] Task drop blocked because Base status is unmapped', {
@@ -6444,6 +6689,9 @@ export class CalendarView extends BasesView {
 
   private isEditable(): boolean {
     if (!this.startDateProp) return false;
+    if (this.isNativeCalendarRecordMode()) {
+      return getGcmNativeRecordsApi(this.app) !== null;
+    }
     const isTaskDateProperty = (propId: unknown): boolean =>
       typeof propId === "string" && /^task\./i.test(propId.trim());
     const startDateProperty = parsePropertyId(this.startDateProp);
@@ -6562,40 +6810,64 @@ export class CalendarView extends BasesView {
     // Create the menu
     const menu = Menu.forEvent(evt);
 
-    menu.addItem((item) =>
-      item
-        .setTitle("Link to Existing Note")
-        .setIcon("link")
-        .setSection("tps-links")
-        .onClick(async () => {
-          new FileSelectionModal(this.app, async (parentFile: TFile) => {
-            await this.linkExistingNoteToEvent(file, parentFile);
-          }).open();
-        })
-    );
-
-    if (this.isNoteLinkedToExternalEvent(file)) {
+    const nativeInspection = this.isNativeCalendarRecordMode()
+      ? this.inspectNativeCalendarRecord(file)
+      : null;
+    if (nativeInspection?.kind === "calendar-event") {
+      const associated = this.getNativeCalendarAssociatedNote(nativeInspection, file.path);
       menu.addItem((item) =>
         item
-          .setTitle("Unlink Calendar Event")
-          .setIcon("unlink")
+          .setTitle(associated.value
+            ? `Unlink ${associated.file?.basename || "associated note"}`
+            : "Link to Existing Note")
+          .setIcon(associated.value ? "unlink" : "link")
           .setSection("tps-links")
           .onClick(async () => {
-            await this.unlinkNoteFromExternalEvent(file);
+            if (associated.value) {
+              await this.updateNativeCalendarAssociatedNote(file, null);
+              return;
+            }
+            new FileSelectionModal(this.app, async (associatedFile: TFile) => {
+              await this.updateNativeCalendarAssociatedNote(file, associatedFile);
+            }).open();
           })
       );
-    }
-
-    for (const parentFile of this.getLinkedParentFilesForEvent(file)) {
+    } else if (!this.isNativeCalendarRecordMode()) {
       menu.addItem((item) =>
         item
-          .setTitle(`Unlink ${parentFile.basename}`)
-          .setIcon("unlink")
+          .setTitle("Link to Existing Note")
+          .setIcon("link")
           .setSection("tps-links")
           .onClick(async () => {
-            await this.unlinkExistingNoteFromEvent(file, parentFile);
+            new FileSelectionModal(this.app, async (parentFile: TFile) => {
+              await this.linkExistingNoteToEvent(file, parentFile);
+            }).open();
           })
       );
+
+      if (this.isNoteLinkedToExternalEvent(file)) {
+        menu.addItem((item) =>
+          item
+            .setTitle("Unlink Calendar Event")
+            .setIcon("unlink")
+            .setSection("tps-links")
+            .onClick(async () => {
+              await this.unlinkNoteFromExternalEvent(file);
+            })
+        );
+      }
+
+      for (const parentFile of this.getLinkedParentFilesForEvent(file)) {
+        menu.addItem((item) =>
+          item
+            .setTitle(`Unlink ${parentFile.basename}`)
+            .setIcon("unlink")
+            .setSection("tps-links")
+            .onClick(async () => {
+              await this.unlinkExistingNoteFromEvent(file, parentFile);
+            })
+        );
+      }
     }
 
     // Calendar events are not native file-list rows, so explicitly let GCM populate
@@ -6726,7 +6998,14 @@ export class CalendarView extends BasesView {
       }
     }
 
-    await this.updateEntryDates(entry, normalizedStart, normalizedEnd, allDay, scope);
+    await this.updateEntryDates(
+      entry,
+      normalizedStart,
+      normalizedEnd,
+      allDay,
+      scope,
+      "calendar-event-drop",
+    );
   }
 
   private async promptConvertToMeetingNote(event: ExternalCalendarEvent): Promise<boolean> {
@@ -6789,7 +7068,14 @@ export class CalendarView extends BasesView {
       logger.warn("Event resize requires an end date");
       return;
     }
-    await this.updateEntryDates(entry, newStart, newEnd, allDay, scope);
+    await this.updateEntryDates(
+      entry,
+      newStart,
+      newEnd,
+      allDay,
+      scope,
+      "calendar-event-resize",
+    );
   }
 
   private async updateEntryDates(
@@ -6798,8 +7084,11 @@ export class CalendarView extends BasesView {
     newEnd?: Date,
     allDay?: boolean,
     scope: "all" | "single" = "all",
+    nativeSurface = "calendar-event-update",
   ): Promise<void> {
-    if (!this.startDateProp) {
+    void scope;
+    const nativeRecordMode = this.isNativeCalendarRecordMode();
+    if (!this.startDateProp && !nativeRecordMode) {
       logger.warn('[Calendar] No startDateProp configured');
       return;
     }
@@ -6808,15 +7097,22 @@ export class CalendarView extends BasesView {
 
     const inlineTask = (entry as any).inlineTask as InlineScheduledTask | undefined;
     if (inlineTask) {
+      if (nativeRecordMode) {
+        throw new Error("Native Calendar cannot mutate an inline task as a native record.");
+      }
       await this.updateInlineScheduledTask(inlineTask, newStart, newEnd, allDay);
       await this.updateCalendar(true);
       return;
     }
 
+    const resolvedEnd = nativeRecordMode
+      ? this.resolveNativeCalendarWriteEnd(file, newStart, newEnd, allDay === true)
+      : newEnd;
+
     // Set pending update IMMEDIATELY to prevent snap-back race condition
     this.pendingUpdates.set(file.path, {
       start: newStart,
-      end: newEnd,
+      end: resolvedEnd,
       timestamp: Date.now()
     });
 
@@ -6824,13 +7120,32 @@ export class CalendarView extends BasesView {
     const entryIndex = this.entries.findIndex(e => e.entry.file.path === file.path);
     if (entryIndex !== -1) {
       this.entries[entryIndex].startDate = newStart;
-      this.entries[entryIndex].endDate = newEnd;
+      this.entries[entryIndex].endDate = resolvedEnd;
       // If we have an external event wrapper, update that too so it doesn't look out of sync
       if (this.entries[entryIndex].externalEvent) {
         this.entries[entryIndex].externalEvent!.startDate = newStart;
-        if (newEnd) this.entries[entryIndex].externalEvent!.endDate = newEnd;
+        if (resolvedEnd) this.entries[entryIndex].externalEvent!.endDate = resolvedEnd;
       }
       this.renderReactCalendar();
+    }
+
+    if (nativeRecordMode) {
+      try {
+        await this.updateNativeCalendarRecordSchedule({
+          file,
+          start: newStart,
+          end: resolvedEnd!,
+          allDay: allDay === true,
+          surface: nativeSurface,
+        });
+        return;
+      } catch (error) {
+        logger.error("[CalendarView] Native drag/resize update failed", error);
+        this.pendingUpdates.delete(file.path);
+        await this.updateCalendar(true);
+        new Notice(error instanceof Error ? error.message : "Native Calendar update failed.");
+        throw error;
+      }
     }
 
     const startField = this.getNoteField(this.startDateProp);
@@ -11926,6 +12241,73 @@ export class CalendarView extends BasesView {
     }
 
     return linkedFiles;
+  }
+
+  private getNativeCalendarAssociatedNote(
+    inspection: GcmNativeRecordInspection,
+    sourcePath: string,
+  ): { value: string | null; file: TFile | null } {
+    const rawValue = this.getFrontmatterValueCaseInsensitive(
+      inspection.frontmatter,
+      "associatedNote",
+    );
+    const value = typeof rawValue === "string" && rawValue.trim()
+      ? rawValue.trim()
+      : null;
+    return {
+      value,
+      file: value ? this.resolveCalendarLinkValueToFile(value, sourcePath) : null,
+    };
+  }
+
+  private async updateNativeCalendarAssociatedNote(
+    eventFile: TFile,
+    associatedFile: TFile | null,
+  ): Promise<void> {
+    try {
+      if (associatedFile?.path === eventFile.path) {
+        new Notice("Cannot associate a Calendar record with itself.");
+        return;
+      }
+      if (associatedFile && (
+        await this.resolveNativeCalendarRecord(associatedFile)
+        || this.inspectNativeCalendarRecord(associatedFile)
+        || this.nativeCalendarFileHasIdentityEvidence(associatedFile)
+      )) {
+        throw new Error("Native Calendar can associate only a separate ordinary note.");
+      }
+      const nativeRecords = this.requireNativeCalendarRecordsApi();
+      const record = await nativeRecords.resolve(eventFile);
+      if (record?.kind !== "calendar-event") {
+        throw new Error("The selected Calendar item is not a verified native calendar-event.");
+      }
+      const associatedNote = associatedFile
+        ? buildNativeCalendarAssociatedNote(associatedFile.path)
+        : null;
+      const updated = await nativeRecords.update(
+        { path: record.path, id: record.id },
+        { associatedNote },
+        {
+          kind: "user",
+          sourcePluginId: "tps-calendar-base",
+          surface: "calendar-association",
+        },
+      );
+      if (!updated || updated.kind !== "calendar-event") {
+        throw new Error("GCM refused the native Calendar association update.");
+      }
+      logger.flow("NativeCalendar", "association:done", {
+        path: eventFile.path,
+        associated: Boolean(associatedNote),
+      });
+      new Notice(associatedFile
+        ? `Linked "${eventFile.basename}" to "${associatedFile.basename}".`
+        : `Unlinked "${eventFile.basename}" from its associated note.`);
+      await this.updateCalendar();
+    } catch (error) {
+      logger.error("[CalendarView] Native association update failed", error);
+      new Notice(error instanceof Error ? error.message : "Native Calendar association failed.");
+    }
   }
 
   private isNoteLinkedToExternalEvent(file: TFile): boolean {

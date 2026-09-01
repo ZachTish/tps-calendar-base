@@ -1555,7 +1555,7 @@ test("external records use formula dates and configured display fields", async (
   assert.equal(calendarEntry.externalEvent.isAllDay, true);
 });
 
-test("native calendar occurrence cards show eventTitle without flattening the associated-note link", () => {
+test("legacy native occurrence cards may still read eventTitle without flattening the old title link", () => {
   const view = createBareView();
   const file = createFile("2026-08-25 - Daily Standup.md");
   const frontmatter = {
@@ -1592,7 +1592,7 @@ test("native calendar occurrence cards show eventTitle without flattening the as
 
 test("verified native calendar records retain canonical 15, 60, and 180 minute intervals in mixed Bases", () => {
   const nativeRecords = {
-    version: 2,
+    version: 6,
     isEnabled: () => true,
     inspect(frontmatter) {
       if (!frontmatter?.verifiedRecordKind) return null;
@@ -1601,6 +1601,9 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
         frontmatter,
       };
     },
+    resolve: async () => null,
+    create: async () => null,
+    update: async () => null,
   };
   const view = createBareView({ nativeRecords, calendarStorageMode: "native-records" });
   Object.assign(view, {
@@ -1659,6 +1662,14 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
   assert.equal(minutes(canonicalEndFallback), 60);
   assert.equal(canonicalEndFallback.hasExplicitEnd, true);
 
+  const canonicalEndWinsOverLegacyDuration = resolve({
+    verifiedRecordKind: "calendar-event",
+    durationMinutes: 180,
+    end: "2026-08-26T14:15:00-05:00",
+  });
+  assert.equal(minutes(canonicalEndWinsOverLegacyDuration), 60);
+  assert.equal(canonicalEndWinsOverLegacyDuration.hasExplicitEnd, true);
+
   const taskWithConfiguredDuration = resolve({
     verifiedRecordKind: "task",
     timeEstimate: 25,
@@ -1695,42 +1706,54 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
 
   const incompatibleApis = [
     {
-      label: "version 1 without the inspection contract",
+      label: "legacy version 5 contract",
       api: {
-        version: 1,
+        version: 5,
         isEnabled: () => true,
         inspect: () => ({
           kind: "calendar-event",
           frontmatter: { verifiedRecordKind: "calendar-event", durationMinutes: 180 },
         }),
+        resolve: async () => null,
+        create: async () => null,
+        update: async () => null,
       },
     },
     {
       label: "disabled native-record service",
       api: {
-        version: 2,
+        version: 6,
         isEnabled: () => false,
         inspect: () => ({
           kind: "calendar-event",
           frontmatter: { verifiedRecordKind: "calendar-event", durationMinutes: 180 },
         }),
+        resolve: async () => null,
+        create: async () => null,
+        update: async () => null,
       },
     },
     {
-      label: "version 2 API missing inspect",
+      label: "version 6 API missing inspect",
       api: {
-        version: 2,
+        version: 6,
         isEnabled: () => true,
+        resolve: async () => null,
+        create: async () => null,
+        update: async () => null,
       },
     },
     {
       label: "throwing inspection provider",
       api: {
-        version: 2,
+        version: 6,
         isEnabled: () => true,
         inspect: () => {
           throw new Error("inspection unavailable");
         },
+        resolve: async () => null,
+        create: async () => null,
+        update: async () => null,
       },
     },
   ];
