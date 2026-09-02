@@ -26,7 +26,10 @@ async function importNewEventService() {
       {
         name: "obsidian-stub",
         setup(build) {
-          build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "obsidian-stub", namespace: "stub" }));
+          build.onResolve({ filter: /^obsidian$/ }, () => ({
+            path: "obsidian-stub",
+            namespace: "stub",
+          }));
           build.onLoad({ filter: /.*/, namespace: "stub" }, () => ({
             loader: "js",
             contents: `
@@ -111,7 +114,9 @@ async function importNewEventService() {
     ],
   });
   const bundled = build.outputFiles[0].text;
-  const imported = await import(`data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`);
+  const imported = await import(
+    `data:text/javascript;base64,${Buffer.from(bundled).toString("base64")}`
+  );
   activeInstallGcmApiRegistry = imported.installGcmApiRegistry;
   return imported;
 }
@@ -125,13 +130,12 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
   let processCount = 0;
   let templaterRuns = 0;
   const templaterPendingFiles = new Set();
-  const hasLocalTemplaterSetting = options.templaterLocalSettingsUnavailable !== true;
-  const localTemplaterAutoTrigger = options.templaterLocalAutoTrigger
-    ?? options.templaterAutoTrigger
-    ?? false;
-  const legacyTemplaterAutoTrigger = options.templaterLegacyAutoTrigger
-    ?? options.templaterAutoTrigger
-    ?? false;
+  const hasLocalTemplaterSetting =
+    options.templaterLocalSettingsUnavailable !== true;
+  const localTemplaterAutoTrigger =
+    options.templaterLocalAutoTrigger ?? options.templaterAutoTrigger ?? false;
+  const legacyTemplaterAutoTrigger =
+    options.templaterLegacyAutoTrigger ?? options.templaterAutoTrigger ?? false;
 
   const triggerWorkspaceEvent = (name, detail) => {
     for (const callback of workspaceListeners.get(name) ?? []) callback(detail);
@@ -146,7 +150,9 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
       size: String(content || "").length,
     };
     files.set(normalized, { file, content });
-    const folder = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
+    const folder = normalized.includes("/")
+      ? normalized.slice(0, normalized.lastIndexOf("/"))
+      : "";
     if (folder) folders.add(folder);
     return file;
   };
@@ -173,10 +179,13 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
           try {
             const snapshot = record.content;
             record.content = await options.templaterTransform(snapshot, file);
-            triggerWorkspaceEvent(options.templaterEventName ?? "templater:overwrite-file", {
-              file,
-              content: record.content,
-            });
+            triggerWorkspaceEvent(
+              options.templaterEventName ?? "templater:overwrite-file",
+              {
+                file,
+                content: record.content,
+              },
+            );
           } finally {
             templaterPendingFiles.delete(file.path);
           }
@@ -190,7 +199,9 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
       : legacyTemplaterAutoTrigger === true;
     if (!autoCreateEnabled || !pluginRegistry["templater-obsidian"]) return;
     setTimeout(() => {
-      void pluginRegistry["templater-obsidian"].templater.overwrite_file_commands(file, false);
+      void pluginRegistry[
+        "templater-obsidian"
+      ].templater.overwrite_file_commands(file, false);
     }, options.templaterAutoDelayMs ?? 15);
   };
   const dailyNotesPlugin = options.dailyNotes
@@ -199,7 +210,8 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
 
   app = {
     loadLocalStorage(key) {
-      if (key !== "templater-local-settings" || !hasLocalTemplaterSetting) return null;
+      if (key !== "templater-local-settings" || !hasLocalTemplaterSetting)
+        return null;
       return { trigger_on_file_creation: localTemplaterAutoTrigger === true };
     },
     workspace: {
@@ -223,24 +235,34 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
       getFileCache: (file) => options.fileCaches?.[file.path] ?? null,
     },
     internalPlugins: {
-      getPluginById: (id) => id === "daily-notes" ? dailyNotesPlugin : null,
+      getPluginById: (id) => (id === "daily-notes" ? dailyNotesPlugin : null),
       plugins: dailyNotesPlugin ? { "daily-notes": dailyNotesPlugin } : {},
     },
     vault: {
       configDir: ".obsidian",
       getRoot: () => ({ path: "/" }),
-      getAbstractFileByPath: (path) => files.get(normalizePathForFake(path))?.file ?? (folders.has(normalizePathForFake(path)) ? { path: normalizePathForFake(path), children: [] } : null),
+      getAbstractFileByPath: (path) =>
+        files.get(normalizePathForFake(path))?.file ??
+        (folders.has(normalizePathForFake(path))
+          ? { path: normalizePathForFake(path), children: [] }
+          : null),
       createFolder: async (path) => {
         const normalized = normalizePathForFake(path);
-        const parent = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
-        if (parent && !folders.has(parent)) throw new Error(`Missing parent folder: ${parent}`);
+        const parent = normalized.includes("/")
+          ? normalized.slice(0, normalized.lastIndexOf("/"))
+          : "";
+        if (parent && !folders.has(parent))
+          throw new Error(`Missing parent folder: ${parent}`);
         folders.add(normalized);
       },
       create: async (path, content) => {
         const normalized = normalizePathForFake(path);
         if (files.has(normalized)) throw new Error("File already exists");
-        const parent = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
-        if (parent && !folders.has(parent)) throw new Error(`Missing parent folder: ${parent}`);
+        const parent = normalized.includes("/")
+          ? normalized.slice(0, normalized.lastIndexOf("/"))
+          : "";
+        if (parent && !folders.has(parent))
+          throw new Error(`Missing parent folder: ${parent}`);
         createCount += 1;
         const file = createFile(normalized, content, Date.now());
         scheduleTemplaterAutoCreate(file);
@@ -262,12 +284,13 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
         }
         record.content = processor(record.content);
       },
-      getMarkdownFiles: () => Array.from(files.values()).map((entry) => entry.file),
+      getMarkdownFiles: () =>
+        Array.from(files.values()).map((entry) => entry.file),
       adapter: {
         read: async (path) => {
           if (
-            normalizePathForFake(path) === ".obsidian/daily-notes.json"
-            && options.persistedDailyNotes
+            normalizePathForFake(path) === ".obsidian/daily-notes.json" &&
+            options.persistedDailyNotes
           ) {
             return JSON.stringify(options.persistedDailyNotes);
           }
@@ -277,34 +300,88 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
     },
     fileManager: {
       processFrontMatter: async () => {
-        throw new Error("Unexpected frontmatter mutation in direct creation test");
+        throw new Error(
+          "Unexpected frontmatter mutation in direct creation test",
+        );
       },
     },
   };
 
-  const installGcmApiRegistry = options.installGcmApiRegistry ?? activeInstallGcmApiRegistry;
+  const installGcmApiRegistry =
+    options.installGcmApiRegistry ?? activeInstallGcmApiRegistry;
   if (typeof installGcmApiRegistry === "function") {
     installGcmApiRegistry({ register() {}, registerEvent() {} }, app);
-    const taskCheckboxMappings = Object.freeze((options.taskCheckboxMappings ?? [
-      { checkboxState: "[ ]", statuses: ["todo", "next"], toggleTargetStatus: "complete", icon: "square" },
-      { checkboxState: "[x]", statuses: ["complete"], toggleTargetStatus: "todo", icon: "check" },
-      { checkboxState: "[/]", statuses: ["working"], toggleTargetStatus: "complete", icon: "slash" },
-      { checkboxState: "[\\]", statuses: ["working"], toggleTargetStatus: "complete", icon: "slash" },
-      { checkboxState: "[?]", statuses: ["holding"], toggleTargetStatus: "todo", icon: "help-circle" },
-      { checkboxState: "[-]", statuses: ["wont-do"], toggleTargetStatus: "todo", icon: "minus" },
-      { checkboxState: "[>]", statuses: ["migrated"] },
-    ]).map((mapping) => Object.freeze({
-      ...mapping,
-      statuses: Object.freeze([...mapping.statuses]),
-    })));
+    const taskCheckboxMappings = Object.freeze(
+      (
+        options.taskCheckboxMappings ?? [
+          {
+            checkboxState: "[ ]",
+            statuses: ["todo", "next"],
+            toggleTargetStatus: "complete",
+            icon: "square",
+          },
+          {
+            checkboxState: "[x]",
+            statuses: ["complete"],
+            toggleTargetStatus: "todo",
+            icon: "check",
+          },
+          {
+            checkboxState: "[/]",
+            statuses: ["working"],
+            toggleTargetStatus: "complete",
+            icon: "slash",
+          },
+          {
+            checkboxState: "[\\]",
+            statuses: ["working"],
+            toggleTargetStatus: "complete",
+            icon: "slash",
+          },
+          {
+            checkboxState: "[?]",
+            statuses: ["holding"],
+            toggleTargetStatus: "todo",
+            icon: "help-circle",
+          },
+          {
+            checkboxState: "[-]",
+            statuses: ["wont-do"],
+            toggleTargetStatus: "todo",
+            icon: "minus",
+          },
+          { checkboxState: "[>]", statuses: ["migrated"] },
+        ]
+      ).map((mapping) =>
+        Object.freeze({
+          ...mapping,
+          statuses: Object.freeze([...mapping.statuses]),
+        }),
+      ),
+    );
     const stateForStatus = (status) => {
-      const normalized = String(status ?? "").trim().toLowerCase();
-      return taskCheckboxMappings.find((mapping) => mapping.statuses.includes(normalized))?.checkboxState ?? "";
+      const normalized = String(status ?? "")
+        .trim()
+        .toLowerCase();
+      return (
+        taskCheckboxMappings.find((mapping) =>
+          mapping.statuses.includes(normalized),
+        )?.checkboxState ?? ""
+      );
     };
     const statusForState = (state) => {
       const raw = String(state ?? "");
-      const normalized = raw === " " ? "[ ]" : raw.trim().toLowerCase() === "[x]" ? "[x]" : raw.trim();
-      return taskCheckboxMappings.find((mapping) => mapping.checkboxState === normalized)?.statuses[0] ?? "";
+      const normalized =
+        raw === " "
+          ? "[ ]"
+          : raw.trim().toLowerCase() === "[x]"
+            ? "[x]"
+            : raw.trim();
+      return (
+        taskCheckboxMappings.find(
+          (mapping) => mapping.checkboxState === normalized,
+        )?.statuses[0] ?? ""
+      );
     };
     const api = {};
     if (options.disableTaskCheckboxes !== true) {
@@ -319,13 +396,21 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
     if (typeof options.gcmEnsureForIsoDate === "function") {
       api.dailyNotes = {
         version: 1,
-        ensureForIsoDate: (isoDate) => options.gcmEnsureForIsoDate(isoDate, app),
+        ensureForIsoDate: (isoDate) =>
+          options.gcmEnsureForIsoDate(isoDate, app),
+      };
+    }
+    if (options.gcmTemplates) {
+      api.templates = {
+        version: 1,
+        ...options.gcmTemplates,
       };
     }
     api.services = {
       status: {
         getStatusPropertyKey: () => options.statusPropertyKey ?? "status",
-        getRelationalStatusPropertyKey: () => options.relationalStatusPropertyKey ?? "",
+        getRelationalStatusPropertyKey: () =>
+          options.relationalStatusPropertyKey ?? "",
       },
     };
     app.workspace.trigger("tps:gcm-api-changed", {
@@ -352,9 +437,15 @@ function createFakeCalendarApp(TFileClass, initialFiles = {}, options = {}) {
       return files.has(normalizePathForFake(path));
     },
     stats: {
-      get createCount() { return createCount; },
-      get processCount() { return processCount; },
-      get templaterRuns() { return templaterRuns; },
+      get createCount() {
+        return createCount;
+      },
+      get processCount() {
+        return processCount;
+      },
+      get templaterRuns() {
+        return templaterRuns;
+      },
     },
   };
 }
@@ -405,6 +496,61 @@ test("NewEventService note mode creates a dated frontmatter note with Base defau
   assert.doesNotMatch(content, /(?:^|\n)folderPath:/);
   assert.match(content, /status: planned/);
   assert.match(content, /priority: medium/);
+});
+
+test("NewEventService strips the shared template marker before and after Templater", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Templates/Event.md": [
+        "---",
+        "tags:",
+        "  - template",
+        "  - calendar-template",
+        "---",
+        "",
+        "Event body for {{title}}",
+        "#template",
+        "",
+      ].join("\n"),
+    },
+    {
+      templaterTransform: (content) =>
+        content.replace(
+          "  - calendar-template",
+          "  - template\n  - calendar-template",
+        ),
+      gcmTemplates: {
+        prepareInstanceSource: (source) =>
+          source.replace(/^  - template\n/m, ""),
+      },
+    },
+  );
+  const service = new NewEventService({
+    app: fake.app,
+    startProperty: "note.scheduled",
+    endProperty: "note.timeEstimate",
+    folderPath: "Inbox",
+    templatePath: "Templates/Event",
+    useEndDuration: true,
+    createMode: "note",
+  });
+
+  const created = await service.createEvent(
+    new Date("2027-01-02T11:00:00"),
+    new Date("2027-01-02T11:30:00"),
+    undefined,
+    { titleOverride: "Template-safe event", createMode: "note" },
+  );
+
+  assert.equal(created?.path, "Inbox/Template-safe event 2027-01-02.md");
+  const content = fake.read(created.path);
+  assert.match(content, /  - calendar-template/);
+  assert.match(content, /Event body for Template-safe event/);
+  assert.match(content, /#template/);
+  assert.doesNotMatch(content, /^  - template$/m);
+  assert.equal(fake.stats.templaterRuns, 1);
 });
 
 test("NewEventService keeps true all-day state while omitting timed-event metadata", async () => {
@@ -470,7 +616,8 @@ test("NewEventService preserves an explicit Base equality default", async () => 
 });
 
 test("NewEventService writes custom task fields only through the exact GCM configuration capability", async () => {
-  const { NewEventService, installGcmApiRegistry } = await importNewEventService();
+  const { NewEventService, installGcmApiRegistry } =
+    await importNewEventService();
   const listeners = new Map();
   const app = {
     workspace: {
@@ -490,13 +637,40 @@ test("NewEventService writes custom task fields only through the exact GCM confi
   };
   installGcmApiRegistry({ register() {}, registerEvent() {} }, app);
   const mappings = Object.freeze([
-    Object.freeze({ checkboxState: "[ ]", statuses: Object.freeze(["todo"]), toggleTargetStatus: "complete" }),
-    Object.freeze({ checkboxState: "[x]", statuses: Object.freeze(["complete"]), toggleTargetStatus: "todo" }),
-    Object.freeze({ checkboxState: "[/]", statuses: Object.freeze(["working"]), toggleTargetStatus: "complete" }),
-    Object.freeze({ checkboxState: "[\\]", statuses: Object.freeze(["working"]), toggleTargetStatus: "complete" }),
-    Object.freeze({ checkboxState: "[?]", statuses: Object.freeze(["holding"]), toggleTargetStatus: "todo" }),
-    Object.freeze({ checkboxState: "[-]", statuses: Object.freeze(["wont-do"]), toggleTargetStatus: "todo" }),
-    Object.freeze({ checkboxState: "[>]", statuses: Object.freeze(["migrated"]) }),
+    Object.freeze({
+      checkboxState: "[ ]",
+      statuses: Object.freeze(["todo"]),
+      toggleTargetStatus: "complete",
+    }),
+    Object.freeze({
+      checkboxState: "[x]",
+      statuses: Object.freeze(["complete"]),
+      toggleTargetStatus: "todo",
+    }),
+    Object.freeze({
+      checkboxState: "[/]",
+      statuses: Object.freeze(["working"]),
+      toggleTargetStatus: "complete",
+    }),
+    Object.freeze({
+      checkboxState: "[\\]",
+      statuses: Object.freeze(["working"]),
+      toggleTargetStatus: "complete",
+    }),
+    Object.freeze({
+      checkboxState: "[?]",
+      statuses: Object.freeze(["holding"]),
+      toggleTargetStatus: "todo",
+    }),
+    Object.freeze({
+      checkboxState: "[-]",
+      statuses: Object.freeze(["wont-do"]),
+      toggleTargetStatus: "todo",
+    }),
+    Object.freeze({
+      checkboxState: "[>]",
+      statuses: Object.freeze(["migrated"]),
+    }),
   ]);
   app.workspace.trigger("tps:gcm-api-changed", {
     source: "tps-global-context-menu",
@@ -508,19 +682,36 @@ test("NewEventService writes custom task fields only through the exact GCM confi
       configuration: {
         version: 1,
         isInlinePropertyAllowed: (key) => key === "client",
-        getParentLinkPolicy: () => ({ format: "wikilink", tag: [], autoSelfLink: false }),
+        getParentLinkPolicy: () => ({
+          format: "wikilink",
+          tag: [],
+          autoSelfLink: false,
+        }),
       },
       taskCheckboxes: {
         version: 1,
         contract: "ordered-strict-v1",
         getMappings: () => mappings,
         stateForStatus: (status) => {
-          const normalized = String(status ?? "").trim().toLowerCase();
-          return mappings.find((mapping) => mapping.statuses.includes(normalized))?.checkboxState ?? "";
+          const normalized = String(status ?? "")
+            .trim()
+            .toLowerCase();
+          return (
+            mappings.find((mapping) => mapping.statuses.includes(normalized))
+              ?.checkboxState ?? ""
+          );
         },
         statusForState: (state) => {
-          const normalized = String(state ?? "").trim().toLowerCase() === "[x]" ? "[x]" : String(state ?? "").trim();
-          return mappings.find((mapping) => mapping.checkboxState === normalized)?.statuses[0] ?? "";
+          const normalized =
+            String(state ?? "")
+              .trim()
+              .toLowerCase() === "[x]"
+              ? "[x]"
+              : String(state ?? "").trim();
+          return (
+            mappings.find((mapping) => mapping.checkboxState === normalized)
+              ?.statuses[0] ?? ""
+          );
         },
       },
     },
@@ -534,18 +725,29 @@ test("NewEventService writes custom task fields only through the exact GCM confi
     { priority: "high", client: "Acme", privateField: "hidden" },
   );
 
-  assert.match(line, /\[priority:: high\]/u, "documented built-ins remain locally supported");
-  assert.match(line, /\[client:: Acme\]/u, "the exact public capability may authorize a custom inline field");
+  assert.match(
+    line,
+    /\[priority:: high\]/u,
+    "documented built-ins remain locally supported",
+  );
+  assert.match(
+    line,
+    /\[client:: Acme\]/u,
+    "the exact public capability may authorize a custom inline field",
+  );
   assert.doesNotMatch(line, /\[privateField:: hidden\]/u);
   const encoded = line.match(/\[tpsInlineProps:: ([^\]]+)\]/u)?.[1];
   assert.ok(encoded);
-  assert.deepEqual(JSON.parse(decodeURIComponent(encoded)), { privateField: "hidden" });
+  assert.deepEqual(JSON.parse(decodeURIComponent(encoded)), {
+    privateField: "hidden",
+  });
 });
 
 test("NewEventService task mode writes an inline scheduled task to the resolved target note", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   const fake = createFakeCalendarApp(TFile, {
-    "Inbox/Calendar Tasks.md": "---\ntitle: Calendar Tasks\n---\n\nExisting body\n",
+    "Inbox/Calendar Tasks.md":
+      "---\ntitle: Calendar Tasks\n---\n\nExisting body\n",
   });
   const service = new NewEventService({
     app: fake.app,
@@ -638,15 +840,24 @@ test("NewEventService places Daily Note tasks in Scheduled instead of the final 
 test("NewEventService creates a Scheduled section when a Daily Note does not have one", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   const fake = createFakeCalendarApp(TFile, {
-    "2027-01-04.md": "---\ntitle: Mon, Jan 04 2027\n---\n\n## Food\n\n- lunch\n",
+    "2027-01-04.md":
+      "---\ntitle: Mon, Jan 04 2027\n---\n\n## Food\n\n- lunch\n",
   });
-  const service = new NewEventService({ app: fake.app, createMode: "task", taskDestination: "daily-note" });
+  const service = new NewEventService({
+    app: fake.app,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
 
   await service.createEvent(
     new Date("2027-01-04T09:00:00"),
     new Date("2027-01-04T09:15:00"),
     undefined,
-    { titleOverride: "Morning check-in", createMode: "task", taskTargetPath: "2027-01-04.md" },
+    {
+      titleOverride: "Morning check-in",
+      createMode: "task",
+      taskTargetPath: "2027-01-04.md",
+    },
   );
 
   assert.equal(
@@ -659,16 +870,31 @@ test("NewEventService recognizes a Daily Note target by metadata when its path d
   const { NewEventService, TFile } = await importNewEventService();
   const fake = createFakeCalendarApp(
     TFile,
-    { "Dashboard note.md": "---\nKind: dailynote\n---\n\n## Scheduled\n\n## Food\n\n- dinner\n" },
-    { fileCaches: { "Dashboard note.md": { frontmatter: { Kind: "dailynote" } } } },
+    {
+      "Dashboard note.md":
+        "---\nKind: dailynote\n---\n\n## Scheduled\n\n## Food\n\n- dinner\n",
+    },
+    {
+      fileCaches: {
+        "Dashboard note.md": { frontmatter: { Kind: "dailynote" } },
+      },
+    },
   );
-  const service = new NewEventService({ app: fake.app, createMode: "task", taskDestination: "daily-note" });
+  const service = new NewEventService({
+    app: fake.app,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
 
   await service.createEvent(
     new Date("2027-01-06T13:00:00"),
     new Date("2027-01-06T13:30:00"),
     undefined,
-    { titleOverride: "Embedded Base event", createMode: "task", taskTargetPath: "Dashboard note.md" },
+    {
+      titleOverride: "Embedded Base event",
+      createMode: "task",
+      taskTargetPath: "Dashboard note.md",
+    },
   );
 
   assert.match(
@@ -690,13 +916,21 @@ test("NewEventService keeps Daily Note calendar tasks future-first inside Schedu
       "",
     ].join("\n"),
   });
-  const service = new NewEventService({ app: fake.app, createMode: "task", taskDestination: "daily-note" });
+  const service = new NewEventService({
+    app: fake.app,
+    createMode: "task",
+    taskDestination: "daily-note",
+  });
 
   await service.createEvent(
     new Date("2027-01-07T12:00:00"),
     new Date("2027-01-07T12:30:00"),
     undefined,
-    { titleOverride: "Noon", createMode: "task", taskTargetPath: "2027-01-07.md" },
+    {
+      titleOverride: "Noon",
+      createMode: "task",
+      taskTargetPath: "2027-01-07.md",
+    },
   );
 
   const output = fake.read("2027-01-07.md");
@@ -707,16 +941,36 @@ test("NewEventService keeps Daily Note calendar tasks future-first inside Schedu
 
 test("NewEventService task creation uses the authoritative custom status mapping", async () => {
   const { NewEventService, TFile } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {
-    "Inbox/Calendar Tasks.md": "---\ntitle: Calendar Tasks\n---\n\n",
-  }, {
-    taskCheckboxMappings: [
-      { checkboxState: "[o]", statuses: ["todo", "next"], toggleTargetStatus: "complete" },
-      { checkboxState: "[/]", statuses: ["working"], toggleTargetStatus: "complete" },
-      { checkboxState: "[d]", statuses: ["complete", "shipped"], toggleTargetStatus: "todo" },
-      { checkboxState: "[-]", statuses: ["canceled"], toggleTargetStatus: "todo" },
-    ],
-  });
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Inbox/Calendar Tasks.md": "---\ntitle: Calendar Tasks\n---\n\n",
+    },
+    {
+      taskCheckboxMappings: [
+        {
+          checkboxState: "[o]",
+          statuses: ["todo", "next"],
+          toggleTargetStatus: "complete",
+        },
+        {
+          checkboxState: "[/]",
+          statuses: ["working"],
+          toggleTargetStatus: "complete",
+        },
+        {
+          checkboxState: "[d]",
+          statuses: ["complete", "shipped"],
+          toggleTargetStatus: "todo",
+        },
+        {
+          checkboxState: "[-]",
+          statuses: ["canceled"],
+          toggleTargetStatus: "todo",
+        },
+      ],
+    },
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -739,18 +993,25 @@ test("NewEventService task creation uses the authoritative custom status mapping
 
   assert.equal(created?.path, "Inbox/Calendar Tasks.md");
   assert.match(fake.read(created.path), /- \[\/\] Mapped task \[scheduled::/u);
-  assert.doesNotMatch(fake.read(created.path), /\[(?:status|taskStatus|checkboxStatus)::/u);
+  assert.doesNotMatch(
+    fake.read(created.path),
+    /\[(?:status|taskStatus|checkboxStatus)::/u,
+  );
   assert.equal(fake.stats.processCount, 1);
 });
 
 test("NewEventService blocks task creation before file or note writes when mappings are unavailable", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   const original = "---\ntitle: Calendar Tasks\n---\n\nUnchanged\n";
-  const fake = createFakeCalendarApp(TFile, {
-    "Inbox/Calendar Tasks.md": original,
-  }, {
-    disableTaskCheckboxes: true,
-  });
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Inbox/Calendar Tasks.md": original,
+    },
+    {
+      disableTaskCheckboxes: true,
+    },
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -813,19 +1074,23 @@ test("NewEventService rejects stale or malformed captured checkbox states before
 test("NewEventService revalidates a captured mapping inside the atomic task-line write", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   const original = "---\ntitle: Calendar Tasks\n---\n\nUnchanged\n";
-  const fake = createFakeCalendarApp(TFile, {
-    "Inbox/Calendar Tasks.md": original,
-  }, {
-    beforeVaultProcess: (app) => {
-      app.workspace.trigger("tps:gcm-api-changed", {
-        source: "tps-global-context-menu",
-        sourcePluginId: "tps-global-context-menu",
-        timestamp: Date.now(),
-        available: false,
-        taskCheckboxesVersion: null,
-      });
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Inbox/Calendar Tasks.md": original,
     },
-  });
+    {
+      beforeVaultProcess: (app) => {
+        app.workspace.trigger("tps:gcm-api-changed", {
+          source: "tps-global-context-menu",
+          sourcePluginId: "tps-global-context-menu",
+          timestamp: Date.now(),
+          available: false,
+          taskCheckboxesVersion: null,
+        });
+      },
+    },
+  );
   const service = new NewEventService({ app: fake.app });
 
   const result = await service.createTaskInDailyNote(
@@ -844,10 +1109,14 @@ test("NewEventService revalidates a captured mapping inside the atomic task-line
 
 test("NewEventService keeps checkbox workflow status out of relational inline and frontmatter fields", async () => {
   const { NewEventService, TFile } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {}, {
-    statusPropertyKey: "taskStatus",
-    relationalStatusPropertyKey: "status",
-  });
+  const fake = createFakeCalendarApp(
+    TFile,
+    {},
+    {
+      statusPropertyKey: "taskStatus",
+      relationalStatusPropertyKey: "status",
+    },
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -869,17 +1138,27 @@ test("NewEventService keeps checkbox workflow status out of relational inline an
     "[/]",
   );
 
-  assert.match(content, /^---[\s\S]*\ntaskStatus: working\n[\s\S]*- \[\/\] Owned status/mu);
+  assert.match(
+    content,
+    /^---[\s\S]*\ntaskStatus: working\n[\s\S]*- \[\/\] Owned status/mu,
+  );
   assert.doesNotMatch(content, /^status:/mu);
-  assert.doesNotMatch(content, /\[(?:status|taskStatus|task\.status|task\.checkboxStatus|checkboxStatus)::/u);
+  assert.doesNotMatch(
+    content,
+    /\[(?:status|taskStatus|task\.status|task\.checkboxStatus|checkboxStatus)::/u,
+  );
 });
 
 test("NewEventService applies task-note status ownership on the actual Base-default creation route", async () => {
   const { NewEventService, TFile } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {}, {
-    statusPropertyKey: "taskStatus",
-    relationalStatusPropertyKey: "relationshipStatus",
-  });
+  const fake = createFakeCalendarApp(
+    TFile,
+    {},
+    {
+      statusPropertyKey: "taskStatus",
+      relationalStatusPropertyKey: "relationshipStatus",
+    },
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -915,29 +1194,43 @@ test("NewEventService applies task-note status ownership on the actual Base-defa
   const content = fake.read(created.path);
   const frontmatter = content.split("---", 3)[1];
   assert.match(frontmatter, /^taskStatus: working$/mu);
-  assert.match(frontmatter, /^relationshipStatus: ['"]?\[\[Statuses\/Planned\]\]['"]?$/mu);
+  assert.match(
+    frontmatter,
+    /^relationshipStatus: ['"]?\[\[Statuses\/Planned\]\]['"]?$/mu,
+  );
   assert.match(frontmatter, /^client: Acme$/mu);
   assert.doesNotMatch(frontmatter, /^status:/mu);
-  assert.doesNotMatch(frontmatter, /^(?:task\.status|task\.checkboxStatus|checkboxStatus):/mu);
+  assert.doesNotMatch(
+    frontmatter,
+    /^(?:task\.status|task\.checkboxStatus|checkboxStatus):/mu,
+  );
   assert.match(content, /- \[\/\] Owned Base task note /u);
-  assert.doesNotMatch(content, /\[(?:status|taskStatus|task\.status|task\.checkboxStatus|checkboxStatus)::/u);
+  assert.doesNotMatch(
+    content,
+    /\[(?:status|taskStatus|task\.status|task\.checkboxStatus|checkboxStatus)::/u,
+  );
 });
 
 test("NewEventService delegates missing daily-note task targets to the GCM daily-note API", async () => {
-  const { NewEventService, TFile, installGcmApiRegistry } = await importNewEventService();
+  const { NewEventService, TFile, installGcmApiRegistry } =
+    await importNewEventService();
   const ensuredDates = [];
-  const fake = createFakeCalendarApp(TFile, {}, {
-    installGcmApiRegistry,
-    gcmEnsureForIsoDate: async (isoDate, app) => {
-      ensuredDates.push(isoDate);
-      await app.vault.createFolder("Inbox");
-      await app.vault.createFolder("Inbox/Daily");
-      return app.vault.create(
-        `Inbox/Daily/${isoDate}.md`,
-        `---\ntitle: Readable ${isoDate}\nkind: dailynote\n---\n\nTemplate body\n`,
-      );
+  const fake = createFakeCalendarApp(
+    TFile,
+    {},
+    {
+      installGcmApiRegistry,
+      gcmEnsureForIsoDate: async (isoDate, app) => {
+        ensuredDates.push(isoDate);
+        await app.vault.createFolder("Inbox");
+        await app.vault.createFolder("Inbox/Daily");
+        return app.vault.create(
+          `Inbox/Daily/${isoDate}.md`,
+          `---\ntitle: Readable ${isoDate}\nkind: dailynote\n---\n\nTemplate body\n`,
+        );
+      },
     },
-  });
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -958,25 +1251,35 @@ test("NewEventService delegates missing daily-note task targets to the GCM daily
   const content = fake.read(created.path);
   assert.match(content, /title: Readable 2027-01-09/);
   assert.match(content, /Template body/);
-  assert.match(content, /- \[ \] Canonical daily task \[scheduled:: 2027-01-09 08:00:00] \[timeEstimate:: 30]/);
+  assert.match(
+    content,
+    /- \[ \] Canonical daily task \[scheduled:: 2027-01-09 08:00:00] \[timeEstimate:: 30]/,
+  );
   assert.doesNotMatch(content, /context\/scheduled/);
 });
 
 test("NewEventService asks GCM before reusing a conflicting local Daily Note target", async () => {
-  const { NewEventService, TFile, installGcmApiRegistry } = await importNewEventService();
-  const localContent = "---\ntitle: Wrong local target\n---\n\nMust remain untouched\n";
+  const { NewEventService, TFile, installGcmApiRegistry } =
+    await importNewEventService();
+  const localContent =
+    "---\ntitle: Wrong local target\n---\n\nMust remain untouched\n";
   const canonicalPath = "Inbox/Daily/2027-01-14.md";
   const ensuredDates = [];
-  const fake = createFakeCalendarApp(TFile, {
-    "2027-01-14.md": localContent,
-    [canonicalPath]: "---\ntitle: Canonical readable title\nkind: dailynote\n---\n\nCanonical body\n",
-  }, {
-    installGcmApiRegistry,
-    gcmEnsureForIsoDate: async (isoDate, app) => {
-      ensuredDates.push(isoDate);
-      return app.vault.getAbstractFileByPath(canonicalPath);
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "2027-01-14.md": localContent,
+      [canonicalPath]:
+        "---\ntitle: Canonical readable title\nkind: dailynote\n---\n\nCanonical body\n",
     },
-  });
+    {
+      installGcmApiRegistry,
+      gcmEnsureForIsoDate: async (isoDate, app) => {
+        ensuredDates.push(isoDate);
+        return app.vault.getAbstractFileByPath(canonicalPath);
+      },
+    },
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1001,30 +1304,44 @@ test("NewEventService asks GCM before reusing a conflicting local Daily Note tar
 test("NewEventService standalone daily-note fallback copies the configured template and runs Templater", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   let templaterRuns = 0;
-  const fake = createFakeCalendarApp(TFile, {
-    "Templates/Daily.md": [
-      "---",
-      "title: Readable {{date}}",
-      "kind: dailynote",
-      "---",
-      "",
-      "Template section",
-      "<% render-daily-body %>",
-      "",
-    ].join("\n"),
-  }, {
-    dailyNotes: {
-      folder: "Inbox/Daily",
-      format: "YYYY-MM-DD",
-      template: "Templates/Daily",
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Templates/Daily.md": [
+        "---",
+        "title: Readable {{date}}",
+        "kind: dailynote",
+        "tags:",
+        "  - template",
+        "  - daily-template",
+        "---",
+        "",
+        "Template section",
+        "<% render-daily-body %>",
+        "#template",
+        "",
+      ].join("\n"),
     },
-    templaterLocalAutoTrigger: false,
-    templaterLegacyAutoTrigger: true,
-    templaterTransform: (content) => {
-      templaterRuns += 1;
-      return content.replace("<% render-daily-body %>", "Templater section");
+    {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY-MM-DD",
+        template: "Templates/Daily",
+      },
+      templaterLocalAutoTrigger: false,
+      templaterLegacyAutoTrigger: true,
+      templaterTransform: (content) => {
+        templaterRuns += 1;
+        return content
+          .replace("  - daily-template", "  - template\n  - daily-template")
+          .replace("<% render-daily-body %>", "Templater section");
+      },
+      gcmTemplates: {
+        prepareInstanceSource: (source) =>
+          source.replace(/^  - template\n/m, ""),
+      },
     },
-  });
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1046,8 +1363,14 @@ test("NewEventService standalone daily-note fallback copies the configured templ
   assert.match(content, /title: Readable 2027-01-10/);
   assert.match(content, /Template section/);
   assert.match(content, /Templater section/);
+  assert.match(content, /  - daily-template/);
+  assert.match(content, /#template/);
+  assert.doesNotMatch(content, /^  - template$/m);
   assert.doesNotMatch(content, /<% render-daily-body %>/);
-  assert.match(content, /- \[ \] Standalone daily task \[scheduled:: 2027-01-10 13:15:00] \[timeEstimate:: 45]/);
+  assert.match(
+    content,
+    /- \[ \] Standalone daily task \[scheduled:: 2027-01-10 13:15:00] \[timeEstimate:: 45]/,
+  );
   assert.doesNotMatch(content, /context\/scheduled/);
 });
 
@@ -1055,31 +1378,38 @@ test("Calendar waits for the device-local delayed Templater auto-create snapshot
   const { NewEventService, TFile } = await importNewEventService();
   let fake;
   let transformFinished = false;
-  fake = createFakeCalendarApp(TFile, {
-    "Templates/Daily.md": [
-      "---",
-      "title: Delayed Daily Note",
-      "kind: dailynote",
-      "---",
-      "",
-      "<% render-delayed-body %>",
-      "",
-    ].join("\n"),
-  }, {
-    dailyNotes: {
-      folder: "Inbox/Daily",
-      format: "YYYY-MM-DD",
-      template: "Templates/Daily",
+  fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Templates/Daily.md": [
+        "---",
+        "title: Delayed Daily Note",
+        "kind: dailynote",
+        "---",
+        "",
+        "<% render-delayed-body %>",
+        "",
+      ].join("\n"),
     },
-    templaterLocalAutoTrigger: true,
-    templaterLegacyAutoTrigger: false,
-    templaterTransform: async (content, file) => {
-      assert.doesNotMatch(fake.read(file.path), /Delayed calendar task/);
-      await new Promise((resolve) => setTimeout(resolve, 15));
-      transformFinished = true;
-      return content.replace("<% render-delayed-body %>", "Delayed body resolved");
+    {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY-MM-DD",
+        template: "Templates/Daily",
+      },
+      templaterLocalAutoTrigger: true,
+      templaterLegacyAutoTrigger: false,
+      templaterTransform: async (content, file) => {
+        assert.doesNotMatch(fake.read(file.path), /Delayed calendar task/);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        transformFinished = true;
+        return content.replace(
+          "<% render-delayed-body %>",
+          "Delayed body resolved",
+        );
+      },
     },
-  });
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1105,30 +1435,34 @@ test("Calendar waits for the device-local delayed Templater auto-create snapshot
 
 test("Calendar also waits for a delayed Templater auto-create snapshot when the template has no commands", async () => {
   const { NewEventService, TFile } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {
-    "Templates/Daily.md": [
-      "---",
-      "title: Plain Daily Note",
-      "kind: dailynote",
-      "---",
-      "",
-      "Plain template body",
-      "",
-    ].join("\n"),
-  }, {
-    dailyNotes: {
-      folder: "Inbox/Daily",
-      format: "YYYY-MM-DD",
-      template: "Templates/Daily",
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Templates/Daily.md": [
+        "---",
+        "title: Plain Daily Note",
+        "kind: dailynote",
+        "---",
+        "",
+        "Plain template body",
+        "",
+      ].join("\n"),
     },
-    templaterLocalAutoTrigger: true,
-    templaterLegacyAutoTrigger: false,
-    templaterEventName: "templater:new-note-from-template",
-    templaterTransform: async (snapshot) => {
-      await new Promise((resolve) => setTimeout(resolve, 15));
-      return snapshot;
+    {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY-MM-DD",
+        template: "Templates/Daily",
+      },
+      templaterLocalAutoTrigger: true,
+      templaterLegacyAutoTrigger: false,
+      templaterEventName: "templater:new-note-from-template",
+      templaterTransform: async (snapshot) => {
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return snapshot;
+      },
     },
-  });
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1151,19 +1485,23 @@ test("Calendar also waits for a delayed Templater auto-create snapshot when the 
 
 test("Calendar settles Templater before writing into a new template-less Daily Note", async () => {
   const { NewEventService, TFile } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {}, {
-    dailyNotes: {
-      folder: "Inbox/Daily",
-      format: "YYYY-MM-DD",
-      template: "",
+  const fake = createFakeCalendarApp(
+    TFile,
+    {},
+    {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY-MM-DD",
+        template: "",
+      },
+      templaterLocalAutoTrigger: true,
+      templaterLegacyAutoTrigger: false,
+      templaterTransform: async (snapshot) => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return snapshot;
+      },
     },
-    templaterLocalAutoTrigger: true,
-    templaterLegacyAutoTrigger: false,
-    templaterTransform: async (snapshot) => {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      return snapshot;
-    },
-  });
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1186,28 +1524,38 @@ test("Calendar settles Templater before writing into a new template-less Daily N
 
 test("Calendar waits when an exact Daily Note was freshly created by another caller", async () => {
   const { NewEventService, TFile } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {}, {
-    dailyNotes: {
-      folder: "Inbox/Daily",
-      format: "YYYY-MM-DD",
-      template: "Templates/Daily",
+  const fake = createFakeCalendarApp(
+    TFile,
+    {},
+    {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY-MM-DD",
+        template: "Templates/Daily",
+      },
+      templaterLocalAutoTrigger: true,
+      templaterLegacyAutoTrigger: false,
+      templaterTransform: async (snapshot) => {
+        await new Promise((resolve) => setTimeout(resolve, 90));
+        return snapshot.replace(
+          "<% external-daily-body %>",
+          "External Daily body resolved",
+        );
+      },
     },
-    templaterLocalAutoTrigger: true,
-    templaterLegacyAutoTrigger: false,
-    templaterTransform: async (snapshot) => {
-      await new Promise((resolve) => setTimeout(resolve, 90));
-      return snapshot.replace("<% external-daily-body %>", "External Daily body resolved");
-    },
-  });
-  fake.seedExternalCreation("Inbox/Daily/2027-01-21.md", [
-    "---",
-    "title: Fresh external Daily Note",
-    "kind: dailynote",
-    "---",
-    "",
-    "<% external-daily-body %>",
-    "",
-  ].join("\n"));
+  );
+  fake.seedExternalCreation(
+    "Inbox/Daily/2027-01-21.md",
+    [
+      "---",
+      "title: Fresh external Daily Note",
+      "kind: dailynote",
+      "---",
+      "",
+      "<% external-daily-body %>",
+      "",
+    ].join("\n"),
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1232,26 +1580,30 @@ test("Calendar waits when an exact Daily Note was freshly created by another cal
 test("Calendar fails closed before task append when Templater leaves commands unresolved", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   const targetPath = "Inbox/Daily/2027-01-16.md";
-  const fake = createFakeCalendarApp(TFile, {
-    "Templates/Daily.md": [
-      "---",
-      "title: Unresolved Daily Note",
-      "kind: dailynote",
-      "---",
-      "",
-      "<% unresolved-command %>",
-      "",
-    ].join("\n"),
-  }, {
-    dailyNotes: {
-      folder: "Inbox/Daily",
-      format: "YYYY-MM-DD",
-      template: "Templates/Daily",
+  const fake = createFakeCalendarApp(
+    TFile,
+    {
+      "Templates/Daily.md": [
+        "---",
+        "title: Unresolved Daily Note",
+        "kind: dailynote",
+        "---",
+        "",
+        "<% unresolved-command %>",
+        "",
+      ].join("\n"),
     },
-    templaterLocalAutoTrigger: true,
-    templaterLegacyAutoTrigger: false,
-    templaterTransform: async (content) => content,
-  });
+    {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY-MM-DD",
+        template: "Templates/Daily",
+      },
+      templaterLocalAutoTrigger: true,
+      templaterLegacyAutoTrigger: false,
+      templaterTransform: async (content) => content,
+    },
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1262,21 +1614,26 @@ test("Calendar fails closed before task append when Templater leaves commands un
   });
 
   await assert.rejects(
-    () => service.createTaskInDailyNote(
-      "Must not append after unresolved Templater",
-      new Date("2027-01-16T09:00:00"),
-      new Date("2027-01-16T09:30:00"),
-    ),
+    () =>
+      service.createTaskInDailyNote(
+        "Must not append after unresolved Templater",
+        new Date("2027-01-16T09:00:00"),
+        new Date("2027-01-16T09:30:00"),
+      ),
     /Templater did not finish processing Daily Note commands/,
   );
 
   assert.equal(fake.stats.templaterRuns, 1);
   assert.match(fake.read(targetPath), /<% unresolved-command %>/);
-  assert.doesNotMatch(fake.read(targetPath), /Must not append after unresolved Templater/);
+  assert.doesNotMatch(
+    fake.read(targetPath),
+    /Must not append after unresolved Templater/,
+  );
 });
 
 test("Calendar Daily Note title fallback preserves readable titles case-insensitively", async () => {
-  const { ensureCalendarDailyNoteTitleFallback } = await importNewEventService();
+  const { ensureCalendarDailyNoteTitleFallback } =
+    await importNewEventService();
   const readable = { Title: "Tuesday planning" };
   assert.equal(
     ensureCalendarDailyNoteTitleFallback(readable, "title", "2027-01-10"),
@@ -1311,25 +1668,30 @@ test("Calendar standalone creation is single-flight and creates date-format subf
   globalThis.window = { moment: momentFactory, setTimeout };
   try {
     const { NewEventService, TFile } = await importNewEventService();
-    const fake = createFakeCalendarApp(TFile, {
-      "Templates/Daily.md": [
-        "---",
-        "title: Daily {{date}}",
-        "kind: dailynote",
-        "---",
-        "",
-        "<% render-daily-body %>",
-      ].join("\n"),
-    }, {
-      dailyNotes: {
-        folder: "Inbox/Daily",
-        format: "YYYY/MM/DD",
-        template: "Templates/Daily",
+    const fake = createFakeCalendarApp(
+      TFile,
+      {
+        "Templates/Daily.md": [
+          "---",
+          "title: Daily {{date}}",
+          "kind: dailynote",
+          "---",
+          "",
+          "<% render-daily-body %>",
+        ].join("\n"),
       },
-      templaterLocalSettingsUnavailable: true,
-      templaterLegacyAutoTrigger: true,
-      templaterTransform: (content) => content.replace("<% render-daily-body %>", "Templater body"),
-    });
+      {
+        dailyNotes: {
+          folder: "Inbox/Daily",
+          format: "YYYY/MM/DD",
+          template: "Templates/Daily",
+        },
+        templaterLocalSettingsUnavailable: true,
+        templaterLegacyAutoTrigger: true,
+        templaterTransform: (content) =>
+          content.replace("<% render-daily-body %>", "Templater body"),
+      },
+    );
     const service = new NewEventService({
       app: fake.app,
       startProperty: "note.scheduled",
@@ -1360,11 +1722,16 @@ test("Calendar standalone creation is single-flight and creates date-format subf
 });
 
 test("NewEventService fails closed when GCM is available but cannot create the daily note", async () => {
-  const { NewEventService, TFile, installGcmApiRegistry } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {}, {
-    installGcmApiRegistry,
-    gcmEnsureForIsoDate: async () => null,
-  });
+  const { NewEventService, TFile, installGcmApiRegistry } =
+    await importNewEventService();
+  const fake = createFakeCalendarApp(
+    TFile,
+    {},
+    {
+      installGcmApiRegistry,
+      gcmEnsureForIsoDate: async () => null,
+    },
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1375,11 +1742,12 @@ test("NewEventService fails closed when GCM is available but cannot create the d
   });
 
   await assert.rejects(
-    () => service.createTaskInDailyNote(
-      "Must not create a competing note",
-      new Date("2027-01-11T13:15:00"),
-      new Date("2027-01-11T14:00:00"),
-    ),
+    () =>
+      service.createTaskInDailyNote(
+        "Must not create a competing note",
+        new Date("2027-01-11T13:15:00"),
+        new Date("2027-01-11T14:00:00"),
+      ),
     /GCM could not create the Daily Note/,
   );
   assert.equal(fake.read("2027-01-11.md"), null);
@@ -1387,13 +1755,17 @@ test("NewEventService fails closed when GCM is available but cannot create the d
 
 test("NewEventService fails closed when its configured standalone template is unavailable", async () => {
   const { NewEventService, TFile } = await importNewEventService();
-  const fake = createFakeCalendarApp(TFile, {}, {
-    dailyNotes: {
-      folder: "Inbox/Daily",
-      format: "YYYY-MM-DD",
-      template: "Templates/Missing Daily",
+  const fake = createFakeCalendarApp(
+    TFile,
+    {},
+    {
+      dailyNotes: {
+        folder: "Inbox/Daily",
+        format: "YYYY-MM-DD",
+        template: "Templates/Missing Daily",
+      },
     },
-  });
+  );
   const service = new NewEventService({
     app: fake.app,
     startProperty: "note.scheduled",
@@ -1404,11 +1776,12 @@ test("NewEventService fails closed when its configured standalone template is un
   });
 
   await assert.rejects(
-    () => service.createTaskInDailyNote(
-      "Must not bypass a configured template",
-      new Date("2027-01-12T13:15:00"),
-      new Date("2027-01-12T14:00:00"),
-    ),
+    () =>
+      service.createTaskInDailyNote(
+        "Must not bypass a configured template",
+        new Date("2027-01-12T13:15:00"),
+        new Date("2027-01-12T14:00:00"),
+      ),
     /Configured Daily Notes template was not found/,
   );
   assert.equal(fake.read("Inbox/Daily/2027-01-12.md"), null);
@@ -1447,10 +1820,9 @@ test("NewEventService keeps a manually selected task note association in hidden 
   assert.doesNotMatch(content, /\[\[Projects\/Life OS/);
   const hidden = content.match(/\[tpsInlineProps:: ([^\]]+)]/);
   assert.ok(hidden);
-  assert.deepEqual(
-    JSON.parse(decodeURIComponent(hidden[1])),
-    { associatedNotePath: "Projects/Life OS.md" },
-  );
+  assert.deepEqual(JSON.parse(decodeURIComponent(hidden[1])), {
+    associatedNotePath: "Projects/Life OS.md",
+  });
 });
 
 test("dedicated task notes retain task defaults and an explicit linked-note association", async () => {
@@ -1482,16 +1854,21 @@ test("dedicated task notes retain task defaults and an explicit linked-note asso
 
   assert.equal(created?.path, "Inbox/Roadmap Review 2027-01-08.md");
   const content = fake.read("Inbox/Roadmap Review 2027-01-08.md");
-  assert.match(content, /- \[ \] Roadmap Review \[scheduled:: 2027-01-08 11:00:00] \[timeEstimate:: 45] #planning/);
+  assert.match(
+    content,
+    /- \[ \] Roadmap Review \[scheduled:: 2027-01-08 11:00:00] \[timeEstimate:: 45] #planning/,
+  );
   assert.doesNotMatch(content, /\[(?:status|taskStatus|checkboxStatus)::/u);
   const hidden = content.match(/\[tpsInlineProps:: ([^\]]+)]/);
   assert.ok(hidden);
-  assert.deepEqual(
-    JSON.parse(decodeURIComponent(hidden[1])),
-    { associatedNotePath: "Projects/Roadmap.md" },
-  );
+  assert.deepEqual(JSON.parse(decodeURIComponent(hidden[1])), {
+    associatedNotePath: "Projects/Roadmap.md",
+  });
   assert.match(content.split("---", 3)[1], /^status: next$/mu);
-  assert.doesNotMatch(content.split("---", 3)[1], /associatedNotePath|planning/);
+  assert.doesNotMatch(
+    content.split("---", 3)[1],
+    /associatedNotePath|planning/,
+  );
 });
 
 test("external-event task creation atomically skips duplicate external identities", async () => {

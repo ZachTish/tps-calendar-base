@@ -1,34 +1,41 @@
-import assert from 'node:assert/strict';
-import { Buffer } from 'node:buffer';
-import { readFileSync } from 'node:fs';
-import test from 'node:test';
-import { fileURLToPath } from 'node:url';
-import * as esbuild from 'esbuild';
+import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import * as esbuild from "esbuild";
 
 async function loadRegistry() {
   const build = await esbuild.build({
     stdin: {
       contents: `export * from './src/tps-gcm-api.ts'; export { TFile } from 'obsidian';`,
-      resolveDir: fileURLToPath(new URL('..', import.meta.url)),
-      sourcefile: 'gcm-capability-registry-test-entry.ts',
-      loader: 'ts',
+      resolveDir: fileURLToPath(new URL("..", import.meta.url)),
+      sourcefile: "gcm-capability-registry-test-entry.ts",
+      loader: "ts",
     },
     bundle: true,
-    format: 'esm',
-    platform: 'node',
+    format: "esm",
+    platform: "node",
     write: false,
-    plugins: [{
-      name: 'obsidian-stub',
-      setup(builder) {
-        builder.onResolve({ filter: /^obsidian$/u }, () => ({ path: 'obsidian', namespace: 'stub' }));
-        builder.onLoad({ filter: /^obsidian$/u, namespace: 'stub' }, () => ({
-          loader: 'js',
-          contents: 'export class TFile {}',
-        }));
+    plugins: [
+      {
+        name: "obsidian-stub",
+        setup(builder) {
+          builder.onResolve({ filter: /^obsidian$/u }, () => ({
+            path: "obsidian",
+            namespace: "stub",
+          }));
+          builder.onLoad({ filter: /^obsidian$/u, namespace: "stub" }, () => ({
+            loader: "js",
+            contents: "export class TFile {}",
+          }));
+        },
       },
-    }],
+    ],
   });
-  return import(`data:text/javascript;base64,${Buffer.from(build.outputFiles[0].text).toString('base64')}`);
+  return import(
+    `data:text/javascript;base64,${Buffer.from(build.outputFiles[0].text).toString("base64")}`
+  );
 }
 
 function createWorkspace() {
@@ -47,7 +54,8 @@ function createWorkspace() {
     },
     trigger(name, payload) {
       emissions.push({ name, payload });
-      for (const callback of [...(listeners.get(name) ?? [])]) callback(payload);
+      for (const callback of [...(listeners.get(name) ?? [])])
+        callback(payload);
     },
   };
 }
@@ -71,8 +79,8 @@ function createOwner(workspace) {
 
 function availablePayload(api) {
   return {
-    source: 'tps-global-context-menu',
-    sourcePluginId: 'tps-global-context-menu',
+    source: "tps-global-context-menu",
+    sourcePluginId: "tps-global-context-menu",
     timestamp: Date.now(),
     available: true,
     api,
@@ -80,14 +88,32 @@ function availablePayload(api) {
   };
 }
 
-test('GCM capability discovery uses only the exact public workspace handshake', async () => {
-  const source = readFileSync(new URL('../src/tps-gcm-api.ts', import.meta.url), 'utf8');
-  const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
-  const view = readFileSync(new URL('../src/calendar-view.tsx', import.meta.url), 'utf8');
-  const newEvent = readFileSync(new URL('../src/services/new-event-service.ts', import.meta.url), 'utf8');
-  const typeFolders = readFileSync(new URL('../src/services/type-folder-service.ts', import.meta.url), 'utf8');
-  const parentLinks = readFileSync(new URL('../src/services/parent-child-link.ts', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /\.plugins\b|getPlugin\(|TPS-Global-Context-Menu \(Dev\)/u);
+test("GCM capability discovery uses only the exact public workspace handshake", async () => {
+  const source = readFileSync(
+    new URL("../src/tps-gcm-api.ts", import.meta.url),
+    "utf8",
+  );
+  const main = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+  const view = readFileSync(
+    new URL("../src/calendar-view.tsx", import.meta.url),
+    "utf8",
+  );
+  const newEvent = readFileSync(
+    new URL("../src/services/new-event-service.ts", import.meta.url),
+    "utf8",
+  );
+  const typeFolders = readFileSync(
+    new URL("../src/services/type-folder-service.ts", import.meta.url),
+    "utf8",
+  );
+  const parentLinks = readFileSync(
+    new URL("../src/services/parent-child-link.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    source,
+    /\.plugins\b|getPlugin\(|TPS-Global-Context-Menu \(Dev\)/u,
+  );
   for (const consumer of [main, view, newEvent, typeFolders, parentLinks]) {
     assert.doesNotMatch(
       consumer,
@@ -97,62 +123,75 @@ test('GCM capability discovery uses only the exact public workspace handshake', 
   assert.match(main, /installGcmApiRegistry\(this, this\.app\)/u);
   assert.match(main, /getGcmStatusOptions\(this\.app\)/u);
   assert.match(view, /return getGcmApi\(this\.app\)/u);
-  assert.match(newEvent, /isGcmInlinePropertyAllowed\(this\.config\.app, normalized\)/u);
-  assert.match(typeFolders, /const TYPE_TEMPLATE_ROOT = ["']System\/Templates\/Types["']/u);
+  assert.match(
+    newEvent,
+    /isGcmInlinePropertyAllowed\(this\.config\.app, normalized\)/u,
+  );
+  assert.match(
+    typeFolders,
+    /const TYPE_TEMPLATE_ROOT = ["']System\/Templates\/Types["']/u,
+  );
   assert.match(parentLinks, /getGcmParentLinkPolicy\(app\)/u);
 
   const { getGcmApi, installGcmApiRegistry } = await loadRegistry();
   const workspace = createWorkspace();
   const app = { workspace };
   const owner = createOwner(workspace);
-  const api = { status: { getStatusOptions: () => ['todo'] } };
+  const api = { status: { getStatusOptions: () => ["todo"] } };
 
-  workspace.on('tps:gcm-api-request', (payload) => {
-    assert.equal(payload.sourcePluginId, 'tps-calendar-base');
-    assert.equal(payload.requester, 'tps-calendar-base');
-    workspace.trigger('tps:gcm-api-changed', availablePayload(api));
+  workspace.on("tps:gcm-api-request", (payload) => {
+    assert.equal(payload.sourcePluginId, "tps-calendar-base");
+    assert.equal(payload.requester, "tps-calendar-base");
+    workspace.trigger("tps:gcm-api-changed", availablePayload(api));
   });
   installGcmApiRegistry(owner, app);
 
-  assert.equal(getGcmApi(app), api, 'listener is registered before the synchronous request response');
-  assert.equal(workspace.emissions[0].name, 'tps:gcm-api-request');
+  assert.equal(
+    getGcmApi(app),
+    api,
+    "listener is registered before the synchronous request response",
+  );
+  assert.equal(workspace.emissions[0].name, "tps:gcm-api-request");
   owner.unload();
   assert.equal(getGcmApi(app), null);
 });
 
-test('registry supports late load, replacement, unload, and rejects spoofed or malformed payloads', async () => {
-  const { getGcmApi, installGcmApiRegistry, onGcmApiChanged } = await loadRegistry();
+test("registry supports late load, replacement, unload, and rejects spoofed or malformed payloads", async () => {
+  const { getGcmApi, installGcmApiRegistry, onGcmApiChanged } =
+    await loadRegistry();
   const workspace = createWorkspace();
   const app = { workspace };
   const owner = createOwner(workspace);
   const changes = [];
 
   installGcmApiRegistry(owner, app);
-  onGcmApiChanged(owner, app, (next, previous) => changes.push([next, previous]));
+  onGcmApiChanged(owner, app, (next, previous) =>
+    changes.push([next, previous]),
+  );
   assert.equal(getGcmApi(app), null);
 
-  const first = { id: 'first' };
-  workspace.trigger('tps:gcm-api-changed', {
+  const first = { id: "first" };
+  workspace.trigger("tps:gcm-api-changed", {
     ...availablePayload(first),
-    sourcePluginId: 'TPS-Global-Context-Menu (Dev)',
+    sourcePluginId: "TPS-Global-Context-Menu (Dev)",
   });
-  workspace.trigger('tps:gcm-api-changed', {
+  workspace.trigger("tps:gcm-api-changed", {
     ...availablePayload(first),
-    source: 'another-plugin',
+    source: "another-plugin",
   });
-  workspace.trigger('tps:gcm-api-changed', {
+  workspace.trigger("tps:gcm-api-changed", {
     ...availablePayload(first),
     api: null,
   });
   assert.equal(getGcmApi(app), null);
   assert.deepEqual(changes, []);
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload(first));
-  const second = { id: 'second' };
-  workspace.trigger('tps:gcm-api-changed', availablePayload(second));
-  workspace.trigger('tps:gcm-api-changed', {
-    source: 'tps-global-context-menu',
-    sourcePluginId: 'tps-global-context-menu',
+  workspace.trigger("tps:gcm-api-changed", availablePayload(first));
+  const second = { id: "second" };
+  workspace.trigger("tps:gcm-api-changed", availablePayload(second));
+  workspace.trigger("tps:gcm-api-changed", {
+    source: "tps-global-context-menu",
+    sourcePluginId: "tps-global-context-menu",
     timestamp: Date.now(),
     available: false,
     api: first,
@@ -166,39 +205,124 @@ test('registry supports late load, replacement, unload, and rejects spoofed or m
   owner.unload();
 });
 
-test('calendar consumes shared GCM template identity and fails closed on malformed results', async () => {
-  const { TFile, installGcmApiRegistry, isGcmTemplateFile, listGcmTemplateFiles } = await loadRegistry();
+test("calendar consumes shared GCM template identity and fails closed on malformed results", async () => {
+  const {
+    TFile,
+    installGcmApiRegistry,
+    isGcmTemplateFile,
+    listGcmTemplateFiles,
+  } = await loadRegistry();
   const workspace = createWorkspace();
   const app = { workspace };
   const owner = createOwner(workspace);
   installGcmApiRegistry(owner, app);
 
   const template = new TFile();
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    templates: {
-      version: 1,
-      getMode: () => 'property',
-      matches: file => file === template,
-      list: () => [template, {}, null],
-    },
-  }));
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      templates: {
+        version: 1,
+        getMode: () => "property",
+        matches: (file) => file === template,
+        list: () => [template, {}, null],
+      },
+    }),
+  );
   assert.equal(isGcmTemplateFile(app, template), true);
   assert.equal(isGcmTemplateFile(app, new TFile()), false);
   assert.deepEqual(listGcmTemplateFiles(app), [template]);
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({ templates: { version: 1 } }));
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({ templates: { version: 1 } }),
+  );
   assert.equal(isGcmTemplateFile(app, template), null);
   assert.equal(listGcmTemplateFiles(app), null);
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    templates: { version: 2, matches: () => true, list: () => [template] },
-  }));
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      templates: { version: 2, matches: () => true, list: () => [template] },
+    }),
+  );
   assert.equal(isGcmTemplateFile(app, template), null);
   assert.equal(listGcmTemplateFiles(app), null);
   owner.unload();
 });
 
-test('native Calendar mutations require the complete enabled GCM nativeRecords v6 boundary', async () => {
+test("calendar consumes additive template mutation and instance-preparation capabilities", async () => {
+  const {
+    TFile,
+    canGcmAutomaticallyMutateFile,
+    canGcmAutomaticallyMutateSource,
+    installGcmApiRegistry,
+    prepareGcmTemplateInstanceSource,
+    sanitizeGcmTemplateInstanceFile,
+  } = await loadRegistry();
+  const workspace = createWorkspace();
+  let currentSource = "---\ntags: [template, keep]\n---\n#template\n";
+  const app = {
+    workspace,
+    vault: {
+      async process(_file, processor) {
+        currentSource = processor(currentSource);
+      },
+    },
+  };
+  const owner = createOwner(workspace);
+  installGcmApiRegistry(owner, app);
+  const template = new TFile();
+  const ordinary = new TFile();
+
+  assert.equal(await canGcmAutomaticallyMutateFile(app, ordinary), null);
+  assert.equal(canGcmAutomaticallyMutateSource(app, currentSource), null);
+  assert.equal(prepareGcmTemplateInstanceSource(app, currentSource), undefined);
+  assert.equal(await sanitizeGcmTemplateInstanceFile(app, ordinary), true);
+
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      templates: {
+        version: 1,
+        canAutomaticallyMutate: async (file) => file === ordinary,
+        canAutomaticallyMutateSource: (source) =>
+          !source.includes("tags: [template"),
+        prepareInstanceSource: (source) => source.replace("template, ", ""),
+      },
+    }),
+  );
+  assert.equal(await canGcmAutomaticallyMutateFile(app, template), false);
+  assert.equal(await canGcmAutomaticallyMutateFile(app, ordinary), true);
+  assert.equal(canGcmAutomaticallyMutateSource(app, currentSource), false);
+  assert.equal(
+    prepareGcmTemplateInstanceSource(app, currentSource),
+    "---\ntags: [keep]\n---\n#template\n",
+  );
+  assert.equal(await sanitizeGcmTemplateInstanceFile(app, ordinary), true);
+  assert.equal(currentSource, "---\ntags: [keep]\n---\n#template\n");
+
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      templates: {
+        version: 1,
+        canAutomaticallyMutate: () => Promise.reject(new Error("unavailable")),
+        canAutomaticallyMutateSource: () => {
+          throw new Error("unavailable");
+        },
+        prepareInstanceSource: () => null,
+      },
+    }),
+  );
+  assert.equal(await canGcmAutomaticallyMutateFile(app, ordinary), false);
+  assert.equal(canGcmAutomaticallyMutateSource(app, currentSource), false);
+  assert.equal(prepareGcmTemplateInstanceSource(app, currentSource), null);
+  assert.equal(await sanitizeGcmTemplateInstanceFile(app, ordinary), false);
+  owner.unload();
+});
+
+test("native Calendar mutations require the complete enabled GCM nativeRecords v6 boundary", async () => {
   const {
     GCM_NATIVE_RECORDS_API_VERSION,
     getGcmNativeRecordsApi,
@@ -218,101 +342,136 @@ test('native Calendar mutations require the complete enabled GCM nativeRecords v
     update: async () => null,
   };
   assert.equal(GCM_NATIVE_RECORDS_API_VERSION, 6);
-  workspace.trigger('tps:gcm-api-changed', availablePayload({ nativeRecords: compatible }));
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({ nativeRecords: compatible }),
+  );
   assert.equal(getGcmNativeRecordsApi(app), compatible);
 
   for (const incompatible of [
     { ...compatible, version: 5 },
     { ...compatible, isEnabled: () => false },
-    { ...compatible, isEnabled: () => { throw new Error('not ready'); } },
+    {
+      ...compatible,
+      isEnabled: () => {
+        throw new Error("not ready");
+      },
+    },
     { ...compatible, inspect: undefined },
     { ...compatible, resolve: undefined },
     { ...compatible, create: undefined },
     { ...compatible, update: undefined },
   ]) {
-    workspace.trigger('tps:gcm-api-changed', availablePayload({ nativeRecords: incompatible }));
+    workspace.trigger(
+      "tps:gcm-api-changed",
+      availablePayload({ nativeRecords: incompatible }),
+    );
     assert.equal(getGcmNativeRecordsApi(app), null);
   }
 
   owner.unload();
 });
 
-test('editable note previews require the exact UI v1 capability and normalize every provider outcome', async () => {
-  const { installGcmApiRegistry, openGcmEditableNotePreview } = await loadRegistry();
+test("editable note previews require the exact UI v1 capability and normalize every provider outcome", async () => {
+  const { installGcmApiRegistry, openGcmEditableNotePreview } =
+    await loadRegistry();
   const workspace = createWorkspace();
   const app = { workspace };
   const owner = createOwner(workspace);
   installGcmApiRegistry(owner, app);
 
-  const anchorEl = { id: 'calendar-create-anchor' };
+  const anchorEl = { id: "calendar-create-anchor" };
   const request = {
-    filePath: 'Calendar/Created event.md',
+    filePath: "Calendar/Created event.md",
     anchorEl,
-    sourcePluginId: 'tps-calendar-base',
+    sourcePluginId: "tps-calendar-base",
     focusEditor: true,
   };
-  assert.equal(await openGcmEditableNotePreview(app, request), 'unavailable');
+  assert.equal(await openGcmEditableNotePreview(app, request), "unavailable");
 
   let incompatibleCalls = 0;
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    ui: {
-      version: 2,
-      openEditableNotePreview: () => {
-        incompatibleCalls += 1;
-        return true;
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      ui: {
+        version: 2,
+        openEditableNotePreview: () => {
+          incompatibleCalls += 1;
+          return true;
+        },
       },
-    },
-  }));
-  assert.equal(await openGcmEditableNotePreview(app, request), 'unavailable');
-  assert.equal(incompatibleCalls, 0, 'an unknown UI version must not be invoked');
+    }),
+  );
+  assert.equal(await openGcmEditableNotePreview(app, request), "unavailable");
+  assert.equal(
+    incompatibleCalls,
+    0,
+    "an unknown UI version must not be invoked",
+  );
 
   let receivedRequest = null;
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    ui: {
-      version: 1,
-      openEditableNotePreview: async (candidate) => {
-        receivedRequest = candidate;
-        return true;
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      ui: {
+        version: 1,
+        openEditableNotePreview: async (candidate) => {
+          receivedRequest = candidate;
+          return true;
+        },
       },
-    },
-  }));
-  assert.equal(await openGcmEditableNotePreview(app, request), 'opened');
+    }),
+  );
+  assert.equal(await openGcmEditableNotePreview(app, request), "opened");
   assert.deepEqual(receivedRequest, request);
   assert.equal(receivedRequest.anchorEl, anchorEl);
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    ui: { version: 1, openEditableNotePreview: () => false },
-  }));
-  assert.equal(await openGcmEditableNotePreview(app, request), 'declined');
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      ui: { version: 1, openEditableNotePreview: () => false },
+    }),
+  );
+  assert.equal(await openGcmEditableNotePreview(app, request), "declined");
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    ui: { version: 1, openEditableNotePreview: () => undefined },
-  }));
-  assert.equal(await openGcmEditableNotePreview(app, request), 'declined');
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      ui: { version: 1, openEditableNotePreview: () => undefined },
+    }),
+  );
+  assert.equal(await openGcmEditableNotePreview(app, request), "declined");
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    ui: {
-      version: 1,
-      openEditableNotePreview: () => Promise.reject(new Error('provider unavailable')),
-    },
-  }));
-  assert.equal(await openGcmEditableNotePreview(app, request), 'failed');
-
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    ui: {
-      version: 1,
-      openEditableNotePreview: () => {
-        throw new Error('provider unavailable');
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      ui: {
+        version: 1,
+        openEditableNotePreview: () =>
+          Promise.reject(new Error("provider unavailable")),
       },
-    },
-  }));
-  assert.equal(await openGcmEditableNotePreview(app, request), 'failed');
+    }),
+  );
+  assert.equal(await openGcmEditableNotePreview(app, request), "failed");
+
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      ui: {
+        version: 1,
+        openEditableNotePreview: () => {
+          throw new Error("provider unavailable");
+        },
+      },
+    }),
+  );
+  assert.equal(await openGcmEditableNotePreview(app, request), "failed");
 
   owner.unload();
-  assert.equal(await openGcmEditableNotePreview(app, request), 'unavailable');
+  assert.equal(await openGcmEditableNotePreview(app, request), "unavailable");
 });
 
-test('typed status, task-checkbox, inline-property, and parent-link capabilities validate version, output, and failures', async () => {
+test("typed status, task-checkbox, inline-property, and parent-link capabilities validate version, output, and failures", async () => {
   const {
     getGcmParentLinkPolicy,
     getGcmStatusOptions,
@@ -329,111 +488,199 @@ test('typed status, task-checkbox, inline-property, and parent-link capabilities
   installGcmApiRegistry(owner, app);
 
   const mappings = Object.freeze([
-    Object.freeze({ checkboxState: '[ ]', statuses: Object.freeze(['todo']), toggleTargetStatus: 'complete', icon: 'square' }),
-    Object.freeze({ checkboxState: '[x]', statuses: Object.freeze(['complete']), toggleTargetStatus: 'todo', icon: 'square-check-big' }),
-    Object.freeze({ checkboxState: '[/]', statuses: Object.freeze(['working']), toggleTargetStatus: 'complete', icon: 'square-play' }),
+    Object.freeze({
+      checkboxState: "[ ]",
+      statuses: Object.freeze(["todo"]),
+      toggleTargetStatus: "complete",
+      icon: "square",
+    }),
+    Object.freeze({
+      checkboxState: "[x]",
+      statuses: Object.freeze(["complete"]),
+      toggleTargetStatus: "todo",
+      icon: "square-check-big",
+    }),
+    Object.freeze({
+      checkboxState: "[/]",
+      statuses: Object.freeze(["working"]),
+      toggleTargetStatus: "complete",
+      icon: "square-play",
+    }),
   ]);
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    status: {
-      values: [' todo ', '', null, 'complete'],
-      getStatusOptions() { return this.values; },
-    },
-    taskCheckboxes: {
-      version: 1,
-      contract: 'ordered-strict-v1',
-      getMappings: () => mappings,
-      stateForStatus: (status) => status === 'working' ? '[/]' : status === 'complete' ? '[X]' : status === 'todo' ? '[ ]' : '',
-      statusForState: (state) => state === '[/]' ? 'working' : state === '[x]' ? 'complete' : state === '[ ]' ? 'todo' : '',
-    },
-    configuration: {
-      version: 1,
-      isInlinePropertyAllowed: (key) => key === 'client',
-      getParentLinkPolicy: () => ({
-        format: 'markdown-title',
-        tag: ['parent-linked'],
-        autoSelfLink: true,
-      }),
-    },
-  }));
-  assert.deepEqual(getGcmStatusOptions(app), ['todo', 'complete']);
-  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'working'), '[/]');
-  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'complete'), '[x]');
-  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'unknown'), null);
-  assert.equal(getGcmTaskStatusForCheckboxState(app, '[/]'), 'working');
-  assert.equal(getGcmTaskStatusForCheckboxState(app, '[?]'), null);
-  assert.equal(getGcmTaskCheckboxIconForState(app, '[X]'), 'square-check-big');
-  assert.equal(normalizeGcmTaskCheckboxState(''), null);
-  assert.equal(normalizeGcmTaskCheckboxState('[😀]'), null);
-  assert.equal(isGcmInlinePropertyAllowed(app, 'client'), true);
-  assert.equal(isGcmInlinePropertyAllowed(app, 'private'), false);
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      status: {
+        values: [" todo ", "", null, "complete"],
+        getStatusOptions() {
+          return this.values;
+        },
+      },
+      taskCheckboxes: {
+        version: 1,
+        contract: "ordered-strict-v1",
+        getMappings: () => mappings,
+        stateForStatus: (status) =>
+          status === "working"
+            ? "[/]"
+            : status === "complete"
+              ? "[X]"
+              : status === "todo"
+                ? "[ ]"
+                : "",
+        statusForState: (state) =>
+          state === "[/]"
+            ? "working"
+            : state === "[x]"
+              ? "complete"
+              : state === "[ ]"
+                ? "todo"
+                : "",
+      },
+      configuration: {
+        version: 1,
+        isInlinePropertyAllowed: (key) => key === "client",
+        getParentLinkPolicy: () => ({
+          format: "markdown-title",
+          tag: ["parent-linked"],
+          autoSelfLink: true,
+        }),
+      },
+    }),
+  );
+  assert.deepEqual(getGcmStatusOptions(app), ["todo", "complete"]);
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, "working"), "[/]");
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, "complete"), "[x]");
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, "unknown"), null);
+  assert.equal(getGcmTaskStatusForCheckboxState(app, "[/]"), "working");
+  assert.equal(getGcmTaskStatusForCheckboxState(app, "[?]"), null);
+  assert.equal(getGcmTaskCheckboxIconForState(app, "[X]"), "square-check-big");
+  assert.equal(normalizeGcmTaskCheckboxState(""), null);
+  assert.equal(normalizeGcmTaskCheckboxState("[😀]"), null);
+  assert.equal(isGcmInlinePropertyAllowed(app, "client"), true);
+  assert.equal(isGcmInlinePropertyAllowed(app, "private"), false);
   assert.deepEqual(getGcmParentLinkPolicy(app), {
-    format: 'markdown-title',
-    tag: ['parent-linked'],
+    format: "markdown-title",
+    tag: ["parent-linked"],
     autoSelfLink: true,
   });
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    taskCheckboxes: {
-      version: 1,
-      contract: 'ordered-strict-v1',
-      getMappings: () => mappings,
-      stateForStatus: (status) => {
-        const normalized = String(status || '').trim().toLowerCase();
-        return normalized === 'working' ? '[/]' : normalized === 'complete' ? '[x]' : '[ ]';
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      taskCheckboxes: {
+        version: 1,
+        contract: "ordered-strict-v1",
+        getMappings: () => mappings,
+        stateForStatus: (status) => {
+          const normalized = String(status || "")
+            .trim()
+            .toLowerCase();
+          return normalized === "working"
+            ? "[/]"
+            : normalized === "complete"
+              ? "[x]"
+              : "[ ]";
+        },
+        statusForState: (state) =>
+          state === "[/]"
+            ? "working"
+            : state === "[x]"
+              ? "complete"
+              : state === "[ ]"
+                ? "todo"
+                : "",
       },
-      statusForState: (state) => state === '[/]' ? 'working' : state === '[x]' ? 'complete' : state === '[ ]' ? 'todo' : '',
-    },
-  }));
-  assert.equal(getGcmTaskCheckboxStateForStatus(app, ' working '), '[/]');
+    }),
+  );
+  assert.equal(getGcmTaskCheckboxStateForStatus(app, " working "), "[/]");
   assert.equal(
-    getGcmTaskCheckboxStateForStatus(app, 'not-configured'),
+    getGcmTaskCheckboxStateForStatus(app, "not-configured"),
     null,
-    'a provider fallback cannot map a status absent from the ordered snapshot',
+    "a provider fallback cannot map a status absent from the ordered snapshot",
   );
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    status: { getStatusOptions: () => { throw new Error('not ready'); } },
-    taskCheckboxes: {
-      version: 1,
-      contract: 'ordered-strict-v1',
-      getMappings: () => [],
-      stateForStatus: () => '[custom]',
-      statusForState: () => { throw new Error('not ready'); },
-    },
-    configuration: {
-      version: 2,
-      isInlinePropertyAllowed: () => true,
-      getParentLinkPolicy: () => ({ format: 'markdown-title', autoSelfLink: true }),
-    },
-  }));
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      status: {
+        getStatusOptions: () => {
+          throw new Error("not ready");
+        },
+      },
+      taskCheckboxes: {
+        version: 1,
+        contract: "ordered-strict-v1",
+        getMappings: () => [],
+        stateForStatus: () => "[custom]",
+        statusForState: () => {
+          throw new Error("not ready");
+        },
+      },
+      configuration: {
+        version: 2,
+        isInlinePropertyAllowed: () => true,
+        getParentLinkPolicy: () => ({
+          format: "markdown-title",
+          autoSelfLink: true,
+        }),
+      },
+    }),
+  );
   assert.deepEqual(getGcmStatusOptions(app), []);
-  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'working'), null, 'malformed markers fail closed');
-  assert.equal(getGcmTaskStatusForCheckboxState(app, '[/]'), null, 'provider failures fail closed');
-  assert.equal(isGcmInlinePropertyAllowed(app, 'client'), false, 'unknown configuration versions fail closed');
+  assert.equal(
+    getGcmTaskCheckboxStateForStatus(app, "working"),
+    null,
+    "malformed markers fail closed",
+  );
+  assert.equal(
+    getGcmTaskStatusForCheckboxState(app, "[/]"),
+    null,
+    "provider failures fail closed",
+  );
+  assert.equal(
+    isGcmInlinePropertyAllowed(app, "client"),
+    false,
+    "unknown configuration versions fail closed",
+  );
   assert.equal(getGcmParentLinkPolicy(app), null);
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    taskCheckboxes: {
-      version: 2,
-      contract: 'ordered-strict-v1',
-      getMappings: () => mappings,
-      stateForStatus: () => '[x]',
-      statusForState: () => 'complete',
-    },
-  }));
-  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'complete'), null, 'unknown task-checkbox versions fail closed');
-  assert.equal(getGcmTaskStatusForCheckboxState(app, '[x]'), null);
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      taskCheckboxes: {
+        version: 2,
+        contract: "ordered-strict-v1",
+        getMappings: () => mappings,
+        stateForStatus: () => "[x]",
+        statusForState: () => "complete",
+      },
+    }),
+  );
+  assert.equal(
+    getGcmTaskCheckboxStateForStatus(app, "complete"),
+    null,
+    "unknown task-checkbox versions fail closed",
+  );
+  assert.equal(getGcmTaskStatusForCheckboxState(app, "[x]"), null);
 
-  workspace.trigger('tps:gcm-api-changed', availablePayload({
-    taskCheckboxes: {
-      version: 1,
-      contract: 'ordered-strict-v1',
-      getMappings: () => mappings,
-      stateForStatus: () => '[x]',
-      statusForState: (state) => state === '[x]' ? 'todo' : '',
-    },
-  }));
-  assert.equal(getGcmTaskCheckboxStateForStatus(app, 'complete'), null, 'cross-method inconsistencies invalidate the snapshot');
-  assert.equal(getGcmTaskStatusForCheckboxState(app, '[x]'), null);
+  workspace.trigger(
+    "tps:gcm-api-changed",
+    availablePayload({
+      taskCheckboxes: {
+        version: 1,
+        contract: "ordered-strict-v1",
+        getMappings: () => mappings,
+        stateForStatus: () => "[x]",
+        statusForState: (state) => (state === "[x]" ? "todo" : ""),
+      },
+    }),
+  );
+  assert.equal(
+    getGcmTaskCheckboxStateForStatus(app, "complete"),
+    null,
+    "cross-method inconsistencies invalidate the snapshot",
+  );
+  assert.equal(getGcmTaskStatusForCheckboxState(app, "[x]"), null);
   owner.unload();
 });

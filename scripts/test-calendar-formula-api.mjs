@@ -14,7 +14,7 @@ test("Calendar refreshes formula rows through the supported GCM API lifecycle ev
   assert.match(contracts, /GCM_API_REQUEST:\s*["']tps:gcm-api-request["']/u);
   assert.match(contracts, /GCM_API_CHANGED:\s*["']tps:gcm-api-changed["']/u);
   assert.match(registry, /workspace\.on\([\s\S]{0,100}TPS_EVENTS\.GCM_API_CHANGED/u);
-  assert.match(registry, /record\.source !== GCM_PLUGIN_ID \|\| record\.sourcePluginId !== GCM_PLUGIN_ID/u);
+  assert.match(registry, /record\.source !== GCM_PLUGIN_ID\s*\|\|\s*record\.sourcePluginId !== GCM_PLUGIN_ID/u);
   assert.match(registry, /workspace\.trigger\(TPS_EVENTS\.GCM_API_REQUEST[\s\S]{0,300}requester:\s*CALENDAR_PLUGIN_ID/u);
   assert.match(view, /onGcmApiChanged\(this, this\.app[\s\S]{0,500}formulaApi = null[\s\S]{0,500}lineMetadataApi = null[\s\S]{0,500}compiledFormulaSet = null[\s\S]{0,500}scheduleRefresh\(0, true\)/u);
   assert.doesNotMatch(view, /getPluginById[^\n]*tps-global-context-menu|plugins\?\.(?:getPlugin|plugins)[^\n]*tps-global-context-menu/u);

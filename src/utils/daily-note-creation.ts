@@ -1,7 +1,11 @@
 import { App, TFile, normalizePath } from "obsidian";
 import * as logger from "../logger";
 import { getPluginById } from "../core";
-import { ensureDailyNoteForIsoDate } from "../tps-gcm-api";
+import {
+  ensureDailyNoteForIsoDate,
+  prepareGcmTemplateInstanceSource,
+  sanitizeGcmTemplateInstanceFile,
+} from "../tps-gcm-api";
 import { resolveTemplateFile } from "./template-resolution-service";
 
 export interface CalendarDailyNoteCreationOptions {
@@ -27,14 +31,21 @@ const TEMPLATER_AUTO_SETTLE_BUFFER_MS = 100;
 const TEMPLATER_AUTO_SETTLE_TIMEOUT_MS = 5_000;
 const TEMPLATER_AUTO_SETTLE_POLL_MS = 20;
 
-const pendingDailyNoteEnsures = new WeakMap<object, Map<string, Promise<TFile>>>();
+const pendingDailyNoteEnsures = new WeakMap<
+  object,
+  Map<string, Promise<TFile>>
+>();
 
 export async function ensureCalendarDailyNote(
   app: App,
   date: Date,
   options: CalendarDailyNoteCreationOptions = {},
 ): Promise<TFile> {
-  const target = await resolveDailyNoteTarget(app, date, options.fallbackDateFormat);
+  const target = await resolveDailyNoteTarget(
+    app,
+    date,
+    options.fallbackDateFormat,
+  );
   let pendingByPath = pendingDailyNoteEnsures.get(app as unknown as object);
   if (!pendingByPath) {
     pendingByPath = new Map<string, Promise<TFile>>();
@@ -58,7 +69,8 @@ export async function getCalendarDailyNotePath(
   date: Date,
   options: CalendarDailyNoteCreationOptions = {},
 ): Promise<string> {
-  return (await resolveDailyNoteTarget(app, date, options.fallbackDateFormat)).path;
+  return (await resolveDailyNoteTarget(app, date, options.fallbackDateFormat))
+    .path;
 }
 
 async function ensureCalendarDailyNoteOnce(
@@ -85,7 +97,9 @@ async function ensureCalendarDailyNoteOnce(
         date: target.isoDate,
         targetPath: target.path,
       });
-      throw new Error(`GCM could not create the Daily Note for ${target.isoDate}.`);
+      throw new Error(
+        `GCM could not create the Daily Note for ${target.isoDate}.`,
+      );
     }
   } catch (error) {
     logger.flowWarn("DailyNoteCreation", "gcm-api:failed", {
@@ -106,7 +120,9 @@ async function ensureCalendarDailyNoteOnce(
 
   const standalone = await createStandaloneDailyNote(app, date, target);
   logger.flow("DailyNoteCreation", "ensure:done", {
-    route: standalone.usedTemplate ? "standalone-template" : "standalone-default",
+    route: standalone.usedTemplate
+      ? "standalone-template"
+      : "standalone-default",
     path: standalone.file.path,
     date: target.isoDate,
   });
@@ -124,11 +140,16 @@ async function resolveDailyNoteTarget(
   return {
     ...settings,
     isoDate,
-    path: normalizePath(settings.folder ? `${settings.folder}/${basename}.md` : `${basename}.md`),
+    path: normalizePath(
+      settings.folder ? `${settings.folder}/${basename}.md` : `${basename}.md`,
+    ),
   };
 }
 
-async function readDailyNoteSettings(app: App, fallbackDateFormat: string): Promise<DailyNoteSettings> {
+async function readDailyNoteSettings(
+  app: App,
+  fallbackDateFormat: string,
+): Promise<DailyNoteSettings> {
   let format = String(fallbackDateFormat || "").trim() || "YYYY-MM-DD";
   let folder = "";
   let template = "";
@@ -137,8 +158,9 @@ async function readDailyNoteSettings(app: App, fallbackDateFormat: string): Prom
   let hasRuntimeTemplate = false;
 
   try {
-    const dailyNotesPlugin = (app as any).internalPlugins?.getPluginById?.("daily-notes")
-      || (app as any).internalPlugins?.plugins?.["daily-notes"];
+    const dailyNotesPlugin =
+      (app as any).internalPlugins?.getPluginById?.("daily-notes") ||
+      (app as any).internalPlugins?.plugins?.["daily-notes"];
     const runtime = dailyNotesPlugin?.instance?.options;
     if (typeof runtime?.format === "string" && runtime.format.trim()) {
       format = runtime.format.trim();
@@ -158,9 +180,15 @@ async function readDailyNoteSettings(app: App, fallbackDateFormat: string): Prom
 
   try {
     const configDir = (app.vault as any)?.configDir || ".obsidian";
-    const raw = await app.vault.adapter.read(normalizePath(`${configDir}/daily-notes.json`));
+    const raw = await app.vault.adapter.read(
+      normalizePath(`${configDir}/daily-notes.json`),
+    );
     const persisted = JSON.parse(raw);
-    if (!hasRuntimeFormat && typeof persisted?.format === "string" && persisted.format.trim()) {
+    if (
+      !hasRuntimeFormat &&
+      typeof persisted?.format === "string" &&
+      persisted.format.trim()
+    ) {
       format = persisted.format.trim();
     }
     if (!hasRuntimeFolder && typeof persisted?.folder === "string") {
@@ -177,7 +205,7 @@ async function readDailyNoteSettings(app: App, fallbackDateFormat: string): Prom
     format,
     folder,
     template,
-    ...await readCoreTemplateFormats(app),
+    ...(await readCoreTemplateFormats(app)),
   };
 }
 
@@ -186,7 +214,8 @@ async function createStandaloneDailyNote(
   date: Date,
   target: DailyNoteTarget,
 ): Promise<{ file: TFile; usedTemplate: boolean }> {
-  const title = target.path.split("/").pop()?.replace(/\.md$/i, "") || target.isoDate;
+  const title =
+    target.path.split("/").pop()?.replace(/\.md$/i, "") || target.isoDate;
   const templateFile = resolveTemplateFile(app, target.template, {
     allowBasenameMatchInTemplaterRoot: true,
     warnOnAmbiguousBasename: true,
@@ -205,10 +234,25 @@ async function createStandaloneDailyNote(
 
   if (templateFile instanceof TFile) {
     try {
-      content = applyDailyNoteTemplateVariables(await app.vault.read(templateFile), date, title, {
-        dateFormat: target.templateDateFormat,
-        timeFormat: target.templateTimeFormat,
-      });
+      const rawTemplate = await app.vault.read(templateFile);
+      const preparedTemplate = prepareGcmTemplateInstanceSource(
+        app,
+        rawTemplate,
+      );
+      if (preparedTemplate === null) {
+        throw new Error(
+          `GCM rejected unsafe template source: ${templateFile.path}`,
+        );
+      }
+      content = applyDailyNoteTemplateVariables(
+        preparedTemplate ?? rawTemplate,
+        date,
+        title,
+        {
+          dateFormat: target.templateDateFormat,
+          timeFormat: target.templateTimeFormat,
+        },
+      );
       usedTemplate = true;
     } catch (error) {
       logger.flowWarn("DailyNoteCreation", "template:read-failed", {
@@ -216,14 +260,18 @@ async function createStandaloneDailyNote(
         targetPath: target.path,
         error: logger.errorSummary(error),
       });
-      throw new Error(`Configured Daily Notes template could not be read: ${templateFile.path}`);
+      throw new Error(
+        `Configured Daily Notes template could not be read: ${templateFile.path}`,
+      );
     }
   } else if (target.template) {
     logger.flowWarn("DailyNoteCreation", "template:not-found", {
       configuredTemplate: target.template,
       targetPath: target.path,
     });
-    throw new Error(`Configured Daily Notes template was not found: ${target.template}`);
+    throw new Error(
+      `Configured Daily Notes template was not found: ${target.template}`,
+    );
   }
 
   const targetFolder = target.path.includes("/")
@@ -232,9 +280,11 @@ async function createStandaloneDailyNote(
   if (targetFolder) await ensureFolderPath(app, targetFolder);
 
   let file: TFile;
+  let createdByThisCall = false;
   const createStartedAt = Date.now();
   try {
     file = await app.vault.create(target.path, content);
+    createdByThisCall = true;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const raced = message.toLowerCase().includes("already exists")
@@ -248,6 +298,15 @@ async function createStandaloneDailyNote(
     awaitAutoCreate: true,
     createStartedAt,
   });
+  if (
+    usedTemplate &&
+    createdByThisCall &&
+    !(await sanitizeGcmTemplateInstanceFile(app, file))
+  ) {
+    throw new Error(
+      `The Daily Note could not be verified as a non-template instance: ${file.path}`,
+    );
+  }
   return { file, usedTemplate };
 }
 
@@ -257,23 +316,35 @@ function applyDailyNoteTemplateVariables(
   title: string,
   formats: { dateFormat?: string; timeFormat?: string } = {},
 ): string {
-  const momentFactory = (globalThis as any)?.window?.moment || (globalThis as any)?.moment;
-  const momentDate = typeof momentFactory === "function" ? momentFactory(date) : null;
+  const momentFactory =
+    (globalThis as any)?.window?.moment || (globalThis as any)?.moment;
+  const momentDate =
+    typeof momentFactory === "function" ? momentFactory(date) : null;
   const now = new Date();
-  const momentNow = typeof momentFactory === "function" ? momentFactory(now) : null;
+  const momentNow =
+    typeof momentFactory === "function" ? momentFactory(now) : null;
   const isoDate = formatLocalIsoDate(date);
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-  const defaultDateFormat = String(formats.dateFormat || "").trim() || "YYYY-MM-DD";
+  const defaultDateFormat =
+    String(formats.dateFormat || "").trim() || "YYYY-MM-DD";
   const defaultTimeFormat = String(formats.timeFormat || "").trim() || "HH:mm";
   return String(content || "")
-    .replace(/\{\{date:([^}]+)\}\}/g, (_match, format) => (
-      momentDate?.format ? momentDate.format(String(format || "").trim()) : isoDate
-    ))
-    .replace(/\{\{time:([^}]+)\}\}/g, (_match, format) => (
-      momentNow?.format ? momentNow.format(String(format || "").trim()) : time
-    ))
-    .replace(/\{\{date\}\}/g, momentDate?.format ? momentDate.format(defaultDateFormat) : isoDate)
-    .replace(/\{\{time\}\}/g, momentNow?.format ? momentNow.format(defaultTimeFormat) : time)
+    .replace(/\{\{date:([^}]+)\}\}/g, (_match, format) =>
+      momentDate?.format
+        ? momentDate.format(String(format || "").trim())
+        : isoDate,
+    )
+    .replace(/\{\{time:([^}]+)\}\}/g, (_match, format) =>
+      momentNow?.format ? momentNow.format(String(format || "").trim()) : time,
+    )
+    .replace(
+      /\{\{date\}\}/g,
+      momentDate?.format ? momentDate.format(defaultDateFormat) : isoDate,
+    )
+    .replace(
+      /\{\{time\}\}/g,
+      momentNow?.format ? momentNow.format(defaultTimeFormat) : time,
+    )
     .replace(/\{\{title\}\}/g, title);
 }
 
@@ -290,16 +361,21 @@ async function runTemplaterOnFile(
   const hasCommands = TEMPLATER_COMMAND_PATTERN.test(before);
   if (!templater) {
     if (!hasCommands) return;
-    logger.flowWarn("DailyNoteCreation", "templater:unavailable", { path: file.path });
-    throw new Error(`Templater could not process Daily Note commands in ${file.path}.`);
+    logger.flowWarn("DailyNoteCreation", "templater:unavailable", {
+      path: file.path,
+    });
+    throw new Error(
+      `Templater could not process Daily Note commands in ${file.path}.`,
+    );
   }
 
   const autoCreateEnabled = isTemplaterAutoCreateEnabled(app, templater);
-  const autoCreateEligible = autoCreateEnabled
-    && isEligibleForTemplaterAutoCreate(file, templater);
-  const observedCreateStart = options.awaitAutoCreate === true
-    ? normalizeTemplaterCreateStart(options.createStartedAt)
-    : getRecentTemplaterCreateStart(file, templater);
+  const autoCreateEligible =
+    autoCreateEnabled && isEligibleForTemplaterAutoCreate(file, templater);
+  const observedCreateStart =
+    options.awaitAutoCreate === true
+      ? normalizeTemplaterCreateStart(options.createStartedAt)
+      : getRecentTemplaterCreateStart(file, templater);
   if (autoCreateEligible && observedCreateStart !== null) {
     await waitForTemplaterAutoCreate(app, file, templater, observedCreateStart);
   } else if (hasCommands) {
@@ -310,16 +386,28 @@ async function runTemplaterOnFile(
 
   const after = await app.vault.read(file);
   if (TEMPLATER_COMMAND_PATTERN.test(after)) {
-    logger.flowWarn("DailyNoteCreation", "templater:unresolved", { path: file.path });
-    throw new Error(`Templater did not finish processing Daily Note commands in ${file.path}.`);
+    logger.flowWarn("DailyNoteCreation", "templater:unresolved", {
+      path: file.path,
+    });
+    throw new Error(
+      `Templater did not finish processing Daily Note commands in ${file.path}.`,
+    );
   }
 }
 
-async function runExplicitTemplaterPass(app: App, file: TFile, templater: any): Promise<void> {
+async function runExplicitTemplaterPass(
+  app: App,
+  file: TFile,
+  templater: any,
+): Promise<void> {
   const overwrite = templater?.templater?.overwrite_file_commands;
   if (typeof overwrite !== "function") {
-    logger.flowWarn("DailyNoteCreation", "templater:unavailable", { path: file.path });
-    throw new Error(`Templater could not process Daily Note commands in ${file.path}.`);
+    logger.flowWarn("DailyNoteCreation", "templater:unavailable", {
+      path: file.path,
+    });
+    throw new Error(
+      `Templater could not process Daily Note commands in ${file.path}.`,
+    );
   }
 
   try {
@@ -342,9 +430,10 @@ async function waitForTemplaterAutoCreate(
   const engine = templater?.templater;
   const pendingFiles = engine?.files_with_pending_templates;
   const startedAt = Date.now();
-  const settleAfter = createStartedAt
-    + TEMPLATER_AUTO_CREATE_DELAY_MS
-    + TEMPLATER_AUTO_SETTLE_BUFFER_MS;
+  const settleAfter =
+    createStartedAt +
+    TEMPLATER_AUTO_CREATE_DELAY_MS +
+    TEMPLATER_AUTO_SETTLE_BUFFER_MS;
   let stableContent: string | null = null;
   while (Date.now() - startedAt < TEMPLATER_AUTO_SETTLE_TIMEOUT_MS) {
     const now = Date.now();
@@ -352,7 +441,8 @@ async function waitForTemplaterAutoCreate(
       await delay(Math.min(TEMPLATER_AUTO_SETTLE_POLL_MS, settleAfter - now));
       continue;
     }
-    const pending = typeof pendingFiles?.has === "function" && pendingFiles.has(file.path);
+    const pending =
+      typeof pendingFiles?.has === "function" && pendingFiles.has(file.path);
     if (!pending) {
       const current = await app.vault.read(file);
       if (!TEMPLATER_COMMAND_PATTERN.test(current)) {
@@ -370,7 +460,9 @@ async function waitForTemplaterAutoCreate(
   logger.flowWarn("DailyNoteCreation", "templater:auto-create-timeout", {
     path: file.path,
   });
-  throw new Error(`Templater did not finish processing Daily Note commands in ${file.path}.`);
+  throw new Error(
+    `Templater did not finish processing Daily Note commands in ${file.path}.`,
+  );
 }
 
 function normalizeTemplaterCreateStart(value: unknown): number {
@@ -381,20 +473,28 @@ function normalizeTemplaterCreateStart(value: unknown): number {
     : now;
 }
 
-function getRecentTemplaterCreateStart(file: TFile, templater: any): number | null {
+function getRecentTemplaterCreateStart(
+  file: TFile,
+  templater: any,
+): number | null {
   const now = Date.now();
   const pendingFiles = templater?.templater?.files_with_pending_templates;
   const stat = (file as any)?.stat;
-  const timestamps = [Number(stat?.ctime), Number(stat?.mtime)]
-    .filter((value) => Number.isFinite(value) && value > 0 && value <= now);
-  const newestTimestamp = timestamps.length > 0 ? Math.max(...timestamps) : null;
+  const timestamps = [Number(stat?.ctime), Number(stat?.mtime)].filter(
+    (value) => Number.isFinite(value) && value > 0 && value <= now,
+  );
+  const newestTimestamp =
+    timestamps.length > 0 ? Math.max(...timestamps) : null;
   if (typeof pendingFiles?.has === "function" && pendingFiles.has(file.path)) {
-    return newestTimestamp
-      ?? (now - TEMPLATER_AUTO_CREATE_DELAY_MS - TEMPLATER_AUTO_SETTLE_BUFFER_MS);
+    return (
+      newestTimestamp ??
+      now - TEMPLATER_AUTO_CREATE_DELAY_MS - TEMPLATER_AUTO_SETTLE_BUFFER_MS
+    );
   }
   if (
-    newestTimestamp !== null
-    && now - newestTimestamp <= TEMPLATER_AUTO_CREATE_DELAY_MS + TEMPLATER_AUTO_SETTLE_BUFFER_MS
+    newestTimestamp !== null &&
+    now - newestTimestamp <=
+      TEMPLATER_AUTO_CREATE_DELAY_MS + TEMPLATER_AUTO_SETTLE_BUFFER_MS
   ) {
     return newestTimestamp;
   }
@@ -403,10 +503,13 @@ function getRecentTemplaterCreateStart(file: TFile, templater: any): number | nu
 
 function isTemplaterAutoCreateEnabled(app: App, templater: any): boolean {
   try {
-    const localSettings = (app as any)?.loadLocalStorage?.("templater-local-settings");
-    const parsed = typeof localSettings === "string"
-      ? JSON.parse(localSettings)
-      : localSettings;
+    const localSettings = (app as any)?.loadLocalStorage?.(
+      "templater-local-settings",
+    );
+    const parsed =
+      typeof localSettings === "string"
+        ? JSON.parse(localSettings)
+        : localSettings;
     if (typeof parsed?.trigger_on_file_creation === "boolean") {
       return parsed.trigger_on_file_creation;
     }
@@ -416,17 +519,22 @@ function isTemplaterAutoCreateEnabled(app: App, templater: any): boolean {
   return templater?.settings?.trigger_on_file_creation === true;
 }
 
-function isEligibleForTemplaterAutoCreate(file: TFile, templater: any): boolean {
-  const settings = templater?.settings ?? templater?.templater?.plugin?.settings ?? {};
+function isEligibleForTemplaterAutoCreate(
+  file: TFile,
+  templater: any,
+): boolean {
+  const settings =
+    templater?.settings ?? templater?.templater?.plugin?.settings ?? {};
   const templateFolder = normalizeDailyNoteFolder(settings.templates_folder);
   if (templateFolder && file.path.includes(templateFolder)) return false;
   const ignoredFolders = Array.isArray(settings.ignore_folders_on_creation)
     ? settings.ignore_folders_on_creation
     : [];
   return !ignoredFolders.some((entry: unknown) => {
-    const raw = entry && typeof entry === "object" && "folder" in entry
-      ? (entry as { folder?: unknown }).folder
-      : entry;
+    const raw =
+      entry && typeof entry === "object" && "folder" in entry
+        ? (entry as { folder?: unknown }).folder
+        : entry;
     const ignoredPath = normalizeDailyNoteFolder(raw);
     return Boolean(ignoredPath && file.path.startsWith(ignoredPath));
   });
@@ -455,8 +563,9 @@ async function readCoreTemplateFormats(
   app: App,
 ): Promise<{ templateDateFormat: string; templateTimeFormat: string }> {
   const internalPlugins = (app as any).internalPlugins;
-  const templatesPlugin = internalPlugins?.getPluginById?.("templates")
-    || internalPlugins?.plugins?.templates;
+  const templatesPlugin =
+    internalPlugins?.getPluginById?.("templates") ||
+    internalPlugins?.plugins?.templates;
   const runtime = templatesPlugin?.instance?.options;
   const hasRuntimeDateFormat = typeof runtime?.dateFormat === "string";
   const hasRuntimeTimeFormat = typeof runtime?.timeFormat === "string";
@@ -464,7 +573,9 @@ async function readCoreTemplateFormats(
   if (!hasRuntimeDateFormat || !hasRuntimeTimeFormat) {
     try {
       const configDir = (app.vault as any)?.configDir || ".obsidian";
-      const raw = await app.vault.adapter.read(normalizePath(`${configDir}/templates.json`));
+      const raw = await app.vault.adapter.read(
+        normalizePath(`${configDir}/templates.json`),
+      );
       const parsed = JSON.parse(raw);
       persisted = parsed && typeof parsed === "object" ? parsed : null;
     } catch {
@@ -472,12 +583,14 @@ async function readCoreTemplateFormats(
     }
   }
   return {
-    templateDateFormat: (
-      hasRuntimeDateFormat ? String(runtime.dateFormat || "").trim() : String(persisted?.dateFormat || "").trim()
-    ) || "YYYY-MM-DD",
-    templateTimeFormat: (
-      hasRuntimeTimeFormat ? String(runtime.timeFormat || "").trim() : String(persisted?.timeFormat || "").trim()
-    ) || "HH:mm",
+    templateDateFormat:
+      (hasRuntimeDateFormat
+        ? String(runtime.dateFormat || "").trim()
+        : String(persisted?.dateFormat || "").trim()) || "YYYY-MM-DD",
+    templateTimeFormat:
+      (hasRuntimeTimeFormat
+        ? String(runtime.timeFormat || "").trim()
+        : String(persisted?.timeFormat || "").trim()) || "HH:mm",
   };
 }
 
@@ -486,18 +599,33 @@ export function ensureCalendarDailyNoteTitleFallback(
   titleKey: string,
   fallbackTitle: string,
 ): boolean {
-  const normalizedKey = String(titleKey || "title").trim().toLowerCase() || "title";
-  const existingKeys = Object.keys(frontmatter).filter((key) => key.trim().toLowerCase() === normalizedKey);
-  if (existingKeys.some((key) => String(frontmatter[key] ?? "").trim().length > 0)) return false;
+  const normalizedKey =
+    String(titleKey || "title")
+      .trim()
+      .toLowerCase() || "title";
+  const existingKeys = Object.keys(frontmatter).filter(
+    (key) => key.trim().toLowerCase() === normalizedKey,
+  );
+  if (
+    existingKeys.some((key) => String(frontmatter[key] ?? "").trim().length > 0)
+  )
+    return false;
   frontmatter[existingKeys[0] || titleKey || "title"] = fallbackTitle;
   return true;
 }
 
-function formatDailyNoteBasename(date: Date, format: string, fallback: string): string {
-  const momentFactory = (globalThis as any)?.window?.moment || (globalThis as any)?.moment;
+function formatDailyNoteBasename(
+  date: Date,
+  format: string,
+  fallback: string,
+): string {
+  const momentFactory =
+    (globalThis as any)?.window?.moment || (globalThis as any)?.moment;
   if (typeof momentFactory !== "function") return fallback;
   const formatted = momentFactory(date)?.format?.(format);
-  return typeof formatted === "string" && formatted.trim() ? formatted.trim() : fallback;
+  return typeof formatted === "string" && formatted.trim()
+    ? formatted.trim()
+    : fallback;
 }
 
 function formatLocalIsoDate(date: Date): string {

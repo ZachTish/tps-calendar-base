@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.10.2
+
+- Calendar templates, external-event meeting templates, and the standalone Daily Note fallback now participate in TPS Global Context Menu's shared exact `template` tag lifecycle. Calendar removes only that top-level marker from a new copy before creation and verifies it again after Templater, while preserving unrelated YAML tags and body `#template` text.
+- The template source is never changed. Unsafe or unverifiable template bytes fail closed before Calendar applies event metadata, and an existing or raced note is not treated as an owned template copy merely because it occupies the requested path.
+- Automatic cleanup of detached parent/child links now checks the shared template guard before and inside its frontmatter mutation. Explicit user-created and user-removed links retain their existing behavior.
+- This backward-compatible fix requires TPS Global Context Menu 1.50.0 or newer for the shared lifecycle. Without that additive capability, Calendar retains its prior creation behavior. Existing notes are not rewritten retrospectively, no setting or Calendar public API changes, and minimum supported Obsidian remains 1.10.0.
+- Focused regression coverage exercises source preparation, post-Templater verification, Daily Note and event creation, compatibility/fail-closed behavior, and deleted-link protection. All 21 package-declared test files, TypeScript, diff checks, and the separate production-mode build passed. Obsidian 1.13.7 loaded Calendar 0.10.2 beside GCM 1.50.0 in the isolated test vault; shared lifecycle behavior was verified against the real Daily Note copy, outbound automation remained disabled, and production was not accessed. Final evidence and hashes are recorded in `release-notes/0.10.2.md`.
+
 ## 0.10.1
 
 - **Start on host note day → Use host note date** now treats the resolved host date as the selected focal day instead of forcing it into the first visible column. A three-day Calendar embedded in September 2 therefore renders September 1–3, with September 2 in the middle.

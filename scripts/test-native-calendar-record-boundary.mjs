@@ -120,9 +120,9 @@ test("native drag and resize patches replace the interval and clear stale derive
 test("every native Calendar mutation route stays behind API v6 and shared public payload builders", () => {
   assert.match(apiSource, /GCM_NATIVE_RECORDS_API_VERSION = 6/u);
   assert.match(apiSource, /nativeRecords\?\.version !== GCM_NATIVE_RECORDS_API_VERSION/u);
-  assert.match(apiSource, /typeof nativeRecords\.resolve !== 'function'/u);
-  assert.match(apiSource, /typeof nativeRecords\.create !== 'function'/u);
-  assert.match(apiSource, /typeof nativeRecords\.update !== 'function'/u);
+  assert.match(apiSource, /typeof nativeRecords\.resolve !== ["']function["']/u);
+  assert.match(apiSource, /typeof nativeRecords\.create !== ["']function["']/u);
+  assert.match(apiSource, /typeof nativeRecords\.update !== ["']function["']/u);
 
   const toolbar = methodSource("async createFileForView(", "private async closeCalendarBaseNewItemMenu");
   assert.match(toolbar, /if \(nativeRecordMode\)[\s\S]*createNativeCalendarRecord\([\s\S]*surface: "calendar-create"/u);

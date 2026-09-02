@@ -534,17 +534,17 @@ test("creation callsites pass resolved create mode and explicit task target over
   assert.doesNotMatch(calendarViewSource, /buildTaskLinkForFile/);
   assert.match(calendarViewSource, /this\.buildCalendarNewEventOptions\(filterSources, \{[\s\S]*?taskTitleOverride: taskTitle,[\s\S]*?typeFolderOverride: finalFolderPath/);
   assert.match(calendarViewSource, /const createMode = this\.resolveEffectiveCreateMode\(filterSources\);[\s\S]*?if \(createMode === "task"\) \{/);
-  assert.match(newEventServiceSource, /const optionTaskTargetPath = normalizeCalendarTaskTargetPath\(options\?\.taskTargetPath\);/);
-  assert.match(newEventServiceSource, /const resolvedTaskTargetPath = optionTaskTargetPath \|\| normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\) \|\| null;/);
+  assert.match(newEventServiceSource, /const optionTaskTargetPath =\s*normalizeCalendarTaskTargetPath\(\s*options\?\.taskTargetPath,?\s*\);/);
+  assert.match(newEventServiceSource, /const resolvedTaskTargetPath =\s*optionTaskTargetPath \|\|\s*normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\) \|\|\s*null;/);
   assert.match(newEventServiceSource, /interface NewEventPromptContext/);
   assert.match(newEventServiceSource, /taskTargetPath: resolvedTaskTargetPath/);
   assert.match(newEventServiceSource, /hasTaskTargetPathOverride: !!optionTaskTargetPath/);
-  assert.match(newEventServiceSource, /await this\.promptForTitle\(options\?\.typeFolderOverride, promptContext\)/);
-  assert.match(newEventServiceSource, /private getPromptDestinationDisplay\(typeFolderOverride: string \| null \| undefined, context: NewEventPromptContext\): string/);
+  assert.match(newEventServiceSource, /await this\.promptForTitle\([\s\S]*?options\?\.typeFolderOverride,[\s\S]*?promptContext/);
+  assert.match(newEventServiceSource, /private getPromptDestinationDisplay\([\s\S]*?typeFolderOverride: string \| null \| undefined,[\s\S]*?context: NewEventPromptContext,[\s\S]*?\): string/);
   assert.match(newEventServiceSource, /return `\$\{context\.taskTargetPath\} \(\$\{context\.hasTaskTargetPathOverride \? "from filter" : "from settings"\}\)`/);
-  assert.match(newEventServiceSource, /if \(context\.taskDestination === "daily-note"\) return "Scheduled day's daily note";/);
-  assert.match(newEventServiceSource, /typeRow\.createSpan\(\{ text: isTaskMode \? "Task target:" : "Type:" \}\)/);
-  assert.match(newEventServiceSource, /if \(!isTaskMode\) \{[\s\S]*const typeBtn = buttons\.createEl\("button", \{ text: "Type\.\.\.", type: "button" \}\)/);
+  assert.match(newEventServiceSource, /if \(context\.taskDestination === "daily-note"\)\s*return "Scheduled day's daily note";/);
+  assert.match(newEventServiceSource, /typeRow\.createSpan\(\{[\s\S]*?text: isTaskMode \? "Task target:" : "Type:"[\s\S]*?\}\)/);
+  assert.match(newEventServiceSource, /if \(!isTaskMode\) \{[\s\S]*const typeBtn = buttons\.createEl\("button", \{[\s\S]*?text: "Type\.\.\.",[\s\S]*?type: "button"[\s\S]*?\}\)/);
   assert.doesNotMatch(newEventServiceSource, /hasOwnProperty\.call\(options, "taskTargetPath"\)/);
 });
 
@@ -1410,7 +1410,7 @@ test("calendar drag-created Daily Note tasks use Scheduled while dedicated targe
   assert.match(newEventServiceSource, /createTaskInDailyNote/);
   assert.match(newEventServiceSource, /vault\.process\(dailyFile, \(content\) => \{/);
   assert.match(newEventServiceSource, /if \(externalId && this\.hasTaskWithExternalId\(content, externalId\)\)/);
-  assert.match(newEventServiceSource, /insertLineInMarkdownSection\(content, taskLine, "Scheduled", 2, scheduledKey\)/);
+  assert.match(newEventServiceSource, /insertLineInMarkdownSection\([\s\S]*?content,[\s\S]*?taskLine,[\s\S]*?"Scheduled",[\s\S]*?2,[\s\S]*?scheduledKey/);
   assert.match(newEventServiceSource, /"task-line:skip-duplicate"/);
   assert.match(newEventServiceSource, /from "\.\.\/utils\/frontmatter-insert"/);
   assert.doesNotMatch(newEventServiceSource, /\$\{content\}\$\{taskLine\}\\n/);
@@ -1515,7 +1515,7 @@ test("calendar reschedules the current task line atomically without dropping con
 
 test("calendar task titles stay plain and associations resolve hidden metadata before legacy links", async () => {
   assert.doesNotMatch(newEventServiceSource, /from "\.\.\/utils\/task-title-link"/);
-  assert.match(newEventServiceSource, /const visibleTitle = String\(title \|\| this\.config\.defaultTitle \|\| "Untitled"\)/);
+  assert.match(newEventServiceSource, /const visibleTitle =\s*String\(title \|\| this\.config\.defaultTitle \|\| "Untitled"\)/);
   assert.match(newEventServiceSource, /const parts = \[`- \$\{checkboxState\} \$\{visibleTitle\}`]/);
   assert.doesNotMatch(newEventServiceSource, /const parts = \[`- \[ \] \$\{visibleTitle\}`]/);
   assert.doesNotMatch(calendarViewSource, /amendScheduledTaskLineTitleAsContextLink/);
@@ -1770,7 +1770,7 @@ test("calendar creation uses Base task filters as task defaults without leaking 
 
 test("task target paths fall back to settings and normalize link-shaped values", async () => {
   assert.match(taskTargetPathSource, /export function normalizeCalendarTaskTargetPath/);
-  assert.match(newEventServiceSource, /optionTaskTargetPath \|\| normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\) \|\| null/);
+  assert.match(newEventServiceSource, /optionTaskTargetPath \|\|\s*normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\) \|\|\s*null/);
   assert.match(calendarViewSource, /private handleCalendarBaseToolbarCreateClick\(evt: MouseEvent\): void/);
   assert.match(calendarViewSource, /const target = evt\.target instanceof Element \? evt\.target : null/);
   assert.match(calendarViewSource, /const createOwner = this\.getCalendarBaseToolbarCreateOwner\(target\)/);
