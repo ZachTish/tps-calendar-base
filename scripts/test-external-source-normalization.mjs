@@ -126,7 +126,11 @@ async function importBundled(relativePath) {
 
 const { CalendarView } = await importBundled("../src/calendar-view.tsx");
 const { normalizeCalendarUrl } = await importBundled("../src/utils.ts");
-const { getCalendarStartForAnchor } = await importBundled("../src/utils/calendar-day-count.ts");
+const {
+  getCalendarAnchorForStart,
+  getCalendarStartForAnchor,
+  resolveCalendarRangeAnchor,
+} = await importBundled("../src/utils/calendar-day-count.ts");
 const optimizedPrototype = CalendarView.prototype;
 const hasOptimizedScanNormalizer =
   typeof optimizedPrototype.normalizeSourceForExternalEventScan === "function";
@@ -197,38 +201,34 @@ function createBareView() {
   return view;
 }
 
-test("embedded host-note mode starts on the host day without changing standalone centering", () => {
-  const view = createBareView();
+test("embedded host-note mode centers the host-selected day like other manual ranges", () => {
   const hostDay = new Date(2026, 7, 28);
-  Object.assign(view, {
-    contextDateEnabled: true,
-    contextDateDetected: hostDay,
-    contextDateLastAppliedKey: "Inbox/Daily/2026-08-28.md::2026-7-28",
-    filterRangeAuto: false,
-    hasExplicitFilterRange: false,
-    isEmbeddedCalendarContext: () => true,
-  });
+  const rangeAnchor = resolveCalendarRangeAnchor(false, false);
+  assert.equal(rangeAnchor, "center");
+  assert.doesNotMatch(calendarSource, /host-start|rangeAnchorOverride/);
 
-  const embeddedAnchor = view.resolvePresentationRangeAnchor();
-  assert.equal(embeddedAnchor, "host-start");
-  assert.equal(
-    getCalendarStartForAnchor(hostDay, "7d", 7, 1, embeddedAnchor).getTime(),
-    hostDay.getTime(),
-    "a seven-day host-note embed must not begin three days before its host",
-  );
-  assert.equal(
-    getCalendarStartForAnchor(hostDay, "week", 7, 1, embeddedAnchor).getTime(),
-    hostDay.getTime(),
-    "host-note week mode must not snap back to the configured weekday",
-  );
+  for (const [viewMode, dayCount, expectedStart] of [
+    ["3d", 3, new Date(2026, 7, 27)],
+    ["4d", 4, new Date(2026, 7, 27)],
+    ["7d", 7, new Date(2026, 7, 25)],
+  ]) {
+    const start = getCalendarStartForAnchor(hostDay, viewMode, dayCount, 1, rangeAnchor);
+    assert.equal(
+      start.getTime(),
+      expectedStart.getTime(),
+      `${viewMode} must center the host-selected day instead of putting it first`,
+    );
+    assert.equal(
+      getCalendarAnchorForStart(start, viewMode, dayCount, 1, rangeAnchor).getTime(),
+      hostDay.getTime(),
+      `${viewMode} must preserve the host-selected day across rendered-range round trips`,
+    );
+  }
 
-  view.isEmbeddedCalendarContext = () => false;
-  const standaloneAnchor = view.resolvePresentationRangeAnchor();
-  assert.equal(standaloneAnchor, "center");
   assert.equal(
-    getCalendarStartForAnchor(hostDay, "7d", 7, 1, standaloneAnchor).getTime(),
-    new Date(2026, 7, 25).getTime(),
-    "ordinary standalone calendars retain their focal-day contract",
+    resolveCalendarRangeAnchor(true, true),
+    "start",
+    "explicit filter bounds must remain start-anchored",
   );
 });
 

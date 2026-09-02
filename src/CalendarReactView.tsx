@@ -53,7 +53,6 @@ import {
   getCalendarPresentationStartForAnchor,
   getCalendarStartForAnchor,
   resolveCalendarRangeAnchor,
-  type CalendarRangeAnchor,
 } from "./utils/calendar-day-count";
 import {
   getAutoRangeViewMode,
@@ -396,7 +395,6 @@ interface CalendarReactViewProps {
   navigationLocked?: boolean;
   filterRangeAuto?: boolean;
   hasExplicitFilterRange?: boolean;
-  rangeAnchorOverride?: CalendarRangeAnchor;
   entryBoundsStart?: Date;
   entryBoundsEnd?: Date;
   navigationBoundsStart?: Date;
@@ -614,7 +612,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   navigationLocked = false,
   filterRangeAuto = false,
   hasExplicitFilterRange = false,
-  rangeAnchorOverride,
   entryBoundsStart,
   entryBoundsEnd,
   navigationBoundsStart,
@@ -886,14 +883,11 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       preserveFilterRangeDayCount,
     );
   }, [configuredDayCount, containerWidth, isCanvasEmbed, isEmbedMode, preserveEmbeddedDayCount, preserveFilterRangeDayCount, resolvedFilterViewMode]);
-  const rangeAnchor = rangeAnchorOverride
-    ?? resolveCalendarRangeAnchor(filterRangeAuto, hasExplicitFilterRange);
+  const rangeAnchor = resolveCalendarRangeAnchor(filterRangeAuto, hasExplicitFilterRange);
   const viewName =
     resolvedFilterViewMode === "month" ? "dayGridMonth" :
       resolvedFilterViewMode === "continuous" ? "timeGridDay" :
-      resolvedFilterViewMode === "week"
-        && targetDayCount === 7
-        && rangeAnchor !== "host-start" ? "timeGridWeek" :
+      resolvedFilterViewMode === "week" && targetDayCount === 7 ? "timeGridWeek" :
         resolvedFilterViewMode === "day" ? "timeGridRange-1" :
           `timeGridRange-${targetDayCount}`;
 

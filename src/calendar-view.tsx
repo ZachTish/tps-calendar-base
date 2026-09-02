@@ -105,7 +105,6 @@ import {
   getCalendarStartForAnchor,
   resolveCalendarRangeAnchor,
   shiftCalendarMonthStart,
-  type CalendarRangeAnchor,
 } from "./utils/calendar-day-count";
 import {
   extractCalendarCreationModeFromFilters,
@@ -3834,7 +3833,10 @@ export class CalendarView extends BasesView {
       resolvedMode,
       configuredDayCount,
       safeWeekStartDay,
-      this.resolvePresentationRangeAnchor(),
+      resolveCalendarRangeAnchor(
+        this.filterRangeAuto,
+        this.hasExplicitFilterRange,
+      ),
     );
     const end = new Date(start);
     end.setDate(end.getDate() + configuredDayCount);
@@ -6624,7 +6626,6 @@ export class CalendarView extends BasesView {
             navigationLocked={this.navigationLockedByAutoRange}
             filterRangeAuto={this.filterRangeAuto}
             hasExplicitFilterRange={this.hasExplicitFilterRange}
-            rangeAnchorOverride={this.resolvePresentationRangeAnchor()}
             entryBoundsStart={this.filterRangeAuto && this.filterRangeStart ? this.filterRangeStart : undefined}
             entryBoundsEnd={this.filterRangeAuto && this.filterRangeEnd ? this.filterRangeEnd : undefined}
             navigationBoundsStart={renderedNavigationBounds.start}
@@ -9768,21 +9769,6 @@ export class CalendarView extends BasesView {
     this.directHostNotePath = normalized.toLowerCase().endsWith(".md")
       ? normalized
       : null;
-  }
-
-  private resolvePresentationRangeAnchor(): CalendarRangeAnchor {
-    if (
-      this.contextDateEnabled
-      && this.contextDateDetected
-      && this.contextDateLastAppliedKey
-      && this.isEmbeddedCalendarContext()
-    ) {
-      return "host-start";
-    }
-    return resolveCalendarRangeAnchor(
-      this.filterRangeAuto,
-      this.hasExplicitFilterRange,
-    );
   }
 
   private applyEmbeddedHeightVariable(): void {

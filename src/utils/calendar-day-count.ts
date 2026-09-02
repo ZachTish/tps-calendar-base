@@ -2,7 +2,7 @@ const EMBEDDED_TIMEGRID_MIN_DAY_WIDTH_PX = 230;
 const CANVAS_TIMEGRID_MIN_DAY_WIDTH_PX = 230;
 const TIMEGRID_SIDE_CHROME_PX = 70;
 
-export type CalendarRangeAnchor = "center" | "start" | "host-start";
+export type CalendarRangeAnchor = "center" | "start";
 
 export function resolveCalendarRangeAnchor(
   filterRangeAuto: boolean,
@@ -39,9 +39,8 @@ export function getAdaptiveTimeGridDayCount(
 /**
  * Resolves the first rendered calendar day from the user's selected day.
  * Manual multi-day ranges keep the selected day as their focal day. Exact
- * filter-derived ranges begin on their lower bound. A standalone full week
- * snaps to its configured first day, while an embedded host-start week begins
- * on the host note day promised by that view option.
+ * filter-derived ranges begin on their lower bound, and a full seven-day week
+ * snaps to its configured first day.
  */
 export function getCalendarStartForAnchor(
   anchor: Date,
@@ -60,11 +59,7 @@ export function getCalendarStartForAnchor(
   const safeDisplayedDayCount = Number.isFinite(displayedDayCount)
     ? Math.max(1, Math.round(displayedDayCount))
     : 1;
-  if (
-    viewMode === "week"
-    && safeDisplayedDayCount >= 7
-    && rangeAnchor !== "host-start"
-  ) {
+  if (viewMode === "week" && safeDisplayedDayCount >= 7) {
     const safeWeekStartDay = Number.isFinite(weekStartDay)
       ? Math.max(0, Math.min(6, Math.round(weekStartDay)))
       : 1;
@@ -116,11 +111,7 @@ export function getCalendarAnchorForStart(
   const safeDisplayedDayCount = Number.isFinite(displayedDayCount)
     ? Math.max(1, Math.round(displayedDayCount))
     : 1;
-  if (
-    viewMode === "week"
-    && safeDisplayedDayCount >= 7
-    && rangeAnchor !== "host-start"
-  ) {
+  if (viewMode === "week" && safeDisplayedDayCount >= 7) {
     return getCalendarStartForAnchor(anchor, viewMode, safeDisplayedDayCount, weekStartDay, rangeAnchor);
   }
   if (rangeAnchor === "center") {
