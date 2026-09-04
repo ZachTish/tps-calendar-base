@@ -372,6 +372,27 @@ test("native Calendar mutations require the complete enabled GCM nativeRecords v
   owner.unload();
 });
 
+test("optional calendar classification requires verified canonical identity and the additive GCM capability", async () => {
+  const { isGcmNativeCalendarRecord } = await loadRegistry();
+  const id = `calendar:v1:${"A".repeat(16)}:${"b".repeat(27)}`;
+  const api = { capabilities: { calendarTemplateRecords: true } };
+  for (const frontmatter of [{}, { kind: "event" }, { Kind: "Meeting" }, { kind: ["client", "meeting"] }]) {
+    const record = { id, kind: "calendar-event", frontmatter };
+    assert.equal(isGcmNativeCalendarRecord(record, api), true);
+    assert.equal(isGcmNativeCalendarRecord(record, {}), false, "an older provider cannot opt into the new classification contract");
+    assert.equal(isGcmNativeCalendarRecord(record, { capabilities: { calendarTemplateRecords: "true" } }), false);
+    assert.equal(isGcmNativeCalendarRecord(record, null), false);
+  }
+  for (const badId of ["calendar-123", `${id} `, ` ${id}`, id.toUpperCase(), id.slice(0, -1)]) {
+    assert.equal(isGcmNativeCalendarRecord({ id: badId, kind: "calendar-event", frontmatter: {} }, api), false);
+  }
+  for (const kind of ["task", "food", "food-entry", "event"]) {
+    assert.equal(isGcmNativeCalendarRecord({ id, kind, frontmatter: { kind: "calendar-event" } }, api), false);
+  }
+  assert.equal(isGcmNativeCalendarRecord(null, api), false);
+  assert.equal(isGcmNativeCalendarRecord({ id: "calendar-local", kind: "calendar-event", frontmatter: { kind: "calendar-event" } }, {}), true, "standalone and historical verified calendar records retain their existing API-v6 compatibility");
+});
+
 test("editable note previews require the exact UI v1 capability and normalize every provider outcome", async () => {
   const { installGcmApiRegistry, openGcmEditableNotePreview } =
     await loadRegistry();

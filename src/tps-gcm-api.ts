@@ -63,7 +63,9 @@ export interface GcmNativeRecordMutationCause {
 export interface GcmNativeRecordEnvelope extends Record<string, unknown> {
   tpsId: string;
   tpsSchemaVersion: number;
-  kind: GcmNativeRecordKind;
+  // Calendar-template records keep this user-authored classification optional.
+  // The verified inspection/handle kind, not this property, is structural.
+  kind?: unknown;
   title: string;
   createdDate: string;
   modifiedDate: string;
@@ -92,6 +94,7 @@ export type GcmNativeRecordReference =
 
 export interface GcmNativeRecordsApi {
   version: typeof GCM_NATIVE_RECORDS_API_VERSION;
+  capabilities?: { calendarTemplateRecords?: boolean };
   isEnabled: () => boolean;
   inspect: (frontmatter: unknown) => GcmNativeRecordInspection | null;
   resolve: (
@@ -397,6 +400,23 @@ export function getGcmNativeRecordsApi(app: App): GcmNativeRecordsApi | null {
   } catch {
     return null;
   }
+}
+
+/** Accept a calendar record only through GCM's verified structural contract. */
+export function isGcmNativeCalendarRecord<T extends GcmNativeRecordInspection | GcmNativeRecordHandle>(
+  record: T | null | undefined,
+  nativeRecords: GcmNativeRecordsApi | null,
+): record is T {
+  if (!record || record.kind !== "calendar-event" || !nativeRecords) return false;
+  const publicKind = record.frontmatter?.kind;
+  if (typeof publicKind === "string" && publicKind.trim().toLowerCase() === "calendar-event") {
+    return true;
+  }
+  // An absent/custom public kind never expands permission for task/food or
+  // ordinary notes. Only the additive capability can verify Controller IDs.
+  return nativeRecords.capabilities?.calendarTemplateRecords === true
+    && typeof record.id === "string"
+    && /^calendar:v1:[A-Za-z0-9_-]{16}:[A-Za-z0-9_-]{27}$/u.test(record.id);
 }
 
 /** Returns null when GCM does not provide the shared template-identity contract. */

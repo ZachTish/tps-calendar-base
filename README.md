@@ -1,5 +1,15 @@
 # TPS Calendar Base
 
+## 0.10.3
+
+- Validation: full declared suite 259/259, TypeScript, and a separate production build. Obsidian 1.14.0 reloaded the test vault with Calendar 0.10.3, Controller 0.15.0, and GCM 1.52.0. A native Base rendered both a Controller-created no-kind record and a template-owned kind: meeting record at 11:00–11:30 America/Chicago (stored 16:00Z–16:30Z). DOM cards and actual Calendar intervals agreed. Core Bases queries also verified an end-first formula and a 45-minute task-duration fallback. Optional-kind drag/resize/association writes are behavioral-test covered; no manual drag was needed to modify the fixture schedule. Synthetic creation/status/re-sync ran without outbound access or persisted settings changes. This release is test-vault verified and ready for the user's BRAT pull, not directly deployed to production.
+- Controller calendar notes can retain a custom or absent public `kind` without losing their canonical interval, drag/resize, drop, or association behavior. Calendar trusts GCM's verified structural calendar identity, not a user-facing classification value.
+- Optional-kind acceptance requires native-record API v6, `calendarTemplateRecords: true`, and an exact canonical Controller calendar ID. Historical/standalone verified `calendar-event` notes remain compatible; task/food/other native records, missing capabilities, malformed IDs, and stale path/identity targets still fail closed for native calendar mutations.
+- Behavioral regressions cover custom/no-kind records, authoritative `end`, 16:00Z and typed Bases date values rendering 11am Chicago, unchanged status/classification during schedule/association updates, and unsupported mutation rejection.
+- Obsidian still owns Base query filtering. Existing Bases that explicitly filter `kind == "calendar-event"` must admit their intended Controller notes independently of public kind; the plugin does not silently rewrite users' Base definitions. In mixed task/event Bases, an end formula can prefer `end` and fall back to `scheduled + timeEstimate` without adding note properties.
+- This is a backward-compatible consumer fix; standalone Calendar creation defaults are unchanged. GCM 1.52.0 supplies the new capability and Controller 0.15.0 creates template-owned classifications. Minimum Obsidian remains 1.10.0. Final validation and artifact hashes are recorded in `release-notes/0.10.3.md`.
+
+
 ## 0.10.2
 
 - Calendar templates, external-event meeting templates, and the standalone Daily Note fallback now participate in TPS Global Context Menu's shared exact `template` tag lifecycle. Calendar removes only that top-level marker from a new copy before creation and verifies it again after Templater, while preserving unrelated YAML tags and body `#template` text.

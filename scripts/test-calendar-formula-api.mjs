@@ -1598,7 +1598,7 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
       if (!frontmatter?.verifiedRecordKind) return null;
       return {
         kind: frontmatter.verifiedRecordKind,
-        frontmatter,
+        frontmatter: { ...frontmatter, kind: frontmatter.verifiedRecordKind },
       };
     },
     resolve: async () => null,
@@ -1781,6 +1781,125 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
     );
     assert.equal(minutes(interval), 5, `${label} cannot supply a canonical duration or end`);
     assert.equal(interval.hasExplicitEnd, false, `${label} keeps the readability fallback non-explicit`);
+  }
+});
+
+test("Controller calendar templates retain their 11am instant and authoritative end without a fixed public kind", () => {
+  const previousTimezone = process.env.TZ;
+  process.env.TZ = "America/Chicago";
+  try {
+    const id = `calendar:v1:${"A".repeat(16)}:${"b".repeat(27)}`;
+    const nativeRecords = {
+      version: 6,
+      capabilities: { calendarTemplateRecords: true },
+      isEnabled: () => true,
+      inspect: (frontmatter) => frontmatter?.tpsId === id
+        ? { id, kind: "calendar-event", frontmatter }
+        : null,
+      resolve: async () => null,
+      create: async () => null,
+      update: async () => null,
+    };
+    const view = createBareView({ nativeRecords, calendarStorageMode: "native-records" });
+    Object.assign(view, {
+      startDateProp: "note.scheduled",
+      endDateProp: "note.timeEstimate",
+      useEndDuration: true,
+      getMinimumEventDurationMinutes: () => 5,
+    });
+    for (const classification of [{}, { kind: "event" }, { Kind: "Client meeting" }]) {
+      const frontmatter = {
+        ...classification,
+        tpsId: id,
+        title: "1:1",
+        scheduled: "2026-09-03T16:00:00.000Z",
+        end: "2026-09-03T16:30:00.000Z",
+        status: "complete",
+      };
+      const original = structuredClone(frontmatter);
+      const file = createFile("Calendar Events/1-1.md");
+      for (const startValue of [frontmatter.scheduled, { date: new Date(frontmatter.scheduled), time: true }, "2026-09-03 11:00:00"]) {
+        const entry = { file, getValue: (property) => property === "note.scheduled" ? startValue : null };
+        const start = view.resolveEntryStartDate(entry, frontmatter);
+        assert.ok(start);
+        assert.equal(start.date.toISOString(), "2026-09-03T16:00:00.000Z");
+        assert.equal(start.date.getHours(), 11, "UTC instants and local clock strings render at the same local hour");
+        assert.equal(view.hasNoteLevelStartDate(file, frontmatter, start), true);
+        const interval = view.resolveNoteDisplayInterval(entry, frontmatter, start.date, null, true);
+        assert.equal(interval.endDate.toISOString(), "2026-09-03T16:30:00.000Z");
+        assert.equal(interval.endDate.getHours(), 11);
+        assert.equal(interval.endDate.getMinutes(), 30);
+        assert.equal(interval.hasExplicitEnd, true);
+      }
+      assert.deepEqual(frontmatter, original, "rendering must not normalize away the authored classification or timezone");
+    }
+  } finally {
+    if (previousTimezone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimezone;
+  }
+});
+
+test("native Controller calendar reschedule and association use structural identity without rewriting template classification", async () => {
+  const id = `calendar:v1:${"A".repeat(16)}:${"b".repeat(27)}`;
+  for (const classification of [{}, { kind: "event" }, { Kind: ["client", "meeting"] }]) {
+    const file = createFile("Calendar Events/1-1.md");
+    const frontmatter = { ...classification, tpsId: id, title: "1:1", status: "complete" };
+    const handle = { id, kind: "calendar-event", frontmatter, file, path: file.path };
+    const updates = [];
+    const nativeRecords = {
+      version: 6,
+      capabilities: { calendarTemplateRecords: true },
+      isEnabled: () => true,
+      inspect: () => ({ id, kind: "calendar-event", frontmatter }),
+      resolve: async () => handle,
+      create: async () => { throw new Error("must not create a replacement record"); },
+      update: async (reference, properties, cause) => {
+        updates.push({ reference, properties, cause });
+        Object.assign(frontmatter, properties);
+        return handle;
+      },
+    };
+    const view = createBareView({ nativeRecords, calendarStorageMode: "native-records", frontmatterByPath: { [file.path]: frontmatter } });
+    view.updateCalendar = async () => {};
+    const start = new Date("2026-09-03T16:00:00.000Z");
+    const end = new Date("2026-09-03T16:30:00.000Z");
+    assert.equal(view.inspectNativeCalendarRecord(file).kind, "calendar-event");
+    assert.equal(await view.resolveNativeCalendarRecord(file), handle);
+    await view.updateNativeCalendarRecordSchedule({ file, start, end, allDay: false, surface: "calendar-event-drop" });
+    await view.updateNativeCalendarAssociatedNote(file, null);
+    assert.equal(updates.length, 2);
+    assert.deepEqual(updates.map(({ reference }) => reference), [{ path: file.path, id }, { path: file.path, id }]);
+    assert.equal(updates[0].properties.scheduled, start.toISOString());
+    assert.equal(updates[0].properties.end, end.toISOString());
+    assert.deepEqual(updates[1].properties, { associatedNote: null });
+    assert.equal(frontmatter.status, "complete");
+    for (const key of ["kind", "Kind"]) {
+      assert.equal(Object.hasOwn(frontmatter, key), Object.hasOwn(classification, key));
+      assert.deepEqual(frontmatter[key], classification[key]);
+      assert.equal(updates.some(({ properties }) => Object.hasOwn(properties, key)), false);
+    }
+  }
+});
+
+test("native optional-kind mutations fail closed for unavailable capability and noncalendar structural records", async () => {
+  const id = `calendar:v1:${"A".repeat(16)}:${"b".repeat(27)}`;
+  for (const scenario of [{ kind: "calendar-event", capabilities: {} }, { kind: "task", capabilities: { calendarTemplateRecords: true } }, { kind: "food-entry", capabilities: { calendarTemplateRecords: true } }]) {
+    let updateCalls = 0;
+    const file = createFile("Calendar Events/Rejected.md");
+    const frontmatter = { tpsId: id, kind: "event" };
+    const nativeRecords = {
+      version: 6,
+      capabilities: scenario.capabilities,
+      isEnabled: () => true,
+      inspect: () => ({ id, kind: scenario.kind, frontmatter }),
+      resolve: async () => ({ id, kind: scenario.kind, frontmatter, file, path: file.path }),
+      create: async () => null,
+      update: async () => { updateCalls += 1; return null; },
+    };
+    const view = createBareView({ nativeRecords, calendarStorageMode: "native-records" });
+    await assert.rejects(view.updateNativeCalendarRecordSchedule({ file, start: new Date("2026-09-03T16:00:00Z"), end: new Date("2026-09-03T16:30:00Z"), allDay: false, surface: "calendar-event-drop" }), /verified native calendar-event/);
+    assert.equal(updateCalls, 0);
+    assert.equal(view.resolveNativeCalendarRecordEndDate({ ...frontmatter, end: "2026-09-03T16:30:00Z" }, new Date("2026-09-03T16:00:00Z"), true), null);
   }
 });
 

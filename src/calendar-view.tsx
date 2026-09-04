@@ -38,6 +38,7 @@ import {
   getExternalId,
   getGcmApi,
   getGcmNativeRecordsApi,
+  isGcmNativeCalendarRecord,
   isGcmTemplateFile,
   listGcmTemplateFiles,
   getGcmTaskCheckboxIconForState,
@@ -511,7 +512,7 @@ export class CalendarView extends BasesView {
 
     try {
       const inspection = nativeRecords.inspect(frontmatter);
-      if (inspection?.kind !== "calendar-event") return null;
+      if (!isGcmNativeCalendarRecord(inspection, nativeRecords)) return null;
 
       const canonicalFrontmatter =
         inspection.frontmatter &&
@@ -1238,7 +1239,7 @@ export class CalendarView extends BasesView {
         surface: args.surface,
       },
     });
-    if (!created || created.kind !== "calendar-event" || !(created.file instanceof TFile)) {
+    if (!isGcmNativeCalendarRecord(created, nativeRecords) || !(created.file instanceof TFile)) {
       throw new Error("GCM did not create a canonical Calendar record.");
     }
     logger.flow("NativeCalendar", "create:done", {
@@ -1259,7 +1260,7 @@ export class CalendarView extends BasesView {
   }): Promise<GcmNativeRecordHandle> {
     const nativeRecords = this.requireNativeCalendarRecordsApi();
     const record = await nativeRecords.resolve(args.file);
-    if (record?.kind !== "calendar-event") {
+    if (!isGcmNativeCalendarRecord(record, nativeRecords)) {
       throw new Error("Only a verified native calendar-event record can be scheduled here.");
     }
     const updated = await nativeRecords.update(
@@ -1271,7 +1272,7 @@ export class CalendarView extends BasesView {
         surface: args.surface,
       },
     );
-    if (!updated || updated.kind !== "calendar-event") {
+    if (!isGcmNativeCalendarRecord(updated, nativeRecords)) {
       throw new Error("GCM refused the native Calendar update.");
     }
     logger.flow("NativeCalendar", "update:done", {
@@ -5053,7 +5054,7 @@ export class CalendarView extends BasesView {
       try {
         const end = this.resolveNativeCalendarWriteEnd(file, start, undefined, allDay);
         const nativeRecord = await this.resolveNativeCalendarRecord(file);
-        if (nativeRecord?.kind === "calendar-event") {
+        if (isGcmNativeCalendarRecord(nativeRecord, getGcmNativeRecordsApi(this.app))) {
           await this.updateNativeCalendarRecordSchedule({
             file,
             start,
@@ -6814,7 +6815,7 @@ export class CalendarView extends BasesView {
     const nativeInspection = this.isNativeCalendarRecordMode()
       ? this.inspectNativeCalendarRecord(file)
       : null;
-    if (nativeInspection?.kind === "calendar-event") {
+    if (isGcmNativeCalendarRecord(nativeInspection, getGcmNativeRecordsApi(this.app))) {
       const associated = this.getNativeCalendarAssociatedNote(nativeInspection, file.path);
       menu.addItem((item) =>
         item
@@ -12264,7 +12265,7 @@ export class CalendarView extends BasesView {
       }
       const nativeRecords = this.requireNativeCalendarRecordsApi();
       const record = await nativeRecords.resolve(eventFile);
-      if (record?.kind !== "calendar-event") {
+      if (!isGcmNativeCalendarRecord(record, nativeRecords)) {
         throw new Error("The selected Calendar item is not a verified native calendar-event.");
       }
       const associatedNote = associatedFile
@@ -12279,7 +12280,7 @@ export class CalendarView extends BasesView {
           surface: "calendar-association",
         },
       );
-      if (!updated || updated.kind !== "calendar-event") {
+      if (!isGcmNativeCalendarRecord(updated, nativeRecords)) {
         throw new Error("GCM refused the native Calendar association update.");
       }
       logger.flow("NativeCalendar", "association:done", {
