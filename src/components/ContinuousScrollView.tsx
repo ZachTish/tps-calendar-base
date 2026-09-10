@@ -5,6 +5,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import { EventContentArg, EventMountArg } from "@fullcalendar/core";
 import { Platform } from "obsidian";
+import { installCalendarIdleReturn } from "../utils/calendar-idle-return";
 
 const PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 
@@ -23,6 +24,7 @@ const formatFullCalendarDuration = (minutesValue: unknown, fallback: number): st
 
 interface ContinuousScrollViewProps {
   currentDate?: Date;
+  isEmbedded?: boolean;
   events: any[];
   allDayMaxRows?: number;
   slotMinTimeValue: string;
@@ -64,6 +66,7 @@ interface ContinuousScrollViewProps {
  */
 export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   currentDate,
+  isEmbedded = false,
   events,
   allDayMaxRows,
   slotMinTimeValue,
@@ -98,6 +101,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   allDayExpanded,
 }) => {
   const isMobile = Platform.isMobile;
+  const usesPageScroll = isMobile && !isEmbedded;
   const [continuousDays, setContinuousDays] = useState<Date[]>([]);
   const continuousContainerRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
@@ -150,7 +154,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
         return;
       }
 
-      if (isMobile) {
+      if (usesPageScroll) {
         targetEl.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
       } else {
         const scrollPos = targetEl.offsetTop
@@ -167,7 +171,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
             return;
           }
           const targetRect = targetEl.getBoundingClientRect();
-          const viewportRect = isMobile
+          const viewportRect = usesPageScroll
             ? { top: 0, bottom: window.innerHeight }
             : continuousContainerRef.current.getBoundingClientRect();
           const viewportMidpoint = (viewportRect.top + viewportRect.bottom) / 2;
@@ -209,7 +213,74 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
         scrollTimeoutRef.current = null;
       }
     };
-  }, [currentDate, isMobile]);
+  }, [currentDate, usesPageScroll]);
+
+  useEffect(() => {
+    if (!isEmbedded) return;
+    const container = continuousContainerRef.current;
+    if (!container) return;
+
+    const getTodayBlock = (): HTMLElement | undefined => {
+      const todayKey = new Date().toDateString();
+      return Array.from(container.querySelectorAll<HTMLElement>(
+        '.bases-calendar-continuous-day-block',
+      )).find((block) => block.dataset.date === todayKey && !!block.querySelector('.fc-timegrid'));
+    };
+
+    return installCalendarIdleReturn(container, {
+      isEligible: () => !!getTodayBlock(),
+      isProgrammaticScroll: () => programmaticCenteringRef.current,
+      returnToNow: () => {
+        const todayBlock = getTodayBlock();
+        if (!todayBlock) return;
+        let target = todayBlock.querySelector<HTMLElement>('.fc-timegrid-now-indicator-line');
+        if (!target) {
+          const now = new Date();
+          const nowMinutes = now.getHours() * 60 + now.getMinutes();
+          let nearestDistance = Number.POSITIVE_INFINITY;
+          for (const slot of Array.from(todayBlock.querySelectorAll<HTMLElement>('.fc-timegrid-slot[data-time]'))) {
+            const match = (slot.dataset.time || '').match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+            if (!match) continue;
+            const distance = Math.abs(Number(match[1]) * 60 + Number(match[2]) - nowMinutes);
+            if (distance < nearestDistance) {
+              target = slot;
+              nearestDistance = distance;
+            }
+          }
+        }
+        if (!target) return;
+
+        // A pending day report or date-centering callback must not overwrite
+        // the time position, or turn this scroll into user date navigation.
+        ++centerGenerationRef.current;
+        if (centerTimeoutRef.current !== null) {
+          window.clearTimeout(centerTimeoutRef.current);
+          centerTimeoutRef.current = null;
+        }
+        if (centerFrameRef.current !== null) {
+          window.cancelAnimationFrame(centerFrameRef.current);
+          centerFrameRef.current = null;
+        }
+        if (centerReleaseTimeoutRef.current !== null) {
+          window.clearTimeout(centerReleaseTimeoutRef.current);
+        }
+        if (scrollTimeoutRef.current !== null) {
+          clearTimeout(scrollTimeoutRef.current);
+          scrollTimeoutRef.current = null;
+        }
+        programmaticCenteringRef.current = true;
+        const targetTop = container.scrollTop
+          + target.getBoundingClientRect().top
+          - container.getBoundingClientRect().top
+          - Math.round(container.clientHeight * 0.35);
+        container.scrollTop = Math.max(0, targetTop);
+        centerReleaseTimeoutRef.current = window.setTimeout(() => {
+          programmaticCenteringRef.current = false;
+          centerReleaseTimeoutRef.current = null;
+        }, 150);
+      },
+    });
+  }, [isEmbedded]);
 
   // Restore scroll position after prepend
   useLayoutEffect(() => {
@@ -289,7 +360,7 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
   }, [continuousDays, onDateChange, currentDate]);
 
   useEffect(() => {
-    if (!isMobile || !onDateChange) return;
+    if (!usesPageScroll || !onDateChange) return;
     const container = continuousContainerRef.current;
     if (!container) return;
     const reportVisibleMobileDay = () => {
@@ -326,22 +397,23 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
         scrollTimeoutRef.current = null;
       }
     };
-  }, [continuousDays, currentDate, isMobile, onDateChange]);
+  }, [continuousDays, currentDate, usesPageScroll, onDateChange]);
 
   return (
     <div
       ref={continuousContainerRef}
       className="bases-calendar-continuous-scroll-container"
       style={{
-        height: isMobile ? 'auto' : '100%',
-        overflowY: isMobile ? 'visible' : 'auto',
+        height: usesPageScroll ? 'auto' : '100%',
+        minHeight: isEmbedded ? 0 : undefined,
+        overflowY: usesPageScroll ? 'visible' : 'auto',
         overflowX: 'hidden',
         display: 'flex',
         flexDirection: 'column',
         gap: '1px',
         background: 'var(--background-secondary)'
       }}
-      onScroll={isMobile ? undefined : handleContinuousScroll}
+      onScroll={usesPageScroll ? undefined : handleContinuousScroll}
     >
       {continuousDays.map(day => {
         const isToday = day.toDateString() === new Date().toDateString();

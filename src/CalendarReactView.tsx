@@ -33,6 +33,7 @@ import { ExternalCalendarEvent } from "./types";
 // Extracted hooks
 import { useCalendarZoom } from "./hooks/useCalendarZoom";
 import { useTimeFollowing } from "./hooks/useTimeFollowing";
+import { installCalendarIdleReturn } from "./utils/calendar-idle-return";
 import { normalizeValue, tryGetValue, useCalendarEvents } from "./hooks/useCalendarEvents";
 
 // Extracted components
@@ -1375,12 +1376,27 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, [computedSlotHeight]);
 
   // Time-following hook
-  const { isFollowingNow, setIsFollowingNow, scrollToNow } = useTimeFollowing({
+  const { isFollowingNow, setIsFollowingNow, scrollToNow, isProgrammaticScrollRef } = useTimeFollowing({
     calendarRef: calendarRef as React.RefObject<FullCalendar>,
     containerRef: containerRef as React.RefObject<HTMLDivElement>,
     computedSlotHeight,
     initialFollowingNow: !isEmbedMode,
   });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!isEmbedMode || resolvedFilterViewMode === "continuous" || !container) return;
+    return installCalendarIdleReturn(container, {
+      isEligible: () => {
+        const api = calendarRef.current?.getApi();
+        if (!api?.view.type.startsWith("timeGrid")) return false;
+        const now = new Date();
+        return now >= api.view.activeStart && now < api.view.activeEnd;
+      },
+      returnToNow: scrollToNow,
+      isProgrammaticScroll: () => isProgrammaticScrollRef.current,
+    });
+  }, [isEmbedMode, resolvedFilterViewMode, scrollToNow, isProgrammaticScrollRef]);
 
   const renderableEntries = useMemo(
     () => entries.filter((entry) => !entry.isAuxiliaryDate && !entry.isArchivedExternalPlaceholder),
@@ -4065,6 +4081,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
           {resolvedFilterViewMode === 'continuous' && (
             <ContinuousScrollView
+              isEmbedded={isEmbedMode}
               currentDate={currentDate}
               onDateChange={(date, interactionStartedAt) => onDateChange?.(
                 date,

@@ -75,18 +75,17 @@ export function useTimeFollowing({
 
   const scrollToNow = useCallback(() => {
     const api = calendarRef.current?.getApi();
-    if (!api) return;
+    if (!api || !api.view.type.startsWith("timeGrid")) return;
     if (!isTodayInView()) return;
 
     const container = containerRef.current;
     if (!container) return;
 
     const now = new Date();
+    isProgrammaticScrollRef.current = true;
     api.scrollToTime(
       `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:00`,
     );
-
-    isProgrammaticScrollRef.current = true;
 
     requestAnimationFrame(() => {
       const nowLine = container.querySelector<HTMLElement>(".fc-timegrid-now-indicator-line");
@@ -225,5 +224,6 @@ export function useTimeFollowing({
     setIsFollowingNow,
     scrollToNow,
     isTodayInView,
+    isProgrammaticScrollRef,
   };
 }
