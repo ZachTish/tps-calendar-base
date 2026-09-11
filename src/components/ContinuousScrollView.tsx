@@ -1,3 +1,4 @@
+import { rememberCalendarTransfer, receiveCalendarTransfer } from "../utils/calendar-event-transfer";
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
@@ -499,6 +500,10 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
             eventClick={handleEventClick}
             eventContent={renderEventContent}
             eventDrop={handleDrop}
+              droppable={allowEdit}
+              dropAccept=".bases-calendar-event"
+              eventLeave={rememberCalendarTransfer}
+              eventReceive={(info) => receiveCalendarTransfer(info, handleDrop)}
             eventResize={handleResize}
             eventDidMount={handleEventMount}
             eventWillUnmount={handleEventWillUnmount}

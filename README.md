@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 0.10.5
+
+Native event creation no longer invents status: scheduled. The payload retains only title, interval and any associated note. Existing records are not rewritten. Embedded and continuous-day calendars accept transfers from other Calendar instances. Both temporary FullCalendar changes are restored before the ordinary confirmation dialog, and the existing authoritative writer commits the confirmed date change. Cancelling or failing does not remove the original event. Auxiliary markers remain non-draggable. This does not enable unsupported native-mode task-line imports or make formula fields writable.
+
+Validation on 2026-09-11: all 284 declared tests passed, including source/destination rollback before confirmation, rejection of unowned transfers, both renderers’ receive wiring and native creation without invented status. TypeScript and the separate production build passed; the isolated test vault loaded 0.10.5 in Obsidian 1.14.1 and rendered a synthetic event in an embedded timeline. Physical pointer/touch dragging remains a user acceptance check: desktop automation rejected the gesture while the active window changed. No iPhone/iPad gesture verification is claimed. This patch changes no settings or defaults and requires Obsidian 1.10.0.
+
+Validation and artifact hashes are recorded in `release-notes/0.10.5.md`.
+
 ## 0.10.4 embedded timeline return to now
 
 Embedded time-grid calendars that include today return to the current time 20 seconds after their last scroll. Each embed owns its own deadline; touch momentum, wheel, keyboard scrolling, and pointer release restart it. An active drag/held pointer delays the return. Fresh page renders also start at now, while routine event/query updates preserve the scroll deadline. Timers and listeners are removed with the embed. The visible date range is rechecked before scrolling, so a past/future-only range or month view is left alone; the calendar never navigates to a different date to satisfy the return.

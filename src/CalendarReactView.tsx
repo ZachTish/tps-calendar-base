@@ -1,3 +1,4 @@
+import { rememberCalendarTransfer, receiveCalendarTransfer } from "./utils/calendar-event-transfer";
 import React, {
   useCallback,
   useEffect,
@@ -4017,6 +4018,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               eventMouseEnter={handleEventMouseEnter}
               eventMouseLeave={handleEventMouseLeave}
               eventDrop={handleDrop}
+              droppable={allowEdit}
+              dropAccept=".bases-calendar-event"
+              eventLeave={rememberCalendarTransfer}
+              eventReceive={(info) => receiveCalendarTransfer(info, handleDrop)}
               eventResize={handleResize}
               eventDidMount={handleEventMount}
               dayHeaderDidMount={handleDayMount}

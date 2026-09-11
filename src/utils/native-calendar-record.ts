@@ -13,7 +13,6 @@ export interface NativeCalendarScheduleUpdate extends Record<string, unknown> {
 
 export interface NativeCalendarCreateProperties extends NativeCalendarIntervalFields {
   title: string;
-  status: "scheduled";
   associatedNote?: string;
 }
 
@@ -77,7 +76,6 @@ export function buildNativeCalendarCreateProperties(args: {
   const associatedNote = String(args.associatedNote || "").trim();
   return {
     title,
-    status: "scheduled",
     ...buildNativeCalendarIntervalFields(args.start, args.end, args.allDay),
     ...(associatedNote ? { associatedNote } : {}),
   };

@@ -41,11 +41,10 @@ test("native Calendar create payloads contain only canonical public fields", () 
 
   assert.deepEqual(properties, {
     title: "Project review",
-    status: "scheduled",
     scheduled: start.toISOString(),
     end: end.toISOString(),
   });
-  assert.deepEqual(Object.keys(properties).sort(), ["end", "scheduled", "status", "title"]);
+  assert.deepEqual(Object.keys(properties).sort(), ["end", "scheduled", "title"]);
   for (const forbidden of [
     "tpsId",
     "tpsSchemaVersion",
@@ -78,7 +77,6 @@ test("all-day records store an exclusive local-date interval and a separate-note
   assert.equal(associatedNote, "[[Projects/Quarterly review]]");
   assert.deepEqual(properties, {
     title: "Quarterly review",
-    status: "scheduled",
     scheduled: "2026-08-31",
     end: "2026-09-02",
     allDay: true,
