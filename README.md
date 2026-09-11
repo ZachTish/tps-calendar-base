@@ -1,5 +1,15 @@
 # TPS Calendar Base
 
+## 0.11.0
+
+External calendar note creation, linking and unlinking honor the integration property names owned by GCM 2.2.0. Earlier GCM releases retain the default-name behavior. Configure names once in GCM → Advanced → Integration property names; Calendar adds no duplicate settings or new commands. Inline task metadata and the calendar interval contract are unchanged.
+
+Creating a note from a past external event no longer forces `status: complete`; template/user status is preserved. Linking and unlinking use the shared external-identity writer, including configured keys and legacy aliases. No existing notes are migrated at startup. Minimum Obsidian remains 1.10.0. This minor version adds support for shared key configuration.
+
+Validation on 2026-09-11: the final versioned declared suite reported 285 passed, zero failures/skips; TypeScript and the production build passed. The mandatory separate build deployed only shipped artifacts to the isolated test vault. Obsidian 1.14.1 reloaded GCM 2.2.0, Calendar 0.11.0 and Controller 1.1.0. Through the real GCM settings editor, a custom external-identity key persisted, legacy identity remained readable, and a synthetic note update wrote only the chosen key while preserving its body and authored type. The temporary settings were restored and the fixture moved directly to `_archive`. The six inputs have unique accessible names, can receive focus, and fit the narrow 600 px native settings window with stacked controls; this is desktop narrow-layout verification, not an iPhone test. Controller’s Open GCM settings button selected the correct plugin. No external calendar endpoint or production vault was used. Compatibility fallbacks, alias conflicts, repeated renames, no-bookkeeping archive restoration and the consumer API contracts have regression coverage.
+
+Validation and final artifact hashes are recorded in `release-notes/0.11.0.md`.
+
 ## 0.10.5
 
 Native event creation no longer invents status: scheduled. The payload retains only title, interval and any associated note. Existing records are not rewritten. Embedded and continuous-day calendars accept transfers from other Calendar instances. Both temporary FullCalendar changes are restored before the ordinary confirmation dialog, and the existing authoritative writer commits the confirmed date change. Cancelling or failing does not remove the original event. Auxiliary markers remain non-draggable. This does not enable unsupported native-mode task-line imports or make formula fields writable.

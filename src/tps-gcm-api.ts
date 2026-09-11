@@ -163,6 +163,8 @@ export interface GcmApi {
     prepareInstanceSource?: (source: string) => unknown;
   };
   identity?: {
+    getNoteField?: (frontmatter: Record<string, unknown> | null | undefined, field: 'externalId' | 'location' | 'url' | 'tpsCalendarOrphanCandidateAt' | 'tpsCalendarCancelledAt') => unknown;
+    setNoteField?: (frontmatter: Record<string, unknown>, field: 'externalId' | 'location' | 'url' | 'tpsCalendarOrphanCandidateAt' | 'tpsCalendarCancelledAt', value: unknown) => void;
     internalIdKey?: string;
     externalIdKey?: string;
     createInternalId?: () => string;
@@ -1040,4 +1042,18 @@ function createFallbackInternalId(): string {
       ? cryptoApi.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   return `item_${raw.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+}
+
+/** GCM owns persisted integration field names; inline task tokens stay canonical. */
+export function getIntegrationNoteField(app: App, frontmatter: Record<string, unknown>, field: 'externalId' | 'location' | 'url' | 'tpsCalendarOrphanCandidateAt' | 'tpsCalendarCancelledAt'): unknown {
+  const identity = getGcmApi(app)?.identity;
+  if (typeof identity?.getNoteField === 'function') return identity.getNoteField(frontmatter, field);
+  const key = Object.keys(frontmatter).find(candidate => candidate.toLowerCase() === field.toLowerCase());
+  return key ? frontmatter[key] : undefined;
+}
+export function setIntegrationNoteField(app: App, frontmatter: Record<string, unknown>, field: 'externalId' | 'location' | 'url' | 'tpsCalendarOrphanCandidateAt' | 'tpsCalendarCancelledAt', value: unknown): void {
+  const identity = getGcmApi(app)?.identity;
+  if (typeof identity?.setNoteField === 'function') { identity.setNoteField(frontmatter, field, value); return; }
+  const key = Object.keys(frontmatter).find(candidate => candidate.toLowerCase() === field.toLowerCase()) || field;
+  if (value == null) delete frontmatter[key]; else frontmatter[key] = value;
 }

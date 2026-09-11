@@ -7,7 +7,7 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 test('external event note creation writes tpsId and externalId, not legacy triplet', () => {
   const modal = read('src/modals/external-event-modal.ts');
   assert.match(modal, /ensureInternalIdInFrontmatter\(app, frontmatter\)/);
-  assert.match(modal, /frontmatter\.externalId = buildCalendarExternalId\(app, event\)/);
+  assert.match(modal, /setIntegrationNoteField\(app, frontmatter, 'externalId', buildCalendarExternalId\(app, event\)\)/);
   assert.match(modal, /if \(event\.isAllDay\) \{\s*frontmatter\["allDay"\] = true;/);
   assert.doesNotMatch(modal, /frontmatter\["allDay"\] = !!event\.isAllDay/);
   assert.doesNotMatch(modal, /setFrontmatterValueCaseInsensitive\(fm, "folderPath"/);
@@ -34,7 +34,7 @@ test('Calendar note writes keep true all-day state and remove synthesized false 
 
 test('linking a note to an external event writes externalId and removes legacy triplet', () => {
   const view = read('src/calendar-view.tsx');
-  assert.match(view, /fm\.externalId = this\.buildExternalIdForEvent\(event\)/);
+  assert.match(view, /setIntegrationNoteField\(this\.app, fm, 'externalId', this\.buildExternalIdForEvent\(event\)\)/);
   assert.match(view, /ensureInternalIdInFrontmatter\(this\.app, fm as Record<string, unknown>\)/);
   assert.match(view, /"tpsCalendarUid"/);
   assert.match(view, /"tpsCalendarSourceUrl"/);

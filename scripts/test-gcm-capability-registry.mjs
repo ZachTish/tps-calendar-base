@@ -705,3 +705,12 @@ test("typed status, task-checkbox, inline-property, and parent-link capabilities
   assert.equal(getGcmTaskStatusForCheckboxState(app, "[x]"), null);
   owner.unload();
 });
+
+test('calendar integration field writes honor the shared configured-name API', async () => {
+ const { getIntegrationNoteField, setIntegrationNoteField, installGcmApiRegistry } = await loadRegistry();
+ const fm={mirror:'old',title:'Keep'};
+ const workspace=createWorkspace(); const app={workspace}; const owner=createOwner(workspace); installGcmApiRegistry(owner,app);
+ workspace.trigger('tps:gcm-api-changed',availablePayload({identity:{getNoteField: (value)=>value.mirror,setNoteField:(value,field,next)=>{if(next==null)delete value.mirror;else value.mirror=next;}}}));
+ assert.equal(getIntegrationNoteField(app,fm,'externalId'),'old');setIntegrationNoteField(app,fm,'externalId','new');assert.deepEqual(fm,{mirror:'new',title:'Keep'});
+ setIntegrationNoteField(app,fm,'externalId',null);assert.deepEqual(fm,{title:'Keep'}); owner.unload();
+});

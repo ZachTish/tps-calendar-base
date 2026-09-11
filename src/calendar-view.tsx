@@ -1,3 +1,4 @@
+import { setIntegrationNoteField } from './tps-gcm-api';
 import {
   App,
   BasesEntry,
@@ -12375,7 +12376,7 @@ export class CalendarView extends BasesView {
 
       await this.processGcmFrontmatter(file, (fm) => {
         ensureInternalIdInFrontmatter(this.app, fm as Record<string, unknown>);
-        fm.externalId = this.buildExternalIdForEvent(event);
+        setIntegrationNoteField(this.app, fm, 'externalId', this.buildExternalIdForEvent(event));
         for (const key of [
           this.plugin.settings.eventIdKey || "externalEventId",
           this.plugin.settings.uidKey,
@@ -12421,6 +12422,9 @@ export class CalendarView extends BasesView {
       let changed = false;
 
       await this.processGcmFrontmatter(file, (fm) => {
+        const before = Object.keys(fm).length;
+        setIntegrationNoteField(this.app, fm, 'externalId', null);
+        changed = Object.keys(fm).length !== before;
         for (const key of keys) {
           const existingKey = this.findFrontmatterKeyCaseInsensitive(fm as Record<string, any>, key);
           if (!existingKey) continue;

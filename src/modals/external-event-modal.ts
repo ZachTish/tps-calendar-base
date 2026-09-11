@@ -1,3 +1,4 @@
+import { setIntegrationNoteField } from '../tps-gcm-api';
 import { App, Modal, TFile, normalizePath, Notice, moment } from "obsidian";
 import { ExternalCalendarEvent } from "../types";
 import * as logger from "../logger";
@@ -267,19 +268,15 @@ export async function createMeetingNoteFromExternalEvent(
   // Build frontmatter object for fields we need to set. TPS identity is owned by GCM:
   // new notes persist one internal id and one external mirror id.
   const titleKey = frontmatterKeys?.titleKey || "title";
-  const statusKey = frontmatterKeys?.statusKey || "status";
 
   const frontmatter: Record<string, any> = {};
   ensureInternalIdInFrontmatter(app, frontmatter);
-  frontmatter.externalId = buildCalendarExternalId(app, event);
+  setIntegrationNoteField(app, frontmatter, 'externalId', buildCalendarExternalId(app, event));
   frontmatter[titleKey] = event.title;
   if (event.isAllDay) {
     frontmatter["allDay"] = true;
   }
 
-  if (event.endDate.getTime() < Date.now()) {
-    frontmatter[statusKey] = "complete";
-  }
 
   if (startProperty) {
     frontmatter[startProperty] = formatDateTimeForFrontmatter(event.startDate);
