@@ -88,10 +88,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     containerEl.empty();
 
     containerEl.createEl("h2", { text: "TPS Calendar Settings" });
-    containerEl.createEl("p", {
-      cls: "setting-item-description tps-settings-intro",
-      text: "Choose an area below. Only that settings page is shown, so common controls stay easy to find without a long wall of options.",
-    });
 
     const hub = containerEl.createDiv({ cls: "tps-settings-hub" });
     hub.createDiv({
@@ -135,10 +131,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
         },
       });
       button.createSpan({ cls: "tps-settings-destination-label", text: label });
-      button.createSpan({
-        cls: "tps-settings-destination-description",
-        text: description,
-      });
       button.addEventListener("click", () => activatePage(id, true));
       pageButtons[id] = button;
 
@@ -157,10 +149,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           id: `tps-calendar-settings-${id}-title`,
           tabindex: "-1",
         },
-      });
-      page.createEl("p", {
-        cls: "tps-settings-page-description",
-        text: description,
       });
       pageElements[id] = page;
     });
@@ -194,7 +182,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     const calendarsSection = createSettingsGroup(
       sourcesPage,
       "External Calendar Sources and Import Filters",
-      "Source feeds and quick import. This is the highest-priority setup area for the calendar plugin.",
     );
 
     if (!(this.plugin.settings.enableExternalCalendars ?? true)) {
@@ -212,7 +199,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       });
       new Setting(managedNotice)
         .setName("External calendar rules")
-        .setDesc("Go directly to the plugin that owns these settings.")
         .addButton((button) =>
           button
             .setButtonText("Open Controller settings")
@@ -470,7 +456,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     new Setting(viewBehaviorSection)
       .setName("Default view mode")
-      .setDesc("Applies to all calendar views.")
       .addDropdown((dropdown) =>
         dropdown
           .addOption("day", "Day")
