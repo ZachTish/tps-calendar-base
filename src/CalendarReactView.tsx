@@ -41,6 +41,8 @@ import { normalizeValue, tryGetValue, useCalendarEvents } from "./hooks/useCalen
 import { useEventRenderer } from "./components/EventRenderer";
 import { CalendarNavigation } from "./components/CalendarNavigation";
 import { ContinuousScrollView } from "./components/ContinuousScrollView";
+import { renderCurrentTimeLabel } from "./components/CurrentTimeLabel";
+import "./components/current-time-label.css";
 import { revealCompletedCheckboxesForFile, shouldForceBaseLinkPreview } from "./tps-gcm-api";
 import {
   buildCalendarExternalDropRequest,
@@ -4034,6 +4036,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
               eventResizeStop={handleDragStop}
 
               nowIndicator={showNowIndicator}
+              nowIndicatorContent={(arg) => renderCurrentTimeLabel(arg, timeFormatSetting === "12h")}
               dayHeaderFormat={
                 resolvedFilterViewMode === "month"
                   ? { weekday: dayHeaderFormatSetting }
@@ -4086,6 +4089,8 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
           {resolvedFilterViewMode === 'continuous' && (
             <ContinuousScrollView
+              timeFormatSetting={timeFormatSetting}
+              showNowIndicator={showNowIndicator}
               isEmbedded={isEmbedMode}
               currentDate={currentDate}
               onDateChange={(date, interactionStartedAt) => onDateChange?.(

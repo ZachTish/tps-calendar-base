@@ -1,5 +1,26 @@
 # TPS Calendar Base
 
+## 0.12.0 — Current-time label
+
+The red current-time line now shows the current hour and minute directly above it.
+The label's minute-aligned display timer advances without refreshing events or
+reading the vault and catches up on focus/visibility return. Dedicated, embedded
+and continuous time-grid calendars use the plugin's 12/24-hour format and the
+view's Show now indicator setting. FullCalendar retains ownership of line geometry.
+The gutter arrow has no duplicate label; past/future-only days and month views
+retain FullCalendar's existing indicator visibility. No settings, notes or schemas
+are migrated. Minimum Obsidian remains 1.10.0.
+
+This additive display feature receives a minor version. Tests cover formatting,
+minute/noon/midnight transitions, both renderer hooks and visibility inheritance.
+Final validation and artifact hashes are recorded in `release-notes/0.12.0.md`.
+
+Validation on 2026-09-12: all 288 declared tests passed, followed by TypeScript and
+the separate production build/deployment. The isolated Obsidian 1.14.1 runtime
+loaded 0.12.0 and displayed the label above the red line; it advanced across a
+minute boundary without refreshing event data. No physical iPhone or production
+installation is claimed.
+
 ## 0.11.0
 
 External calendar note creation, linking and unlinking honor the integration property names owned by GCM 2.2.0. Earlier GCM releases retain the default-name behavior. Configure names once in GCM → Advanced → Integration property names; Calendar adds no duplicate settings or new commands. Inline task metadata and the calendar interval contract are unchanged.

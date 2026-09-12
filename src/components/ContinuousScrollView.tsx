@@ -7,6 +7,7 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import { EventContentArg, EventMountArg } from "@fullcalendar/core";
 import { Platform } from "obsidian";
 import { installCalendarIdleReturn } from "../utils/calendar-idle-return";
+import { renderCurrentTimeLabel } from "./CurrentTimeLabel";
 
 const PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 
@@ -24,6 +25,8 @@ const formatFullCalendarDuration = (minutesValue: unknown, fallback: number): st
 };
 
 interface ContinuousScrollViewProps {
+  timeFormatSetting?: "12h" | "24h";
+  showNowIndicator?: boolean;
   currentDate?: Date;
   isEmbedded?: boolean;
   events: any[];
@@ -66,6 +69,8 @@ interface ContinuousScrollViewProps {
  * per day, infinite scroll up/down (capped at 14 days).
  */
 export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
+  timeFormatSetting = "12h",
+  showNowIndicator = true,
   currentDate,
   isEmbedded = false,
   events,
@@ -514,7 +519,8 @@ export const ContinuousScrollView: React.FC<ContinuousScrollViewProps> = ({
             select={allowSelect ? handleSelect : undefined}
             selectAllow={allowSelect ? handleSelectAllow : undefined}
             unselect={allowSelect ? handleUnselect : undefined}
-            nowIndicator={true}
+            nowIndicator={showNowIndicator}
+            nowIndicatorContent={(arg) => renderCurrentTimeLabel(arg, timeFormatSetting === "12h")}
             dayMaxEvents={allDayExpanded ? false : (allDayMaxRows ?? 3)}
             dayMaxEventRows={allDayExpanded ? false : (allDayMaxRows ?? 3)}
             // @ts-ignore

@@ -1,0 +1,16 @@
+.fc .tps-calendar-current-time-label {
+  position: absolute;
+  bottom: 2px;
+  inset-inline-start: 3px;
+  max-width: calc(100% - 6px);
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: var(--background-primary);
+  color: var(--fc-now-indicator-color, #f33);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
