@@ -167,6 +167,7 @@ function createBareView() {
   const view = Object.create(CalendarView.prototype);
   view.app = {
     plugins: { getPlugin: () => null },
+    workspace: { getActiveFile: () => null },
     metadataCache: { getFileCache: () => null },
     vault: { getMarkdownFiles: () => [] },
   };
@@ -232,7 +233,7 @@ test("embedded host-note mode centers the host-selected day like other manual ra
   );
 });
 
-test("late filename-only Daily Note detection replaces stale state once and follows host transitions", () => {
+test("late scheduled host detection replaces stale state once and follows host transitions", () => {
   const view = createBareView();
   let hostPath = null;
   Object.assign(view, {
@@ -241,8 +242,7 @@ test("late filename-only Daily Note detection replaces stale state once and foll
     contextDateLastAppliedKey: null,
     findParentNotePath: () => hostPath,
     extractContextDateFromHostAttributes: () => null,
-    extractContextDateFromFrontmatter: () => null,
-    extractDateFromPath: (path) => {
+    extractContextDateFromFrontmatter: (path) => {
       const match = String(path).match(/(\d{4})-(\d{2})-(\d{2})\.md$/);
       return match
         ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
@@ -1442,4 +1442,84 @@ test("interleaved source-scan benchmark proves a material isolated improvement",
     optimizedMedian < baselineMedian * 0.75,
     `optimized median ${optimizedMedian.toFixed(3)}ms must be at least 25% faster than ${baselineMedian.toFixed(3)}ms`,
   );
+});
+
+
+test("sidebar date source follows active notes while embedded hosts retain priority", () => {
+  const view = createBareView();
+  let active = { path: "Inbox/A.md", extension: "md" };
+  let host = null;
+  view.app.workspace.getActiveFile = () => active;
+  view.findParentNotePath = () => host;
+  view.lastActiveContextNotePath = null;
+  assert.equal(view.resolveContextSourcePath(), "Inbox/A.md");
+  active = { path: "Sidebar.base", extension: "base" };
+  assert.equal(view.resolveContextSourcePath(), "Inbox/A.md", "focusing sidebar retains last Markdown context");
+  active = { path: "Inbox/B.md", extension: "md" };
+  assert.equal(view.resolveContextSourcePath(), "Inbox/B.md");
+  host = "Inbox/Host.md";
+  assert.equal(view.resolveContextSourcePath(), host);
+});
+
+test("scheduled changes reanchor once, missing schedules use today without filename inference", () => {
+  const view = createBareView();
+  let scheduled = new Date(2099, 0, 15);
+  Object.assign(view, {
+    currentDate: new Date(2026, 0, 1), viewMode: "day",
+    resolveContextSourcePath: () => "Inbox/2090-01-01.md",
+    extractContextDateFromHostAttributes: () => null,
+    extractContextDateFromFrontmatter: () => scheduled && new Date(scheduled),
+    extractDateFromPath: () => assert.fail("filename must not drive this mode"),
+    persistCurrentDate: () => {},
+  });
+  view.detectContextDate();
+  assert.equal(view.currentDate.getTime(), scheduled.getTime());
+  scheduled = new Date(2099, 0, 16);
+  view.detectContextDate();
+  assert.equal(view.currentDate.getTime(), scheduled.getTime());
+  scheduled = null;
+  view.detectContextDate();
+  const today = new Date(); today.setHours(0,0,0,0);
+  assert.equal(view.currentDate.getTime(), today.getTime());
+});
+
+test("context dates outrank explicit filter range anchoring", () => {
+  const view = createBareView();
+  const selected = new Date(2099, 0, 15);
+  Object.assign(view, {
+    currentDate: new Date(selected), contextDateDetected: new Date(selected),
+    autoRangeInitialized: false, filterRangeAuto: true,
+    getFilterRangeBoundsFromConfig: () => ({start: new Date(2026,0,1), end: new Date(2026,0,3)}),
+    resolveStoredViewMode: () => "day", persistCurrentDate: () => {},
+  });
+  view.computeFilterDateRange([]);
+  assert.equal(view.currentDate.getTime(), selected.getTime());
+  assert.equal(view.navigationBoundsStart, null);
+  assert.equal(view.navigationBoundsEnd, null);
+});
+
+
+test("following a note never saves an automatic date into the shared Base", () => {
+  const view = createBareView();
+  view.contextDateEnabled = true;
+  view.config = { set: () => assert.fail("automatic context must not write Base") };
+  view.persistCurrentDate(new Date(2099,0,15));
+  assert.equal(view.saveDateTimeout, undefined);
+});
+
+
+test("filter-driven manual views anchor to changed filter bounds without changing their mode", () => {
+  const view = createBareView();
+  Object.assign(view, {
+    currentDate: new Date(2099,1,10), contextDateEnabled: false, contextDateDetected: null,
+    autoRangeInitialized: false, filterRangeAuto: false, viewMode: "day",
+    getFilterRangeBoundsFromConfig: () => ({start: new Date(2099,0,15), end: new Date(2099,0,17)}),
+    persistCurrentDate: () => {},
+  });
+  view.computeFilterDateRange([]);
+  assert.equal(view.currentDate.getTime(), new Date(2099,0,15).getTime());
+  assert.equal(view.viewMode, "day");
+  view.currentDate = new Date(2099,0,16);
+  view.computeFilterDateRange([]);
+  assert.equal(view.currentDate.getTime(), new Date(2099,0,16).getTime(), "same-filter refresh preserves manual navigation");
 });

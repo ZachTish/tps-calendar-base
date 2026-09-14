@@ -814,7 +814,7 @@ test('calendar day-count paths use shared calendar-day helper', () => {
   assert.match(hostSource, /const rangeKey = `\$\{hasExplicitBounds \? "explicit" : "entries"\}-/);
   assert.match(
     hostSource,
-    /if \(nextViewMode !== "month"\) \{\s*this\.currentDate = new Date\(startOfMinDay\);/,
+    /if \(nextViewMode !== "month" && !this\.contextDateDetected\) \{\s*this\.currentDate = new Date\(startOfMinDay\);/,
   );
 });
 

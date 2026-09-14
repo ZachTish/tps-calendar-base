@@ -2022,8 +2022,8 @@ test("every create-new route uses one post-create dispatcher without a read-only
   );
 });
 
-test("host-note start mode anchors once without following unrelated active notes", () => {
-  assert.match(calendarViewSource, /const parentNote = this\.findParentNotePath\(\);/);
+test("note-driven mode uses scoped host before active-note context", () => {
+  assert.match(calendarViewSource, /const parentNote = this\.resolveContextSourcePath\(\);/);
   assert.match(calendarViewSource, /this\.extractContextDateFromFrontmatter\(parentNote\)/);
   assert.match(calendarViewSource, /if \(this\.contextDateEnabled\) \{[\s\S]*this\.detectContextDate\(\);[\s\S]*\}/);
   assert.match(calendarViewSource, /onDateChange=\{\(date, source, interactionStartedAt\) => \{[\s\S]*this\.handleRenderedDateChange\([\s\S]*date,[\s\S]*source,[\s\S]*renderGeneration,[\s\S]*interactionStartedAt,/);

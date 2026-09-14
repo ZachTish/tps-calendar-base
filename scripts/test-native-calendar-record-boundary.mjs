@@ -172,3 +172,10 @@ test("every native Calendar mutation route stays behind API v6 and shared public
   assert.match(viewSource, /!nativeRecordMode[\s\S]{0,180}this\.getAuxiliaryDateMarkers\(entryFrontmatter\)/u);
   assert.doesNotMatch(utilitySource, /eventTitle|associatedNotePath|calendar(?:Id|Uid|SourceId|OccurrenceId)|tpsId/u);
 });
+
+
+test("atomic-note date presentation reads Base bounds without enabling synthetic formula evaluation", () => {
+  const core = methodSource("private async updateCalendarCore(", "private getEffectiveFilterRangeEntries(");
+  assert.ok(core.indexOf("this.currentBaseFileFilterSources = await this.readBaseFileFilterSources()") < core.indexOf("if (nativeRecordMode)"));
+  assert.match(core, /if \(nativeRecordMode\) \{[\s\S]*?this\.formulaEvaluationEnabled = false;[\s\S]*?\} else \{\s*await this\.prepareFormulaRuntime\(\);/u);
+});

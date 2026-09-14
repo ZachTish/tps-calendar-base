@@ -662,6 +662,7 @@ export class CalendarView extends BasesView {
   private preserveEmbeddedDayCount: boolean = false;
   private directPreserveEmbeddedDayCount: boolean = false;
   private directHostNotePath: string | null = null;
+  private lastActiveContextNotePath: string | null = null;
   private showEmbeddedHeader: boolean = true;
   private newEventService: NewEventService;
   private externalCalendarUrls: string[] = [];
@@ -1793,15 +1794,27 @@ export class CalendarView extends BasesView {
     // All Day Limit
     this.allDayLimit = this.parseNumberConfig(this.config.get("allDayLimit"), 3);
 
-    // Legacy key, now used as an initial host-note date anchor rather than a live active-note follower.
+    // Preserve the existing per-Base boolean key while naming its two date sources explicitly.
     const followActiveNoteDayValue =
       this.config.get(FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY) ??
       this.config.get(LEGACY_CONTEXT_DATE_CONFIG_KEY);
+    const previousContextDateEnabled = this.contextDateEnabled;
     this.contextDateEnabled = this.parseBooleanLike(
       followActiveNoteDayValue,
       this.plugin.settings.contextDateEnabled === true,
     );
 
+
+    if (previousContextDateEnabled !== this.contextDateEnabled) {
+      if (this.saveDateTimeout) {
+        clearTimeout(this.saveDateTimeout);
+        this.saveDateTimeout = null;
+        this.saveDateTimeoutSource = null;
+      }
+      this.autoRangeInitialized = false;
+      this.lastAutoRangeKey = null;
+      this.contextDateLastAppliedKey = null;
+    }
 
     // If context date detection is enabled, detect the date from parent note
     if (this.contextDateEnabled) {
@@ -2052,14 +2065,14 @@ export class CalendarView extends BasesView {
     this.updateExternalCalendarVisibility();
     const filterSourcesStartedAt = performance.now();
     this.formulaNow = new Date();
+    // Bases owns entry filtering in atomic-note mode, but date presentation still needs its bounds.
+    this.currentBaseFileFilterSources = await this.readBaseFileFilterSources();
     if (nativeRecordMode) {
-      this.currentBaseFileFilterSources = [];
       this.formulaDefinitions = {};
       this.formulaApi = null;
       this.compiledFormulaSet = null;
       this.formulaEvaluationEnabled = false;
     } else {
-      this.currentBaseFileFilterSources = await this.readBaseFileFilterSources();
       await this.prepareFormulaRuntime();
     }
     this.trace("updateCalendar:base-filter-sources", {
@@ -3036,7 +3049,7 @@ export class CalendarView extends BasesView {
     const hasExplicitBounds = Boolean(filterBounds.start || filterBounds.end);
     this.hasExplicitFilterRange = hasExplicitBounds;
     const shouldConstrainNavigation =
-      resolveCalendarRangeAnchor(this.filterRangeAuto, hasExplicitBounds) === "start";
+      !this.contextDateDetected && resolveCalendarRangeAnchor(this.filterRangeAuto, hasExplicitBounds) === "start";
     this.navigationBoundsStart = shouldConstrainNavigation && filterBounds.start
       ? new Date(filterBounds.start)
       : null;
@@ -3131,7 +3144,8 @@ export class CalendarView extends BasesView {
     const rangeChanged = this.lastAutoRangeKey !== rangeKey;
     this.lastAutoRangeKey = rangeKey;
     const shouldApplyAutoRangeDate =
-      this.canApplyAutomaticDateForActiveUpdate()
+      !this.contextDateDetected
+      && this.canApplyAutomaticDateForActiveUpdate()
       && (!this.autoRangeInitialized || rangeChanged || !this.currentDate);
 
     // Explicit bounds should constrain navigation, not disable it outright.
@@ -3154,7 +3168,9 @@ export class CalendarView extends BasesView {
     };
 
     if (hasExplicitBounds && shouldApplyAutoRangeDate) {
-      if (this.currentDate) {
+      if (!this.contextDateEnabled) {
+        this.currentDate = new Date(startOfMinDay);
+      } else if (this.currentDate) {
         this.currentDate = clampToNavigationBounds(this.currentDate);
       } else {
         const today = new Date();
@@ -3166,6 +3182,10 @@ export class CalendarView extends BasesView {
       }
     }
 
+    if (hasExplicitBounds && shouldApplyAutoRangeDate && !this.filterRangeAuto) {
+      this.autoRangeInitialized = true;
+    }
+
     // In filter-based mode with explicit date bounds, always apply the derived mode.
     // This avoids stale "week" state when bounds resolve after initial context-date pass.
     if (this.filterRangeAuto && hasExplicitBounds) {
@@ -3174,7 +3194,7 @@ export class CalendarView extends BasesView {
       this.viewMode = nextViewMode;
 
       if (shouldApplyAutoRangeDate) {
-        if (nextViewMode !== "month") {
+        if (nextViewMode !== "month" && !this.contextDateDetected) {
           this.currentDate = new Date(startOfMinDay);
           this.currentDate.setHours(0, 0, 0, 0);
         } else {
@@ -3252,13 +3272,12 @@ export class CalendarView extends BasesView {
    */
   private detectContextDate(): void {
     // Try to find the parent note from the render-scoped host identity.
-    const parentNote = this.findParentNotePath();
+    const parentNote = this.resolveContextSourcePath();
     const attributedDate = this.extractContextDateFromHostAttributes();
 
     if (parentNote || attributedDate) {
       const detectedDate = parentNote
         ? this.extractContextDateFromFrontmatter(parentNote)
-          ?? this.extractDateFromPath(parentNote)
           ?? attributedDate
         : attributedDate;
       const contextIdentity = parentNote || "embedded-host";
@@ -3305,6 +3324,24 @@ export class CalendarView extends BasesView {
       }
     }
   }
+
+  private resolveContextSourcePath(): string | null {
+    const host = this.findParentNotePath();
+    if (host) return host;
+    const active = this.app.workspace.getActiveFile();
+    if (active?.extension.toLowerCase() === "md") this.lastActiveContextNotePath = active.path;
+    return this.lastActiveContextNotePath;
+  }
+
+  private refreshContextSource = (): void => {
+    const active = this.app.workspace.getActiveFile();
+    if (active?.extension.toLowerCase() !== "md") return;
+    const changed = active.path !== this.lastActiveContextNotePath;
+    this.lastActiveContextNotePath = active.path;
+    if (!changed || !this.contextDateEnabled || this.findParentNotePath()) return;
+    this.contextDateLastAppliedKey = null;
+    this.scheduleRefresh(0, true);
+  };
 
   private extractContextDateFromHostAttributes(): Date | null {
     const host = this.containerEl?.closest?.<HTMLElement>(
@@ -3526,7 +3563,6 @@ export class CalendarView extends BasesView {
         addCandidate(this.getFieldFromPropertyId(propId));
       }
       addCandidate((this.plugin as any)?.settings?.startProperty);
-      addCandidate("scheduled");
 
       for (const key of candidateKeys) {
         const rawValue = this.getFrontmatterValueCaseInsensitive(frontmatter, key);
@@ -10000,6 +10036,8 @@ export class CalendarView extends BasesView {
     date: Date,
     source: CalendarProtocolDateChangeSource = "automatic",
   ): void {
+    // Following a note is local presentation, not a write to the shared Base definition.
+    if (source !== "user" && this.contextDateEnabled) return;
     const dateKey = snapshotCalendarDateKey(date);
     if (source === "user") {
       this.calendarNavigationEpoch += 1;
@@ -11742,6 +11780,17 @@ export class CalendarView extends BasesView {
     // We only care about TFiles
     if (!(file instanceof TFile)) return;
 
+    // A host/active note need not be an event in this Base's filtered result.
+    // Its scheduled change must reach a visible sidebar even while its editor has focus.
+    if (this.contextDateEnabled && this.resolveContextSourcePath() === file.path) {
+      const next = cache?.frontmatter ? JSON.stringify(cache.frontmatter) : "";
+      if (this.lastFrontmatterByPath.get(file.path) !== next) {
+        this.lastFrontmatterByPath.set(file.path, next);
+        this.scheduleRefresh(80, true);
+      }
+      return;
+    }
+
     if (this.isEditorFocused() && !this.isActiveLeaf()) {
       return;
     }
@@ -11850,6 +11899,9 @@ export class CalendarView extends BasesView {
   }
 
   private registerRefreshListeners(): void {
+    this.refreshContextSource();
+    this.registerEvent(this.app.workspace.on("file-open", this.refreshContextSource));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", this.refreshContextSource));
     // Use metadataCache for faster and more accurate updates on frontmatter changes
     this.registerEvent(
       this.app.metadataCache.on("changed", this.handleTrackedFileChange),
@@ -12066,13 +12118,13 @@ export class CalendarView extends BasesView {
             },
           },
           {
-            displayName: "Start on host note day",
+            displayName: "Date source",
             type: "dropdown",
             key: FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY,
             default: plugin?.settings?.contextDateEnabled ? "true" : "false",
             options: {
-              true: "Use host note date",
-              false: "Use saved calendar date",
+              false: "Filter driven",
+              true: "Embedded/active note driven",
             },
           },
           {
