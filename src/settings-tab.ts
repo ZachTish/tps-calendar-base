@@ -1,3 +1,4 @@
+import { Notice } from 'obsidian';
 import { Plugin, PluginSettingTab, Setting } from "obsidian";
 import ObsidianCalendarPlugin from "./main";
 import { getGcmApi } from "./tps-gcm-api";
@@ -892,16 +893,29 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     ];
 
     keys.forEach(k => {
-      new Setting(frontmatterKeysSection)
-        .setName(k.name + " Key")
-        .addText(text => text
-          .setPlaceholder(k.default)
-          .setValue((this.plugin.settings as any)[k.key] || k.default)
-          .onChange(async (val) => {
-            (this.plugin.settings as any)[k.key] = val.trim() || k.default;
-            await this.plugin.saveSettings();
-          })
-        );
+      let value = (this.plugin.settings as any)[k.key] || k.default;
+      new Setting(frontmatterKeysSection).setName(k.name + " Key")
+        .setDesc('Apply previews existing notes and asks before updating their properties.')
+        .addText(text => {
+                  text.setValue(value).onChange(next => { value = next.trim(); });
+                  text.inputEl.setAttribute('aria-label', k.name + " Key");
+                  text.inputEl.dataset.tpsMappingKey = String(k.key);
+                  text.inputEl.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); (text.inputEl.closest('.setting-item')?.querySelector('button') as HTMLButtonElement)?.click(); } });
+                })
+        .addButton(button => button.setButtonText('Apply').onClick(async () => {
+          button.setDisabled(true);
+          try {
+            const api = (this.app as any).plugins?.plugins?.['tps-global-context-menu']?.api?.propertyMappings;
+            if (!api?.changeKey) throw new Error('Update and enable TPS GCM to review this mapping change.');
+            const scrollTop = this.containerEl.scrollTop;
+                        if (await api.changeKey('tps-calendar-base', k.key, value)) {
+                            this.display();
+                            this.containerEl.scrollTop = scrollTop;
+                            this.containerEl.querySelector<HTMLInputElement>(`[data-tps-mapping-key="${k.key}"]`)?.focus({preventScroll:true});
+                        }
+          } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+          finally { button.setDisabled(false); }
+        }));
     });
 
     // 6. Debug

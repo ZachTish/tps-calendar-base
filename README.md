@@ -2,7 +2,7 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.14.0](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.14.0) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.0](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.0) · Obsidian 1.10.0+ · Desktop and mobile.
 
 ## Install with BRAT
 
@@ -66,3 +66,16 @@ For legacy Base-note creation, Calendar asks `api.ui.handlesNativeBaseCreation(c
 The capability registry remains the integration boundary. `api.ui.presentCreatedNote`, `handlesNativeBaseCreation`, and `openNoteOpeningSettings` are optional additive capabilities. Regression coverage in `scripts/test-create-snap-and-mobile-open.mjs` checks ownership, native observer bypass, settings handoff, existing generation guards, and all creation callers. Validate with `npm test` and a separate `npm run build`, then reload only Calendar in Obsidian Plugin Test Vault. Test artifacts deploy through the shared helper without overwriting runtime data. Physical iPhone acceptance remains for the user's BRAT pull. Minimum Obsidian remains 1.10.0; this minor feature release requires GCM 2.5.0 for shared behavior and retains legacy behavior otherwise.
 
 Final validation: all 301 checks passed and the separate production build deployed to the test vault. After reloading 0.15.0, an embedded Calendar New action created one canonical calendar-event record with its stable identity and schedule, displayed GCM’s preview, and retained the embedded Calendar. The settings button reached GCM’s Note opening controls. Synthetic native storage and opening preferences were restored and QA files archived.
+
+
+## 0.16.0 — Confirmed current mappings
+
+Global title, status, previous-status, color and icon property controls use Apply, preview and confirmation through GCM 3.0.0 propertyMappings v1. Matching enabled Controller and Health mappings update together. Missing/older GCM blocks changes without saving. Per-view Base property selectors still select existing fields; they are not property-renaming controls.
+
+Minor: adds confirmed migration to global mapping controls. Existing navigation destinations, default routes, disclosures, commands, and persisted UI-state contract are unchanged. Mapping controls are plain inputs with an explicit Apply action and wrapping layouts; no alias editor is added. Cancel preserves the current mapping and notes.
+
+Shared migrations change Markdown frontmatter only, preserve note bodies, reject occupied destinations and stale previews, and keep a local recovery copy until success. Inline fields, Base formulas, per-view configuration, and disabled plugins are not automatically rewritten; enable participating TPS plugins before a shared rename. Review historical records before relying on totals after upgrading. Health timing migration uses its existing guarded rollback flow; a process crash cannot provide a vault-wide atomic transaction. No migration or outbound service runs merely because the plugin is upgraded.
+
+Validation covers current-only reads, migration-only historical inputs, cancellation, archived notes, conflicts, stale previews, save/write rollback, cross-plugin setting changes and identity protection. Required final validation: full declared suite, separate production build to the test vault, named plugin reload and settings confirmation checks. UI and final test results are recorded in the release notes. Minimum Obsidian compatibility is unchanged. Update GCM before applying Controller or Calendar mapping changes. The release is a BRAT handoff; production installation remains user-controlled.
+
+Full declared suite: 301 checks passed, 0 optional/existing checks skipped, zero failed. TypeScript and separate final production builds pass and deploy only shipped artifacts to the test vault; targeted plugin reloads verify the installed versions. Test-vault validation (2026-09-20): Controller’s real Apply dialog previewed one synthetic Markdown note and two plugin mappings. Cancel preserved both mappings and the original file; confirming renamed the property and updated Controller and Calendar together, preserved the body, restored input focus, and removed temporary recovery. Original settings were restored and the fixture archived. GCM’s current kind key and migration controls were inspected. Calendar’s five rendered key inputs and Apply actions were verified. Health’s timing inputs were checked; an existing archived QA note with potentially relevant malformed frontmatter correctly blocked migration with a path-specific error and no changes. Successful Health confirmation, timing conversion, cancellation and rollback are covered by regression tests. No outbound automation was enabled. Existing mobile CSS/layout is retained; physical iOS testing remains user acceptance.
