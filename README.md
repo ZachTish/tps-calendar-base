@@ -2,7 +2,7 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.13.0](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.13.0) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.14.0](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.14.0) · Obsidian 1.10.0+ · Desktop and mobile.
 
 ## Install with BRAT
 
@@ -18,6 +18,14 @@ Enable Obsidian Bases and TPS Global Context Menu, then select the Calendar layo
 - **Embedded/active note driven** follows the embedded host note first, otherwise the active Markdown note's configured scheduled date. Sidebar focus retains the last Markdown context. A missing/invalid date uses today; filenames do not infer it.
 
 Embedded timelines containing today return to now after 20 seconds without scrolling and on refresh. Explicit date navigation remains available. The current-time badge uses a live clock; the view does not rewrite note dates simply because focus changes.
+
+## Two-level Daily Notes — 0.14.0
+
+An explicitly selected task destination with `kind: note` and `noteKind: daily` receives calendar tasks inside its Scheduled section, including when its path differs from the event date. Both values are required, with case-insensitive keys/values and surrounding whitespace ignored. Existing Daily Note path, `kind: dailynote`, and tag recognition remain supported. Other note/task subtypes retain ordinary task placement.
+
+This additive feature preserves the note's metadata and existing section ordering. It introduces no settings, defaults, automatic destination selection, or migration. GCM 2.4.0 supplies shared recognition for Daily Note creation, date lookup and Navigator; update both plugins for the complete workflow. A generic task destination is not converted into a Daily Note.
+
+Regression coverage exercises actual task creation and section placement for complete, missing, mixed, differently cased, and single-value-list pairs, alongside the existing legacy Daily Note suite. Full tests, the separate final build/deployment, reload, and installed paired-plugin QA are recorded in [0.14.0 release notes](release-notes/0.14.0.md). Validation on 2026-09-20 passed all 300 full-suite checks and 32 focused creation checks; TypeScript and the separate final build deployed to the test vault. After `plugin:reload`, the installed Calendar service in a synthetic Calendar Base placed a task inside Scheduled for the named paired Daily Note and used ordinary placement for the `kind: note` control. Their metadata stayed intact; QA fixtures were archived and temporary settings restored. Minimum Obsidian remains 1.10.0; production installation is a separate BRAT update.
 
 ## Ownership and settings
 

@@ -903,6 +903,34 @@ test("NewEventService recognizes a Daily Note target by metadata when its path d
   );
 });
 
+test("NewEventService recognizes the note/daily pair without treating either property alone as Daily", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  for (const [frontmatter, isDaily] of [
+    [{ kind: "note", noteKind: "daily" }, true],
+    [{ Kind: " NOTE ", NoteKind: " Daily " }, true],
+    [{ kind: ["note"], noteKind: ["daily"] }, true],
+    [{ kind: "note" }, false],
+    [{ noteKind: "daily" }, false],
+    [{ kind: "task", noteKind: "daily" }, false],
+    [{ kind: "note", noteKind: "meeting" }, false],
+    [{ kind: ["note", "task"], noteKind: "daily" }, false],
+    [{ kind: "note", noteKind: ["daily", "meeting"] }, false],
+  ]) {
+    const path = "Journal.md";
+    const fake = createFakeCalendarApp(TFile, {
+      [path]: "---\ntitle: Journal\n---\n\n## Scheduled\n\n## Other\n",
+    }, { fileCaches: { [path]: { frontmatter } } });
+    const service = new NewEventService({ app: fake.app, createMode: "task", taskDestination: "daily-note" });
+    await service.createEvent(new Date("2027-01-06T13:00:00"), new Date("2027-01-06T13:30:00"), undefined, {
+      titleOverride: "Pair QA task", createMode: "task", taskTargetPath: path,
+    });
+    const content = fake.read(path);
+    const taskOffset = content.indexOf("- [ ] Pair QA task");
+    assert.ok(taskOffset >= 0);
+    assert.equal(taskOffset > content.indexOf("## Scheduled") && taskOffset < content.indexOf("## Other"), isDaily, JSON.stringify(frontmatter));
+  }
+});
+
 test("NewEventService keeps Daily Note calendar tasks future-first inside Scheduled", async () => {
   const { NewEventService, TFile } = await importNewEventService();
   const fake = createFakeCalendarApp(TFile, {

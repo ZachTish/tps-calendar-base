@@ -677,12 +677,12 @@ export class NewEventService {
     const kindKey = Object.keys(frontmatter).find(
       (key) => key.trim().toLowerCase() === "kind",
     );
-    if (
-      kindKey &&
-      String(frontmatter[kindKey] ?? "")
-        .trim()
-        .toLowerCase() === "dailynote"
-    )
+    const noteKindKey = Object.keys(frontmatter).find(
+      (key) => key.trim().toLowerCase() === "notekind",
+    );
+    const kind = kindKey ? String(frontmatter[kindKey] ?? "").trim().toLowerCase() : "";
+    const noteKind = noteKindKey ? String(frontmatter[noteKindKey] ?? "").trim().toLowerCase() : "";
+    if (kind === "dailynote" || (kind === "note" && noteKind === "daily"))
       return true;
 
     const frontmatterTags = Object.entries(frontmatter)
