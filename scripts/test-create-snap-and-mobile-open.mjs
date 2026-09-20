@@ -1814,7 +1814,7 @@ test("every create-new route uses one post-create dispatcher without a read-only
   assert.equal(
     (dispatcher.match(/generation !== this\.postCreateGeneration/g) || [])
       .length,
-    4,
+    5,
     "a superseded request stops after each awaited navigation, anchor, or provider step",
   );
   assert.match(dispatcher, /const behavior = this\.getPostCreateBehavior\(\)/);
@@ -2030,4 +2030,15 @@ test("note-driven mode uses scoped host before active-note context", () => {
   assert.match(calendarViewSource, /private handleRenderedDateChange\([\s\S]*date: Date,[\s\S]*source: CalendarDateChangeSource,[\s\S]*\): void \{[\s\S]*this\.currentDate = date;[\s\S]*this\.persistCurrentDate\(date, source\);/);
   assert.doesNotMatch(calendarViewSource, /scheduleFollowActiveNoteDay/);
   assert.doesNotMatch(calendarViewSource, /activeNoteFollowTimer/);
+});
+
+test('shared note opening owns Calendar outcomes and bypasses the legacy native-open observer', () => {
+  const dispatcher = calendarViewSource.slice(calendarViewSource.indexOf('private async handlePostCreateBehavior('));
+  assert.ok(dispatcher.indexOf('ui?.presentCreatedNote') < dispatcher.indexOf('const behavior = this.getPostCreateBehavior()'));
+  assert.match(dispatcher, /context\.calendarLeaf\) await this\.restoreCalendarSurface\(context\.calendarLeaf\)/);
+  assert.match(dispatcher, /await present\(\{[\s\S]*?sourcePluginId: "tps-calendar-base"/);
+  const toolbar = calendarViewSource.slice(calendarViewSource.indexOf('async createFileForView('));
+  assert.ok(toolbar.indexOf('handlesNativeBaseCreation?.(this.controller)') < toolbar.indexOf('const observedMarkdownCreates'));
+  assert.match(settingsTabSource, /noteOpening\.openNoteOpeningSettings/);
+  assert.match(settingsTabSource, /Configure note opening/);
 });

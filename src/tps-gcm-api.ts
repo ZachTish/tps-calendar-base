@@ -1,4 +1,4 @@
-import { App, EventRef, TFile } from "obsidian";
+import { App, EventRef, TFile, type WorkspaceLeaf } from "obsidian";
 import { TPS_EVENTS, TPS_LEGACY_EVENTS } from "./tps-contracts";
 import type { ExternalCalendarEvent } from "./types";
 
@@ -143,6 +143,12 @@ export interface GcmApi {
   };
   ui?: {
     version?: number;
+    presentCreatedNote?: (request: {
+      filePath: string; sourcePluginId: string; anchorEl?: HTMLElement | null;
+      sourceLeaf?: WorkspaceLeaf | null; renameTitle?: boolean;
+    }) => boolean | Promise<boolean>;
+    handlesNativeBaseCreation?: (controller: unknown) => boolean;
+    openNoteOpeningSettings?: () => void;
     shouldForceBaseLinkPreview?: () => boolean;
     openEditableNotePreview?: (
       request: GcmEditableNotePreviewRequest,

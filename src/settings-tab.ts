@@ -1,5 +1,6 @@
 import { Plugin, PluginSettingTab, Setting } from "obsidian";
 import ObsidianCalendarPlugin from "./main";
+import { getGcmApi } from "./tps-gcm-api";
 import { normalizeCalendarUrl } from "./utils";
 import { getPluginById } from "./core";
 import { renderListWithControls } from "./utils/list-renderer";
@@ -351,20 +352,29 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(generalSection)
-      .setName("After creating an item")
-      .setDesc("Stay on Calendar, open the created item or task destination, or show an editable preview for adding body content.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("preview", "Editable preview over Calendar")
-          .addOption("open", "Open created item")
-          .addOption("stay", "Stay on Calendar")
-          .setValue(this.plugin.settings.postCreateBehavior || "open")
-          .onChange(async (value: CalendarPostCreateBehavior) => {
-            this.plugin.settings.postCreateBehavior = value;
-            await this.plugin.saveSettings();
-          }),
-      );
+    const noteOpening = getGcmApi(this.app)?.ui;
+    if (noteOpening?.presentCreatedNote && noteOpening.openNoteOpeningSettings) {
+      new Setting(generalSection)
+        .setName("After creating an item")
+        .setDesc("TPS Global Context Menu controls editable preview, open, or stay for Calendar, Bases, and Navigator.")
+        .addButton(button => button.setButtonText("Configure note opening")
+          .onClick(() => noteOpening.openNoteOpeningSettings?.()));
+    } else {
+      new Setting(generalSection)
+        .setName("After creating an item")
+        .setDesc("Stay on Calendar, open the created item or task destination, or show an editable preview for adding body content.")
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("preview", "Editable preview over Calendar")
+            .addOption("open", "Open created item")
+            .addOption("stay", "Stay on Calendar")
+            .setValue(this.plugin.settings.postCreateBehavior || "open")
+            .onChange(async (value: CalendarPostCreateBehavior) => {
+              this.plugin.settings.postCreateBehavior = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+    }
 
     if ((this.plugin.settings.initialCreateMode || "note") === "task") {
       new Setting(generalSection)

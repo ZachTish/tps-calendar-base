@@ -876,6 +876,11 @@ export class CalendarView extends BasesView {
 
     const calendarLeaf = this.findOwningCalendarLeaf();
     const invokingAnchor = this.toolbarCreateAnchor;
+    if (getGcmApi(this.app)?.ui?.handlesNativeBaseCreation?.(this.controller)) {
+      await super.createFileForView(resolvedBaseFileName, mergedProcessor);
+      await this.updateCalendar(true);
+      return;
+    }
     const observedMarkdownCreates = new Map<string, TFile>();
     const observedFileOpens = new Set<string>();
     const createRef = this.app.vault.on("create", (file) => {
@@ -5950,6 +5955,20 @@ export class CalendarView extends BasesView {
     context: CalendarPostCreateContext = {},
   ): Promise<void> {
     const generation = ++this.postCreateGeneration;
+    const present = getGcmApi(this.app)?.ui?.presentCreatedNote;
+    if (present) {
+      // Older native menus may already have opened a phone tab before this fallback runs.
+      if (context.calendarLeaf) await this.restoreCalendarSurface(context.calendarLeaf);
+      if (generation !== this.postCreateGeneration) return;
+      await present({
+        filePath: file.path,
+        sourcePluginId: "tps-calendar-base",
+        sourceLeaf: context.calendarLeaf ?? this.findOwningCalendarLeaf(),
+        anchorEl: context.invokingAnchor?.isConnected ? context.invokingAnchor : this.containerEl,
+        renameTitle: /^Untitled(?: \d+)?$/u.test(file.basename),
+      });
+      return;
+    }
     const behavior = this.getPostCreateBehavior();
     const calendarLeaf = context.calendarLeaf ?? this.findOwningCalendarLeaf();
     logger.flow("CalendarCreate", "post-create:route", { path: file.path, behavior });
