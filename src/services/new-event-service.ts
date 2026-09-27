@@ -7,7 +7,6 @@ import {
   parsePropertyId,
   FuzzySuggestModal,
   Notice,
-  parseYaml,
   stringifyYaml,
 } from "obsidian";
 import * as logger from "../logger";
@@ -465,9 +464,8 @@ export class NewEventService {
           );
         }
 
-        // Trigger post-creation hooks (linter, etc.) after required frontmatter is valid.
-        await this.triggerPostCreationHooks(file);
-        await this.canonicalizeCreatedEventFrontmatter(file);
+        // Run the installed linter after template completion and owned frontmatter writes.
+        await this.runPostCreationLinter(file);
 
         logger.flow("NewEvent", "create:done", {
           ...logContext,
@@ -512,9 +510,8 @@ export class NewEventService {
           await this.applyParentLink(file, parentFile);
         }
 
-        // Trigger post-creation hooks (linter, etc.) after the file is born with valid frontmatter.
-        await this.triggerPostCreationHooks(file);
-        await this.canonicalizeCreatedEventFrontmatter(file);
+        // The initial source already owns the complete event frontmatter.
+        await this.runPostCreationLinter(file);
 
         logger.flow("NewEvent", "create:done", {
           ...logContext,
@@ -1518,14 +1515,8 @@ export class NewEventService {
     }
   }
 
-  /**
-   * Triggers post-creation hooks for plugins like obsidian-linter
-   * and TPS-Global-Context-Menu that need to process newly created files.
-   */
-  private async triggerPostCreationHooks(file: TFile): Promise<void> {
-    // Small delay to ensure file is fully written and indexed
-    await new Promise((resolve) => setTimeout(resolve, 100));
-
+  /** Run the optional file linter once against the completed creation result. */
+  private async runPostCreationLinter(file: TFile): Promise<void> {
     try {
       // Trigger the Obsidian Linter plugin if installed
       const linterPlugin = (this.config.app as any).plugins?.plugins?.[
@@ -1637,124 +1628,6 @@ export class NewEventService {
   ): string {
     const yaml = stringifyYaml(frontmatter).trimEnd();
     return `---\n${yaml ? `${yaml}\n` : ""}---\n`;
-  }
-
-  private async canonicalizeCreatedEventFrontmatter(
-    file: TFile,
-  ): Promise<void> {
-    let content = "";
-    try {
-      content = await this.config.app.vault.read(file);
-    } catch (error) {
-      logger.warn(
-        "[NewEventService] Failed reading created event for frontmatter canonicalization",
-        {
-          file: file.path,
-          error,
-        },
-      );
-      return;
-    }
-
-    const normalized = content.replace(/\r\n/g, "\n");
-    const bom = normalized.startsWith("\uFEFF") ? "\uFEFF" : "";
-    const body = bom ? normalized.slice(1) : normalized;
-    if (!body.startsWith("---\n")) return;
-
-    const closeIndex = body.indexOf("\n---\n", 3);
-    if (closeIndex === -1) return;
-
-    const frontmatterBlock = body.slice(4, closeIndex);
-    const trailing = body.slice(closeIndex + "\n---\n".length);
-    const repairedBlock =
-      this.removeDuplicateTopLevelYamlKeysKeepingLast(frontmatterBlock);
-
-    let parsed: unknown;
-    try {
-      parsed = repairedBlock.trim() ? parseYaml(repairedBlock) : {};
-    } catch (error) {
-      logger.warn(
-        "[NewEventService] Failed parsing created event frontmatter for canonicalization",
-        {
-          file: file.path,
-          error,
-        },
-      );
-      return;
-    }
-
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
-
-    const yaml = stringifyYaml(parsed as Record<string, any>).trimEnd();
-    const nextContent = `${bom}---\n${yaml ? `${yaml}\n` : ""}---\n${trailing.replace(/^\n+/, "")}`;
-    if (nextContent === normalized) return;
-
-    try {
-      await this.config.app.vault.modify(file, nextContent);
-      logger.log("[NewEventService] Canonicalized created event frontmatter", {
-        file: file.path,
-      });
-    } catch (error) {
-      logger.warn(
-        "[NewEventService] Failed writing canonicalized created event frontmatter",
-        {
-          file: file.path,
-          error,
-        },
-      );
-    }
-  }
-
-  private removeDuplicateTopLevelYamlKeysKeepingLast(block: string): string {
-    const lines = String(block || "")
-      .replace(/\r\n/g, "\n")
-      .split("\n");
-    const spans: Array<{ key: string; start: number; end: number }> = [];
-
-    for (let index = 0; index < lines.length; index++) {
-      const line = lines[index] || "";
-      const match = line.match(/^([^#\s][^:]*):(?:\s|$)/);
-      if (!match) continue;
-
-      let end = index + 1;
-      while (
-        end < lines.length &&
-        !/^([^#\s][^:]*):(?:\s|$)/.test(lines[end] || "")
-      ) {
-        end += 1;
-      }
-      spans.push({
-        key: this.normalizeFrontmatterKey(match[1]),
-        start: index,
-        end,
-      });
-      index = end - 1;
-    }
-
-    if (spans.length === 0) return block;
-
-    const lastSpanByKey = new Map<string, number>();
-    spans.forEach((span, index) => lastSpanByKey.set(span.key, index));
-    const duplicateRanges = spans
-      .map((span, index) => ({ ...span, index }))
-      .filter((span) => lastSpanByKey.get(span.key) !== span.index)
-      .map(({ start, end }) => ({ start, end }));
-
-    if (duplicateRanges.length === 0) return block;
-
-    const output: string[] = [];
-    for (let index = 0; index < lines.length; index++) {
-      const range = duplicateRanges.find(
-        (candidate) => index >= candidate.start && index < candidate.end,
-      );
-      if (range) {
-        index = range.end - 1;
-        continue;
-      }
-      output.push(lines[index] || "");
-    }
-
-    return output.join("\n");
   }
 
   private async processFrontmatterSafely(

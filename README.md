@@ -2,7 +2,15 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.0](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.0) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.1](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.1) · Obsidian 1.10.0+ · Desktop and mobile.
+
+## 0.16.1 — Finish event creation without a second rewrite
+
+Calendar now returns the completed event after its existing template/default/parent processing and optional file linter. It no longer waits an arbitrary 100 ms, rereads the result, deduplicates YAML keys, or rewrites the whole note afterward. That final rewrite could overwrite an editor change made after its read and also removed authored spacing or linter formatting. Plain note creation already writes its complete frontmatter in the initial Vault create call; the regression requires one create and zero follow-up reads, writes or timers when no template, parent or linter is involved.
+
+Configured templates retain their existing order: prepare initial content, run Templater, remove the shared template-instance marker, apply Calendar-owned fields/defaults and optional parent, then invoke the installed linter once. Both supported direct linter methods remain; Calendar does not open another note to run a linter. Shared post-creation preview/open/stay routing is unchanged. No settings, defaults, schema, migration or recovery behavior is added. Existing malformed notes are not repaired by creation.
+
+Four focused lifecycle regressions failed against 0.16.0 and pass after removal, including deterministic concurrent-edit loss through both supported linter methods, valid initial YAML with operation counts, and one owned frontmatter merge after Templater. The full creation suite has 36 checks; creation/opening/mobile coverage has 40 additional checks. Versioned `npm test` passed all 305 checks and TypeScript/build. Installed test-vault QA reproduced the stale-snapshot loss on 0.16.0; 0.16.1 made one create with zero Calendar rereads/rewrites and preserved the concurrent paragraph. A second check used the real Calendar/GCM registry and configured editable-preview handoff: the title, body and frontmatter remained intact after 4.5 seconds, with both settings unchanged. The separate final build deploys only to the test vault; named plugin reload verifies the installed version. Details, timings and artifact hashes are recorded in [0.16.1 release notes](release-notes/0.16.1.md). Native-record creation is a separate unchanged path. Template sequencing is regression-tested; live Templater and physical iPhone behavior were not exercised. Minimum Obsidian remains 1.10.0. Production remains the user's BRAT pull and acceptance.
 
 ## Install with BRAT
 

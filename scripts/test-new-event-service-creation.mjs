@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Buffer } from "node:buffer";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import * as esbuild from "esbuild";
+
+const yaml = createRequire(import.meta.url)("js-yaml");
+const loadYaml = (source) => yaml.load(source, { schema: yaml.JSON_SCHEMA });
+const dumpYaml = (value) => yaml.dump(value, { schema: yaml.JSON_SCHEMA });
 
 let activeInstallGcmApiRegistry = null;
 
@@ -496,6 +501,138 @@ test("NewEventService note mode creates a dated frontmatter note with Base defau
   assert.doesNotMatch(content, /(?:^|\n)folderPath:/);
   assert.match(content, /status: planned/);
   assert.match(content, /priority: medium/);
+});
+
+test("ordinary note creation writes valid initial YAML once without maintenance reads or timers", async (t) => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile);
+  const counts = { create: 0, read: 0, cachedRead: 0, modify: 0, process: 0 };
+  let initialSource = "";
+  for (const name of Object.keys(counts)) {
+    const original = fake.app.vault[name];
+    fake.app.vault[name] = async (...args) => {
+      counts[name] += 1;
+      if (name === "create") initialSource = args[1];
+      return original(...args);
+    };
+  }
+  const waits = [];
+  const originalTimeout = globalThis.setTimeout;
+  t.mock.method(globalThis, "setTimeout", (callback, delay, ...args) => {
+    waits.push(delay);
+    return originalTimeout(callback, delay, ...args);
+  });
+  const service = new NewEventService({
+    app: fake.app, folderPath: "Inbox", createMode: "note",
+    startProperty: "note.scheduled", endProperty: "note.timeEstimate", useEndDuration: true,
+  });
+  const created = await service.createEvent(
+    new Date("2027-01-02T09:30:00"), new Date("2027-01-02T10:15:00"), undefined,
+    { titleOverride: "Planning Session", useBaseDefaults: true, frontmatterDefaults: { tags: ["kind/task"], priority: "medium" } },
+  );
+  assert.ok(created);
+  const parsed = loadYaml(initialSource.match(/^---\n([\s\S]*?)\n---\n/)[1]);
+  assert.equal(parsed.title, "Planning Session");
+  assert.equal(parsed.scheduled, "2027-01-02 09:30:00");
+  assert.equal(parsed.timeEstimate, 45);
+  assert.equal(parsed.priority, "medium");
+  assert.equal(fake.read(created.path), initialSource, "creation returns its already-complete source");
+  assert.deepEqual(counts, { create: 1, read: 0, cachedRead: 0, modify: 0, process: 0 });
+  assert.deepEqual(waits, [], "no arbitrary indexing/linter delay is needed after awaited Vault creation");
+});
+
+for (const method of ["runLinterFile", "lintFile"]) {
+  test(`creation preserves the ${method} result and concurrent editor content without a later rewrite`, async () => {
+    const { NewEventService, TFile } = await importNewEventService();
+    const fake = createFakeCalendarApp(TFile);
+    const modify = fake.app.vault.modify;
+    let editorDone;
+    const editorFinished = new Promise((resolve) => { editorDone = resolve; });
+    let linterCalls = 0;
+    let linterInput = "";
+    let calendarWrites = 0;
+    let rawReads = 0;
+    const read = fake.app.vault.read;
+    fake.app.vault.read = async (file) => { rawReads += 1; return read(file); };
+    fake.app.vault.modify = async (file, source) => {
+      calendarWrites += 1;
+      // Reproduce an editor change while the old canonicalizer is about to
+      // commit a snapshot that predates that change.
+      await editorFinished;
+      return modify(file, source);
+    };
+    const formatted = '---\ntitle: "Planning Session" # keep linter formatting\nscheduled: 2027-01-02 09:30\ntimeEstimate: 45\n---\n\nOriginal body\n';
+    fake.app.plugins.plugins["obsidian-linter"] = {
+      [method]: async (file) => {
+        linterCalls += 1;
+        linterInput = fake.read(file.path);
+        await modify(file, formatted);
+        setTimeout(async () => {
+          await modify(file, formatted + "Concurrent editor paragraph\n");
+          editorDone();
+        }, 0);
+      },
+    };
+    const service = new NewEventService({
+      app: fake.app, folderPath: "Inbox", createMode: "note",
+      startProperty: "note.scheduled", endProperty: "note.timeEstimate", useEndDuration: true,
+    });
+    const created = await service.createEvent(
+      new Date("2027-01-02T09:30:00"), new Date("2027-01-02T10:15:00"), undefined,
+      { titleOverride: "Planning Session" },
+    );
+    await editorFinished;
+    assert.equal(fake.read(created.path), formatted + "Concurrent editor paragraph\n");
+    assert.equal(loadYaml(linterInput.split("---\n")[1]).title, "Planning Session");
+    assert.equal(linterCalls, 1);
+    assert.equal(calendarWrites, 0, "Calendar never rewrites the optional linter's completed result");
+    assert.equal(rawReads, 0, "no after-the-fact source canonicalization");
+  });
+}
+
+test("templated creation runs Templater before exactly one owned frontmatter merge and then the linter", async () => {
+  const { NewEventService, TFile } = await importNewEventService();
+  const order = [];
+  const fake = createFakeCalendarApp(TFile, {
+    "Templates/Event.md": "---\ntitle: Placeholder\npriority: high\n---\n\nTemplate body\n",
+  }, {
+    templaterTransform: (source) => { order.push("templater"); return source.replace("Template body", "Resolved body"); },
+  });
+  const modify = fake.app.vault.modify;
+  let calendarBodyWrites = 0;
+  fake.app.vault.modify = async (...args) => { calendarBodyWrites += 1; return modify(...args); };
+  fake.app.fileManager.processFrontMatter = async (file, mutate) => {
+    order.push("frontmatter");
+    const source = fake.read(file.path);
+    const match = source.match(/^---\n([\s\S]*?)\n---\n/);
+    const frontmatter = loadYaml(match[1]);
+    mutate(frontmatter);
+    await modify(file, `---\n${dumpYaml(frontmatter)}---\n${source.slice(match[0].length)}`);
+  };
+  let linterInput = "";
+  fake.app.plugins.plugins["obsidian-linter"] = {
+    runLinterFile: async (file) => {
+      order.push("linter");
+      linterInput = fake.read(file.path);
+    },
+  };
+  const service = new NewEventService({
+    app: fake.app, folderPath: "Inbox", createMode: "note", templatePath: "Templates/Event",
+    startProperty: "note.scheduled", endProperty: "note.timeEstimate", useEndDuration: true,
+  });
+  const created = await service.createEvent(
+    new Date("2027-01-02T09:30:00"), new Date("2027-01-02T10:15:00"), undefined,
+    { titleOverride: "Planning Session" },
+  );
+  assert.ok(created);
+  assert.deepEqual(order, ["templater", "frontmatter", "linter"]);
+  const frontmatter = loadYaml(linterInput.match(/^---\n([\s\S]*?)\n---\n/)[1]);
+  assert.equal(frontmatter.title, "Planning Session");
+  assert.equal(frontmatter.scheduled, "2027-01-02 09:30:00");
+  assert.equal(frontmatter.priority, "high");
+  assert.match(linterInput, /Resolved body/);
+  assert.equal(fake.stats.createCount, 1);
+  assert.equal(calendarBodyWrites, 0, "completed template output has no second body writer");
 });
 
 test("NewEventService strips the shared template marker before and after Templater", async () => {
