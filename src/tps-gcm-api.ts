@@ -94,7 +94,7 @@ export type GcmNativeRecordReference =
 
 export interface GcmNativeRecordsApi {
   version: typeof GCM_NATIVE_RECORDS_API_VERSION;
-  capabilities?: { calendarTemplateRecords?: boolean };
+  capabilities?: { calendarTemplateRecords?: boolean; freshIdentityCreates?: boolean };
   isEnabled: () => boolean;
   inspect: (frontmatter: unknown) => GcmNativeRecordInspection | null;
   resolve: (
@@ -105,6 +105,7 @@ export interface GcmNativeRecordsApi {
     properties: Record<string, unknown>,
     options?: { cause?: GcmNativeRecordMutationCause },
   ) => Promise<GcmNativeRecordHandle>;
+  createFresh?: GcmNativeRecordsApi["create"];
   update: (
     reference: GcmNativeRecordReference,
     updates: Record<string, unknown>,

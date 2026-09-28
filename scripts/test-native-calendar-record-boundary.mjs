@@ -3,7 +3,9 @@ import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
 import * as esbuild from "esbuild";
+import ts from "typescript";
 
 async function loadNativeCalendarUtilities() {
   const build = await esbuild.build({
@@ -20,6 +22,152 @@ const utilities = await loadNativeCalendarUtilities();
 const viewSource = readFileSync(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
 const apiSource = readFileSync(new URL("../src/tps-gcm-api.ts", import.meta.url), "utf8");
 const utilitySource = readFileSync(new URL("../src/utils/native-calendar-record.ts", import.meta.url), "utf8");
+
+// Execute the actual Calendar creation method without constructing a DOM/Base.
+// Its payload and returned-record checks still use the real imported helpers.
+const calendarAst = ts.createSourceFile("calendar-view.tsx", viewSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const calendarClass = calendarAst.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CalendarView");
+const nativeCreateMethod = calendarClass?.members.find(node => node.name?.getText(calendarAst) === "createNativeCalendarRecord");
+assert.ok(nativeCreateMethod, "Calendar must expose its existing native creation method");
+const nativeCreateSource = ts.transpileModule(`class NativeCreateHarness { ${nativeCreateMethod.getText(calendarAst)} }\nNativeCreateHarness;`, {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+}).outputText;
+const adapterBuild = await esbuild.build({
+  stdin: {
+    contents: 'export { isGcmNativeCalendarRecord } from "./src/tps-gcm-api.ts"; export { TFile } from "obsidian";',
+    resolveDir: fileURLToPath(new URL("..", import.meta.url)),
+    loader: "ts",
+  },
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  write: false,
+  plugins: [{ name: "native-create-obsidian", setup(builder) {
+    builder.onResolve({ filter: /^obsidian$/u }, () => ({ path: "obsidian", namespace: "stub" }));
+    builder.onLoad({ filter: /^obsidian$/u, namespace: "stub" }, () => ({ contents: "export class TFile {}" }));
+  } }],
+});
+const { TFile: NativeTFile, isGcmNativeCalendarRecord } = await import(
+  `data:text/javascript;base64,${Buffer.from(adapterBuild.outputFiles[0].text).toString("base64")}`
+);
+const NativeCreateHarness = runInNewContext(nativeCreateSource, {
+  ...utilities,
+  isGcmNativeCalendarRecord,
+  TFile: NativeTFile,
+  logger: { flow() {} },
+});
+
+function nativeCreateFixture({ capabilities = { freshIdentityCreates: true }, freshMethod = true, outcome, error } = {}) {
+  const calls = [];
+  const file = Object.assign(new NativeTFile(), { path: "Inbox/calendar-event.md" });
+  const handle = { file, path: file.path, id: "calendar-fresh", kind: "calendar-event", frontmatter: { kind: "calendar-event" } };
+  const provider = {
+    capabilities,
+    async create(kind, properties, options) {
+      calls.push({ method: "create", receiver: this, kind, properties, options });
+      if (error) throw error;
+      return outcome ? outcome(handle) : handle;
+    },
+  };
+  if (freshMethod) {
+    provider.createFresh = async function (kind, properties, options) {
+      calls.push({ method: "createFresh", receiver: this, kind, properties, options });
+      if (error) throw error;
+      return outcome ? outcome(handle) : handle;
+    };
+  }
+  const view = new NativeCreateHarness();
+  view.requireNativeCalendarRecordsApi = () => provider;
+  const args = {
+    title: "  Project   review  ",
+    start: new Date("2026-09-27T14:00:00.000Z"),
+    end: new Date("2026-09-27T15:30:00.000Z"),
+    allDay: false,
+    surface: "calendar-create",
+  };
+  return { view, provider, calls, handle, args };
+}
+
+test("native Calendar creation uses the advertised fresh-ID method exactly once with its receiver", async () => {
+  const f = nativeCreateFixture();
+  assert.equal(await f.view.createNativeCalendarRecord(f.args), f.handle);
+  assert.equal(f.calls.length, 1);
+  const call = f.calls[0];
+  assert.equal(call.method, "createFresh", "new calendar events do not need explicit-ID source verification");
+  assert.equal(call.receiver, f.provider);
+  assert.equal(call.kind, "calendar-event");
+  assert.deepEqual(call.properties, {
+    title: "Project review", scheduled: f.args.start.toISOString(), end: f.args.end.toISOString(),
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(call.options)), {
+    cause: { kind: "user", sourcePluginId: "tps-calendar-base", surface: "calendar-create" },
+  });
+});
+
+for (const [label, options] of [
+  ["missing capabilities", { capabilities: null }],
+  ["absent capability", { capabilities: {} }],
+  ["false capability", { capabilities: { freshIdentityCreates: false } }],
+  ["truthy but nonboolean capability", { capabilities: { freshIdentityCreates: "true" } }],
+  ["missing method", { freshMethod: false }],
+]) {
+  test(`native Calendar preserves the existing creator for ${label}`, async () => {
+    const f = nativeCreateFixture(options);
+    assert.equal(await f.view.createNativeCalendarRecord(f.args), f.handle);
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0].method, "create");
+    assert.equal(f.calls[0].receiver, f.provider);
+  });
+}
+
+test("native Calendar treats a noncallable fresh method as unsupported", async () => {
+  const f = nativeCreateFixture();
+  f.provider.createFresh = true;
+  assert.equal(await f.view.createNativeCalendarRecord(f.args), f.handle);
+  assert.deepEqual(f.calls.map(call => call.method), ["create"]);
+});
+
+for (const fresh of [true, false]) {
+  const route = fresh ? "createFresh" : "create";
+  test(`${route} preserves all-day dates, associated notes and caller attribution`, async () => {
+    const f = nativeCreateFixture({ capabilities: { freshIdentityCreates: fresh } });
+    const args = { ...f.args, start: new Date(2026, 8, 27), end: new Date(2026, 8, 29), allDay: true,
+      associatedNoteFile: { path: "Projects/Review.md" }, surface: "calendar-range-track-note" };
+    await f.view.createNativeCalendarRecord(args);
+    assert.deepEqual(f.calls.map(call => call.method), [route]);
+    assert.deepEqual(f.calls[0].properties, {
+      title: "Project review", scheduled: "2026-09-27", end: "2026-09-29", allDay: true, associatedNote: "[[Projects/Review]]",
+    });
+    assert.equal(f.calls[0].options.cause.surface, args.surface);
+  });
+
+  test(`${route} propagates provider failure without a second creation attempt`, async () => {
+    const error = new Error("Creation refused");
+    const f = nativeCreateFixture({ capabilities: { freshIdentityCreates: fresh }, error });
+    await assert.rejects(f.view.createNativeCalendarRecord(f.args), actual => actual === error);
+    assert.deepEqual(f.calls.map(call => call.method), [route]);
+  });
+
+  for (const [label, outcome] of [
+    ["null handle", () => null],
+    ["wrong record kind", handle => ({ ...handle, kind: "task" })],
+    ["unverified frontmatter", handle => ({ ...handle, frontmatter: { kind: "task" } })],
+    ["non-TFile result", handle => ({ ...handle, file: { path: handle.path } })],
+  ]) {
+    test(`${route} rejects ${label} without another write`, async () => {
+      const f = nativeCreateFixture({ capabilities: { freshIdentityCreates: fresh }, outcome });
+      await assert.rejects(f.view.createNativeCalendarRecord(f.args), /did not create a canonical Calendar record/u);
+      assert.deepEqual(f.calls.map(call => call.method), [route]);
+    });
+  }
+}
+
+test("invalid Calendar input is rejected before either creator runs", async () => {
+  const f = nativeCreateFixture();
+  await assert.rejects(f.view.createNativeCalendarRecord({ ...f.args, end: f.args.start }), /end must be after start/u);
+  await assert.rejects(f.view.createNativeCalendarRecord({ ...f.args, associatedNoteFile: { path: "Unsafe#heading.md" } }), /safe wikilink/u);
+  assert.equal(f.calls.length, 0);
+});
 
 function methodSource(start, end) {
   const startIndex = viewSource.indexOf(start);

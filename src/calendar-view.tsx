@@ -1239,7 +1239,11 @@ export class CalendarView extends BasesView {
       allDay: args.allDay,
       associatedNote,
     });
-    const created = await nativeRecords.create("calendar-event", properties, {
+    const create = nativeRecords.capabilities?.freshIdentityCreates === true
+      && typeof nativeRecords.createFresh === "function"
+      ? nativeRecords.createFresh
+      : nativeRecords.create;
+    const created = await create.call(nativeRecords, "calendar-event", properties, {
       cause: {
         kind: "user",
         sourcePluginId: "tps-calendar-base",

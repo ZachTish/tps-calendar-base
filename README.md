@@ -2,7 +2,17 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.1](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.1) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.2](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.2) · Obsidian 1.10.0+ · Desktop and mobile.
+
+## 0.16.2 — Let GCM allocate fresh Calendar identities
+
+New native Calendar events now use GCM's existing `createFresh` method when the provider advertises `freshIdentityCreates: true` and supplies that method. The previous caller used the verified-ID creation path even though Calendar never supplied an ID, making the first creation wait for GCM to read every Markdown source for possible identity conflicts. GCM continues to own secure ID allocation, reserved IDs, known conflicts, storage paths, the initial write and mutation events. Older providers retain the existing `create` route; a rejection from `createFresh` propagates without attempting another creation.
+
+Toolbar, range and associated-note creation share this method. Timed/all-day payloads, caller attribution, canonical returned-record checks, post-creation presentation, existing-record edits and Controller synchronization keep their existing contracts. No settings, defaults, cache, timer, watcher, migration, repair or refresh-event redesign is added. Minimum Obsidian remains 1.10.0; the faster route requires a GCM provider with the additive fresh-identity capability (available in the paired GCM 3.6.10 test build).
+
+Twenty new regressions execute the actual Calendar creation method with the real payload and returned-record helpers. Seven fresh-route assertions failed against 0.16.1; all 25 native-boundary checks pass after the caller change, including older/malformed capability declarations, receiver binding, provider errors with no retry, invalid handles, intervals and note associations. All 325 versioned tests, TypeScript and the separate build passed. The build deployed only to the test vault and Calendar was reloaded by its manifest ID.
+
+Two actual foreground Base New actions with GCM 3.6.10, Navigator 7.0.7, Controller 2.6.3 and Health 3.8.1 enabled created one correct event each. After an ordinary GCM reload, the authoritative source index remained cold through both actions: zero identity-refresh calls and zero native source reads. Creation took 54.4/53.8 ms, compared with the prior 3,449.4 ms first-creation sample whose identity refresh occupied 3,403.4 ms. Shared preview completed at 96.6/95.9 ms; event DOM layout at 284/345 ms. These small, instrumented desktop samples are not native-equivalence, cold-app, production or iPhone guarantees. The first after sample used a shorter window; the repeat matched the baseline viewport. UUID identity, title, interval, configured filename and empty body were verified; no outside writes or long tasks were observed. Hooks, original leaf/search and full-screen mode were restored, fixtures archived and five persisted settings files stayed byte-identical. Calendar's five refresh passes remain unchanged. See [0.16.2 release notes](release-notes/0.16.2.md) for evidence limits and artifact hashes. Ready for the user's BRAT pull and acceptance; production is not changed by test-vault validation.
 
 ## 0.16.1 — Finish event creation without a second rewrite
 
