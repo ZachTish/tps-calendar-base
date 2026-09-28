@@ -2517,8 +2517,9 @@ export class CalendarView extends BasesView {
         const pending = this.pendingUpdates.get(entryFile.path);
         if (pending) {
           const dataStart = startDate?.getTime();
-          // If data matches pending (within 1s tolerance), clear pending
-          if (dataStart && Math.abs(dataStart - pending.start.getTime()) < 1000) {
+          const endMatches = !pending.end || (endDate && Math.abs(endDate.getTime() - pending.end.getTime()) < 1000);
+          // A resize can keep the same start; acknowledge the complete pending interval.
+          if (dataStart && Math.abs(dataStart - pending.start.getTime()) < 1000 && endMatches) {
             this.pendingUpdates.delete(entryFile.path);
           } else if (Date.now() - pending.timestamp > 5000) {
             // Expired

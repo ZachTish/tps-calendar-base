@@ -1003,6 +1003,162 @@ function createLocalMatchView(frontmatter, events) {
   return view;
 }
 
+async function createPendingIntervalView(t, { native = true, duration = false } = {}) {
+  const frontmatter = {
+    title: "Pending interval",
+    scheduled: startDate.toISOString(),
+    end: endDate.toISOString(),
+    timeEstimate: 30,
+  };
+  const view = createLocalMatchView(frontmatter, []);
+  const entry = view.getQueryData().data[0];
+  const writes = [];
+  const persisted = { ...frontmatter };
+  const renders = [];
+  const hadWindow = Object.hasOwn(globalThis, "window");
+  const originalWindow = globalThis.window;
+  globalThis.window = { setTimeout: () => 0 };
+  t.after(() => {
+    if (hadWindow) globalThis.window = originalWindow;
+    else delete globalThis.window;
+  });
+
+  view.plugin.getCalendarStorageMode = () => native ? "native-records" : "legacy";
+  view.shouldProcessUpdates = () => true;
+  view.endDateProp = duration ? "note.timeEstimate" : "note.end";
+  view.useEndDuration = duration;
+  view.getDailyNoteDateFormat = () => undefined;
+  view.prepareFormulaRuntime = async () => { view.formulaDefinitions = {}; };
+  view.shouldRefreshExternalEvents = () => false;
+  entry.getValue = (property) => frontmatter[String(property).replace(/^note\./u, "")];
+  // Use actual start/interval parsing, optimistic mutation and refresh methods.
+  // Only the provider write, host UI and unrelated styling/filter services are mocked.
+  delete view.resolveEntryStartDate;
+  delete view.hasNoteLevelStartDate;
+  view.updateNativeCalendarRecordSchedule = async (args) => { writes.push(args); };
+  view.processGcmFrontmatter = async (file, mutate) => {
+    assert.equal(file, entry.file);
+    writes.push(file);
+    mutate(persisted);
+  };
+  view.renderReactCalendar = () => renders.push({
+    start: view.entries[0]?.startDate?.getTime(),
+    end: view.entries[0]?.endDate?.getTime(),
+    pending: view.pendingUpdates.has(entry.file.path),
+  });
+  await view.updateCalendarCore(true);
+  return {
+    view, entry, frontmatter, persisted, writes, renders,
+    resize: (start, end) => view.updateEntryDates(entry, start, end, false, "all", "calendar-event-resize"),
+    refresh: () => view.updateCalendarCore(true),
+    rendered: () => renders.at(-1),
+    pending: () => view.pendingUpdates.get(entry.file.path),
+  };
+}
+
+test("pending interval survives stale end-only resize refreshes until the end settles", async (t) => {
+  const f = await createPendingIntervalView(t);
+  const requestedEnd = new Date(startDate.getTime() + 90 * 60000);
+  await f.resize(startDate, requestedEnd);
+  assert.equal(f.rendered().end, requestedEnd.getTime());
+  for (let pass = 0; pass < 4; pass++) {
+    await f.refresh();
+    assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: requestedEnd.getTime(), pending: true });
+  }
+  f.frontmatter.end = requestedEnd.toISOString();
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: requestedEnd.getTime(), pending: false });
+  assert.equal(f.writes.length, 1, "refresh bursts do not repeat the write");
+});
+
+test("pending interval move waits for both endpoints after a partial data update", async (t) => {
+  const f = await createPendingIntervalView(t);
+  const requestedStart = new Date(startDate.getTime() + 15 * 60000);
+  const requestedEnd = new Date(startDate.getTime() + 90 * 60000);
+  await f.resize(requestedStart, requestedEnd);
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: requestedStart.getTime(), end: requestedEnd.getTime(), pending: true });
+  f.frontmatter.scheduled = requestedStart.toISOString();
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: requestedStart.getTime(), end: requestedEnd.getTime(), pending: true });
+  f.frontmatter.end = requestedEnd.toISOString();
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: requestedStart.getTime(), end: requestedEnd.getTime(), pending: false });
+  assert.equal(f.writes.length, 1);
+});
+
+test("pending interval acknowledges the resolved duration-derived end", async (t) => {
+  const f = await createPendingIntervalView(t, { native: false, duration: true });
+  const requestedEnd = new Date(startDate.getTime() + 90 * 60000);
+  await f.resize(startDate, requestedEnd);
+  assert.equal(f.persisted.timeEstimate, 90, "the real legacy writer updates its configured duration");
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: requestedEnd.getTime(), pending: true });
+  Object.assign(f.frontmatter, f.persisted);
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: requestedEnd.getTime(), pending: false });
+  assert.equal(f.writes.length, 1);
+});
+
+test("pending interval preserves optional-end start-only acknowledgement", async (t) => {
+  const f = await createPendingIntervalView(t, { native: false });
+  const requestedStart = new Date(startDate.getTime() + 60 * 60000);
+  await f.resize(requestedStart, undefined);
+  assert.equal(f.pending().end, undefined);
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: requestedStart.getTime(), end: undefined, pending: true });
+  Object.assign(f.frontmatter, f.persisted);
+  await f.refresh();
+  assert.equal(f.rendered().start, requestedStart.getTime());
+  assert.equal(f.pending(), undefined, "an omitted end does not require a matching display fallback");
+  assert.equal(f.writes.length, 1);
+});
+
+test("pending interval for a newer resize is not acknowledged by the earlier edit", async (t) => {
+  const f = await createPendingIntervalView(t);
+  const firstEnd = new Date(startDate.getTime() + 60 * 60000);
+  const latestEnd = new Date(startDate.getTime() + 90 * 60000);
+  await f.resize(startDate, firstEnd);
+  await f.resize(startDate, latestEnd);
+  f.frontmatter.end = firstEnd.toISOString();
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: latestEnd.getTime(), pending: true });
+  f.frontmatter.end = latestEnd.toISOString();
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: latestEnd.getTime(), pending: false });
+  assert.equal(f.writes.length, 2, "one write for each user edit only");
+});
+
+test("pending interval retains its existing five-second expiry", async (t) => {
+  const f = await createPendingIntervalView(t);
+  const requestedStart = new Date(startDate.getTime() + 15 * 60000);
+  const requestedEnd = new Date(startDate.getTime() + 90 * 60000);
+  await f.resize(requestedStart, requestedEnd);
+  f.pending().timestamp = Date.now() - 5001;
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: endDate.getTime(), pending: false });
+  assert.equal(f.writes.length, 1);
+});
+
+test("pending interval accepts sub-second normalization on both endpoints", async (t) => {
+  const f = await createPendingIntervalView(t);
+  const requestedEnd = new Date(startDate.getTime() + 90 * 60000);
+  await f.resize(startDate, requestedEnd);
+  f.frontmatter.scheduled = new Date(startDate.getTime() + 500).toISOString();
+  f.frontmatter.end = new Date(requestedEnd.getTime() + 500).toISOString();
+  await f.refresh();
+  assert.equal(f.pending(), undefined);
+});
+
+test("pending interval does not acknowledge an end outside its one-second tolerance", async (t) => {
+  const f = await createPendingIntervalView(t);
+  const requestedEnd = new Date(startDate.getTime() + 90 * 60000);
+  await f.resize(startDate, requestedEnd);
+  f.frontmatter.end = new Date(requestedEnd.getTime() + 1000).toISOString();
+  await f.refresh();
+  assert.deepEqual(f.rendered(), { start: startDate.getTime(), end: requestedEnd.getTime(), pending: true });
+});
+
 async function resolveLocalExternalMatch(frontmatter, events) {
   const view = createLocalMatchView(frontmatter, events);
   await view.updateCalendarCore(true);

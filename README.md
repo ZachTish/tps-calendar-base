@@ -2,7 +2,17 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.2](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.2) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.3](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.3) · Obsidian 1.10.0+ · Desktop and mobile.
+
+## 0.16.3 — Keep the resized interval while metadata catches up
+
+Resizing an event now retains its complete pending interval until the displayed start and end both match the saved change. Previously, an unchanged start was enough to clear that pending interval; the first stale Base result could paint the old end again before a later refresh corrected it. This also protects a move whose start has updated while its end is still old. The existing one-second comparison tolerance, five-second expiry and optional-end behavior remain. No new state, timer, cache, refresh event, writer, setting or migration is introduced.
+
+The fix is in Calendar's existing pending-update acknowledgement. GCM still owns the native write and identity verification; Bases still supplies query results. It does not remove the first existing-record edit's global identity check. In the installed test vault, the first move spent about 4.8 seconds verifying 10,678 Markdown sources; that separate authority/performance decision remains unresolved. Repeated edits reuse the verified index.
+
+Eight actual-method regressions cover stale and partial metadata, duration-derived ends, superseding edits, optional ends, expiry and tolerance; five failed before the fix. All 341 declared tests and TypeScript passed. The separate normal build deployed to the test vault; named Calendar reload verified 0.16.3 with settings unchanged. Actual foreground longer/shorter resizes retained the requested end in every render, with two-frame correct layout at 48.2/47.5 ms after confirmation versus 247.6 ms and a stale interval before the fix. Each edit still made one write, two full data passes and four render requests. These small warm desktop samples establish the snap-back correction, not native/production/mobile speed. All consumers remained enabled; the left sidebar was collapsed for geometry, then restored. Body/identity/settings were preserved and fixtures archived.
+
+Regression and installed validation, build/reload details and artifact hashes are recorded in [0.16.3 release notes](release-notes/0.16.3.md). Minimum Obsidian remains 1.10.0. This is a backward-compatible display-correctness patch; no production or native-performance equivalence is claimed.
 
 ## 0.16.2 — Let GCM allocate fresh Calendar identities
 
