@@ -1494,17 +1494,14 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   useLayoutEffect(() => {
     const root = containerRef.current;
-    if (!root) {
-      setDayMarkerOverlays([]);
+    if (!root || dayMarkerSources.size === 0) {
+      // An empty overlay list needs no DOM observation. Replacing it on each
+      // Calendar mutation would rerender Calendar and trigger this observer again.
+      setDayMarkerOverlays((previous) => previous.length === 0 ? previous : []);
       return;
     }
 
     const measureMarkers = () => {
-      if (dayMarkerSources.size === 0) {
-        setDayMarkerOverlays([]);
-        return;
-      }
-
       const rootRect = root.getBoundingClientRect();
       const next: CalendarDayMarkerOverlay[] = [];
       for (const [dateKey, marker] of dayMarkerSources) {
@@ -1541,8 +1538,12 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       });
     };
 
-    const scheduleMeasure = () => window.requestAnimationFrame(measureMarkers);
-    const frame = scheduleMeasure();
+    let frame = 0;
+    const scheduleMeasure = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(measureMarkers);
+    };
+    scheduleMeasure();
     const timeouts = [80, 250, 600, 1200].map((delay) => window.setTimeout(measureMarkers, delay));
     const resizeObserver = new ResizeObserver(() => {
       scheduleMeasure();
