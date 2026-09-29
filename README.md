@@ -2,7 +2,17 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.7](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.7) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.8](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.8) · Obsidian 1.10.0+ · Desktop and mobile.
+
+## 0.16.8 — Leave hidden Calendar embeds idle
+
+The visibility guard now checks the Calendar's own container. Being inside the active tab no longer permits a hidden Live Preview embed to mount React while Reading mode is displayed. Missing-data retries use the same existing guard, so detached and hidden native views do not start retry chains. Visible views retain their data retries, and the existing resize callback initializes a Calendar when its container becomes visible. Explicit connected protocol preparation and direct embeds retain their existing overrides.
+
+The installed 0.16.7 reproduction mounted a hidden, zero-sized editor Calendar and requested two renders while the visible Reading Calendar displayed 48 events. Detached host-owned views also attempted updates every 250 ms after their startup delay. The fix changes two guard lines, with no new listener, cache, timer, state, writer, settings or migration. Host-owned cached components remain owned by Obsidian; they are not forcibly unloaded. Config loading and Base query costs remain separate.
+
+Four actual-method regressions replace the old visibility-expression assertion: 50-event hidden/detached bursts perform zero query/mount/retry work, visibility resumes through resize, visible retries coalesce and stop while hidden, and explicit preparation retains its connected-only override. Two fail against 0.16.7. Host DOM, timers and the React mount/data-processing boundaries are mocked. Final test-vault mode-switch verification and artifact hashes are recorded in [0.16.8 release notes](release-notes/0.16.8.md). This is a backward-compatible patch; minimum Obsidian remains 1.10.0. Physical iPhone and native-performance parity require separate acceptance.
+
+Validation: all 358 declared tests pass with zero failures/skips/cancellations, followed by the separate TypeScript/production build and named Calendar-only test reload. A trusted foreground open preserves the visible Calendar's 48 events while hidden data/render calls fall from two each to zero and its React root remains absent. Detached/hidden instances have zero pending retries. Reading → Live Preview initializes the previously hidden Calendar; changing a synthetic event while Reading is hidden then returning displays the changed title, and the reverse switch displays its restored title. The API snapshot following the Reading check was visible but unfocused; these are functional/count results, not a latency claim. All 54 fixture files were restored byte-for-byte and archived, eight plugin settings states remained unchanged, the original leaf/zoom/bounds were restored, registry returned to zero and diagnostics were removed. Core Canvas remained disabled. Physical-device, cold-start and native-parity measurements remain unverified.
 
 ## 0.16.7 — Restrict Canvas geometry handling to Canvas
 

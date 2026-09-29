@@ -1508,7 +1508,7 @@ export class CalendarView extends BasesView {
   private shouldProcessUpdates(force = false): boolean {
     if (!this.containerEl.isConnected) return false;
     if (force || (this as any).forceDirectEmbedRender === true) return true;
-    return this.containerEl.isShown() || this.isActiveLeaf();
+    return this.containerEl.isShown();
   }
 
   private updateBasesHeaderOffset(): void {
@@ -1911,6 +1911,7 @@ export class CalendarView extends BasesView {
   }
 
   private scheduleDataRetry(): void {
+    if (!this.shouldProcessUpdates()) return;
     if (this.pendingDataRetryId !== null) return;
     if (this.pendingDataRetryCount >= this.pendingDataMaxRetries) return;
     const navigationEpoch = this.calendarNavigationEpoch;
