@@ -99,7 +99,8 @@ test("calendar exposes direct Base embed rendering for rendered plugin views", (
   assert.match(embedRendererSource, /this\.view\.setDirectEmbeddedDayCountPreservation\(this\.options\.preserveDayCount === true\)/);
   assert.match(embedRendererSource, /updateCalendar\?\.\(true\)/);
   assert.match(embedRendererSource, /\(this\.view as any\)\.data = queryResult/);
-  assert.match(embedRendererSource, /this\.view\.onunload\(\)/);
+  assert.match(embedRendererSource, /this\.view\.load\(\)/);
+  assert.match(embedRendererSource, /this\.view\.unload\(\)/);
 });
 
 test("calendar logging records high-level fetch, parse, and creation outcomes", () => {

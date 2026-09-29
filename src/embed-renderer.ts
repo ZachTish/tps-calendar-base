@@ -81,7 +81,7 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
 
     async render() {
         if (this.view) {
-            this.view.onunload();
+            this.view.unload();
             this.view = null;
         }
         this.containerEl.empty();
@@ -104,7 +104,7 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
         (this.view as any).data = queryResult;
         (this.view as any).queryResult = queryResult;
         (this.view as any).result = queryResult;
-        if (this.view.onload) await this.view.onload();
+        this.view.load();
         (this.view as any).onDataUpdated?.();
         await (this.view as any).updateCalendar?.(true);
     }
@@ -148,7 +148,7 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
 
     onunload() {
         if (this.view) {
-            this.view.onunload();
+            this.view.unload();
             this.view = null;
         }
         super.onunload();

@@ -1319,6 +1319,7 @@ export class CalendarView extends BasesView {
   }
 
   onload(): void {
+    (this.plugin as any)?.registerCalendarViewInstance?.(this);
     this.trace("onload:start", {
       hasConfig: !!this.config,
       hasData: !!this.data,

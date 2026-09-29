@@ -58,11 +58,7 @@ export default class ObsidianCalendarPlugin
     this.registerBasesView(CalendarViewType, {
       name: "Calendar",
       icon: "lucide-calendar",
-      factory: (controller, containerEl) => {
-        const view = new CalendarView(controller, containerEl, this);
-        this.registerCalendarViewInstance(view);
-        return view;
-      },
+      factory: (controller, containerEl) => new CalendarView(controller, containerEl, this),
       options: () => CalendarView.getOptions(this),
     });
     this.addSettingTab(new CalendarPluginSettingsTab(this.app, this));
