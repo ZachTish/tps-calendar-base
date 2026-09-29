@@ -2071,6 +2071,10 @@ export class CalendarView extends BasesView {
       return;
     }
 
+    if (this.pendingDataRetryId !== null) {
+      window.clearTimeout(this.pendingDataRetryId);
+      this.pendingDataRetryId = null;
+    }
     this.pendingDataRetryCount = 0;
     const nativeRecordMode = this.plugin.getCalendarStorageMode?.() === "native-records";
     this.updateExternalCalendarVisibility();

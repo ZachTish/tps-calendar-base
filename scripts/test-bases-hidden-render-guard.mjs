@@ -93,6 +93,32 @@ test('explicit protocol and direct embed preparation retain their connected-only
   assert.equal(view.shouldProcessUpdates(), false);
 });
 
+test('data arrival cancels the outstanding wait instead of processing the same result again', async () => {
+  for (const data of [[], [{ file: { path: 'Inbox/Event.md' } }]]) {
+    const { view, calls, timers } = fixture();
+    const ready = new Error('normal data processing');
+    let query = null, processing = 0;
+    Object.assign(view, {
+      visible: true, startDateProp: 'note.scheduled', hasRenderedCalendar: true,
+      getQueryData: () => query,
+      plugin: { getCalendarStorageMode() { processing++; throw ready; } },
+    });
+    for (let i = 0; i < 50; i++) await view.updateCalendarCore();
+    assert.equal(timers.size, 1, 'missing-data bursts share one outstanding wait');
+    query = { data };
+    await assert.rejects(view.updateCalendarCore(), error => error === ready);
+    assert.equal(view.pendingDataRetryId, null);
+    assert.equal(view.pendingDataRetryCount, 0);
+    for (const callback of timers.values()) callback();
+    assert.equal(timers.size, 0);
+    assert.equal(calls.updates, 0, 'the obsolete wait causes no second update');
+    assert.equal(processing, 1);
+    query = { data: [{ file: { path: 'Inbox/Changed.md' } }] };
+    await assert.rejects(view.updateCalendarCore(), error => error === ready);
+    assert.equal(processing, 2, 'a subsequent host data notification still processes normally');
+  }
+});
+
 test('data completion and React mounting retain the visibility guard', () => {
   assert.match(source, /this\.containerEl\.removeClass\("is-loading"\);\s*if \(!this\.shouldProcessUpdates\(\)\) return;[\s\S]{0,500}this\.calendarProtocolDataRangeReady = true;\s*this\.renderReactCalendar\(\)/);
   assert.match(source, /if \(!this\.isActiveCalendarUpdateNavigationCurrent\(\)\) \{[\s\S]{0,300}return;[\s\S]{0,100}this\.calendarProtocolDataRangeReady = true/);

@@ -165,6 +165,8 @@ function emptySuppressions() {
 
 function createBareView() {
   const view = Object.create(CalendarView.prototype);
+  view.pendingDataRetryId = null;
+  view.pendingDataRetryCount = 0;
   view.app = {
     plugins: { getPlugin: () => null },
     workspace: { getActiveFile: () => null },

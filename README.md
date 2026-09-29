@@ -2,7 +2,15 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.8](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.8) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.9](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.9) · Obsidian 1.10.0+ · Desktop and mobile.
+
+## 0.16.9 — Stop waiting once Calendar data arrives
+
+When a Calendar accepts query data, it now cancels its outstanding missing-data timer before processing. Previously it reset the retry count but left the earlier timer armed. An installed mixed-note open showed that timer processing the same 48 events again after data had already arrived, causing another full data pass and React render. Obsidian's normal data notifications continue to refresh the view, including an initially empty result and later edits.
+
+The fix completes the existing timer's lifetime at its owning success boundary. It adds no timer, cache, state, listener, write, setting or migration. The actual-method regression covers 50 missing-data updates sharing one timer, empty/nonempty arrival canceling it, no delayed second update and subsequent genuine notifications. It fails on 0.16.8. Host timers and the expensive processing boundary are mocked; installed verification and artifact hashes are in [0.16.9 release notes](release-notes/0.16.9.md). This is a backward-compatible patch; minimum Obsidian remains 1.10.0.
+
+Validation: all 359 declared tests pass with zero failures/skips/cancellations, followed by a separate TypeScript/production build and named Test-only reload. An initial full-suite run exposed nine fixtures that bypassed constructor initialization; their existing helper now initializes the retry fields to the same null/zero values as real views. The runtime was not broadened to accommodate incomplete mocks. First and repeated trusted foreground opens each used three data/render passes instead of four, kept all 48 events and left no pending retry. Title parsing ran 48/96 times versus 144 in the before sample; data availability varied between empty and populated early queries, so this is not a fixed percentage improvement or faster-first-paint claim. A genuine synthetic event edit still refreshed the visible title. All 54 fixture files were restored byte-for-byte and archived, eight consumer settings states stayed unchanged, the original leaf/zoom/bounds were restored and diagnostics were removed. Core Canvas remained disabled. This desktop test-vault result does not establish physical iPhone, cold-start or native-performance parity.
 
 ## 0.16.8 — Leave hidden Calendar embeds idle
 
