@@ -2,7 +2,13 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.5](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.5) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.6](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.6) · Obsidian 1.10.0+ · Desktop and mobile.
+
+## 0.16.6 — Keep Calendar navigation inside narrow panes
+
+The floating navigation bar is bounded by its Calendar pane at every app-window width. Previously, only a viewport media query limited its width, so a 431 px bar overflowed a 381 px pane in a wider desktop window and clipped the date and Next controls. The date wrapper and label can now shrink and show an ellipsis; the full text remains in the accessibility tree. Navigation arrows keep at least 44 × 44 px touch targets, and the title/Today controls are at least 44 px high. Desktop Calendar wrappers now follow their existing host/flex height instead of fixing themselves to their previous measured body height. The old feedback kept a 622 px Calendar in a 552 px pane after zooming, clipping the bottom controls. Embedded and mobile sizing branches are unchanged. Date navigation, counts, disabled boundaries, picker callbacks and scroll-hide behavior are unchanged. No new runtime state, observers, data reads/writes, settings or migration. This is a backward-compatible layout patch, minimum Obsidian 1.10.0.
+
+All 350 declared tests and TypeScript pass; the existing source assertion requiring the defective fixed height now expects host-relative height. A separate final production build deployed to the test runtime, followed by a named Calendar-only reload. Installed UI verification used 381 px and 291 px panes: horizontal bounds and all ancestor clipping bounds pass, including a live wide-to-narrow resize. Next and Today retain correct dates and event counts; arrows measure 44 × 44 px. Two trusted foreground scroll samples reached the first changed scroll position in 8/9 ms, with zero measured vault reads, writes, scans or long tasks in each 1.8 s window. These are small desktop samples, not native-equivalence or physical iPhone certification. The embedded fixture retained its 520 px height; its navigation is configured off. All 53 fixture files and eight plugin settings were preserved; fixtures archived, original leaf/zoom restored and instrumentation removed. No new source-mirroring CSS test was added for this reversible layout correction. Artifact hashes and limitations are in [0.16.6 release notes](release-notes/0.16.6.md).
 
 ## 0.16.5 — Stop idle Calendar rerendering
 

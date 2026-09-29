@@ -898,7 +898,7 @@ test("reading-mode embedded calendars stay compact and preserve Bases chrome by 
   assert.doesNotMatch(reactViewSource, /const resolvedDedicatedHeight = !isEmbedMode \? resolvedViewHeight : undefined/);
   assert.match(reactViewSource, /const dedicatedCalendarHeight = \(calendarBodyHeight > 0/);
   assert.match(reactViewSource, /const fullCalendarContentHeight: number \| "auto" \| "100%" = isEmbedMode/);
-  assert.match(reactViewSource, /height: isEmbedMode \? scrollSurfaceHeight : isMobile \? "auto" : `\$\{dedicatedCalendarHeight\}px`/);
+  assert.match(reactViewSource, /height: isEmbedMode \? scrollSurfaceHeight : isMobile \? "auto" : "100%"/);
   assert.match(reactViewSource, /flex: isEmbedMode \? "1 1 0%" : isMobile \? "1 1 auto" : "1 1 0%"/);
   assert.match(reactViewSource, /const effectiveZoom = isEmbedMode \? Math\.min\(zoom, isMobile \? 0\.75 : 0\.82\) : zoom/);
   assert.match(

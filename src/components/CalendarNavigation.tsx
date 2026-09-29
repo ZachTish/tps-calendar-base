@@ -113,7 +113,7 @@ export const CalendarNavigation: React.FC<CalendarNavigationProps> = ({
       style={isEmbedded ? floatingNavStyle : undefined}
     >
       {showNavigation && (
-        <div style={{ position: "relative", display: "flex" }}>
+        <div style={{ position: "relative", display: "flex", minWidth: 0, flex: "0 1 auto" }}>
           <button
             className="bases-calendar-title-text"
             style={{
@@ -149,8 +149,8 @@ export const CalendarNavigation: React.FC<CalendarNavigationProps> = ({
               }
             }}
           >
-            {headerTitle}
-            <span style={{ fontSize: "0.6em", opacity: 0.7 }}>&#9660;</span>
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{headerTitle}</span>
+            <span style={{ fontSize: "0.6em", opacity: 0.7, flexShrink: 0 }}>&#9660;</span>
           </button>
         </div>
       )}

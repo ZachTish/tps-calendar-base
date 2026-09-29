@@ -595,6 +595,18 @@ body.tps-tps-mobile-ui-gesture-hidden .bases-calendar-wrapper .tps-calendar-aux-
   padding-inline: 10px !important;
 }
 
+.bases-calendar-wrapper .bases-calendar-nav-button {
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  height: auto;
+}
+
+.bases-calendar-wrapper .bases-calendar-title-text {
+  min-height: 44px;
+  height: auto;
+}
+
 @media (max-width: 600px) {
   .bases-calendar-wrapper .bases-calendar-floating-nav,
   .bases-calendar-wrapper .bases-calendar-top-nav {

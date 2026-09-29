@@ -787,6 +787,8 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
     flexWrap: 'nowrap',
     minWidth: 0,
+    maxWidth: 'calc(100% - 16px)',
+    boxSizing: 'border-box',
     pointerEvents: 'none',
     touchAction: 'pan-y',
     zIndex: isCanvasEmbed ? 40 : 10010,
@@ -3752,8 +3754,8 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       ref={containerRef}
       className={`bases-calendar-wrapper ${isEmbedMode ? 'bases-calendar-embedded' : 'bases-calendar-dedicated'} ${isCanvasEmbed ? 'bases-calendar-canvas-embedded' : ''} ${isDraggingOver ? 'is-drag-over' : ''} ${isMini ? 'bases-calendar-mini' : ''} ${allDayStickyScroll ? 'allday-sticky' : 'allday-no-sticky'}`}
       style={{
-        height: isEmbedMode ? scrollSurfaceHeight : isMobile ? "auto" : `${dedicatedCalendarHeight}px`,
-        minHeight: isEmbedMode ? (useCanvasEmbedSizing ? 0 : `${embedFallbackHeight}px`) : isMobile ? undefined : `${dedicatedCalendarHeight}px`,
+        height: isEmbedMode ? scrollSurfaceHeight : isMobile ? "auto" : "100%",
+        minHeight: isEmbedMode ? (useCanvasEmbedSizing ? 0 : `${embedFallbackHeight}px`) : isMobile ? undefined : 0,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -3964,7 +3966,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         ref={calendarBodyRef}
         style={{
           flex: isEmbedMode ? "1 1 0%" : isMobile ? "1 1 auto" : "1 1 0%",
-          height: isEmbedMode ? "100%" : isMobile ? "auto" : `${dedicatedCalendarHeight}px`,
+          height: isEmbedMode ? "100%" : isMobile ? "auto" : "100%",
           minHeight: isEmbedMode ? 0 : isMobile ? undefined : 0,
           overflow: "hidden",
           position: "relative",
