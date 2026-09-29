@@ -2,7 +2,15 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.6](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.6) · Obsidian 1.10.0+ · Desktop and mobile.
+Current release: [0.16.7](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.7) · Obsidian 1.10.0+ · Desktop and mobile.
+
+## 0.16.7 — Restrict Canvas geometry handling to Canvas
+
+Ordinary Markdown Calendar embeds no longer install the Canvas-specific global geometry override and mouse interception. The existing registration effect now checks both embedded mode and the already-detected Canvas ancestry, and reruns when that ancestry is detected. Canvas keeps its existing scaling behavior and shared lifetime across multiple Canvas embeds. No new state, cache, listener, timer, data write, setting or migration. This is a backward-compatible scope correction, minimum Obsidian 1.10.0.
+
+The originating behavior was reproduced in an ordinary embedded note with no Canvas ancestors: opening it replaced Element.prototype.getBoundingClientRect and installed the Canvas drag listeners for the whole window. Closing the owning Markdown leaf restored the native function. Four actual-source effect/patch tests cover 50 ordinary embed mounts with 1,000 geometry reads and zero Canvas inspections, late Canvas detection, multiple Canvas owners, ordinary/Canvas isolation and missing/nonembedded hosts. Three fail against 0.16.6. Browser geometry and effect dependency scheduling are mocked.
+
+All 354 declared tests, TypeScript and the separate production build pass; named test-vault reload verified 0.16.7. An ordinary embedded Calendar displays all 48 events while leaving the native geometry function intact. An actual Canvas fixture at 43.3% scale retains all 48 events, correctly unscaled row measurements, and working Next/Today navigation. Closing Canvas restores native geometry. Canvas was initially disabled and its config file absent: QA temporarily enabled core Canvas, supplied its defaults in memory and suppressed only setup/teardown config-save requests; adapters, original enabled set and saved configuration were restored. A zoom-control attempt did not change scale and is not claimed as a passed zoom interaction. The original 53 fixture files remained byte-identical; a new Canvas fixture kept the same graph and received native serialization formatting. All 54 files were archived, eight plugin settings preserved and diagnostics removed. This is desktop verification, not physical iPhone acceptance. Opening samples of 700 ms before and 731 ms after do not demonstrate a latency improvement; the proven benefit is removing the incorrectly scoped interception. See [0.16.7 release notes](release-notes/0.16.7.md) for hashes and boundaries.
 
 ## 0.16.6 — Keep Calendar navigation inside narrow panes
 

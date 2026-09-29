@@ -1423,7 +1423,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   // unscales getBoundingClientRect() for every FC measurement (PositionCache
   // builds, scroll dims, now-indicator, events) while this embed is mounted.
   useEffect(() => {
-    if (!isEmbedMode || !containerRef.current) return;
+    if (!isEmbedMode || !isCanvasEmbed || !containerRef.current) return;
     const container = containerRef.current;
     _canvasEmbedContainers.add(container);
     _installCanvasBCRPatch();
@@ -1432,7 +1432,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       _scaleCache.delete(container);
       _uninstallCanvasBCRPatch();
     };
-  }, [isEmbedMode]);
+  }, [isEmbedMode, isCanvasEmbed]);
 
   // Data-refresh size sync: when events change (Obsidian file watcher fires ~every minute),
   // React re-renders FC with new props, triggering componentDidUpdate → handleSizing() →
