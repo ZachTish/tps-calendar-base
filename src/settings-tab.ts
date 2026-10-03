@@ -486,7 +486,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     new Setting(frontmatterKeysSection)
       .setName("Primary event date field")
-      .setDesc("First frontmatter field used to place notes on the calendar.")
+      .setDesc("Default start field for views that do not choose their own.")
       .addText((text) =>
         text
           .setPlaceholder("scheduled")
@@ -497,8 +497,21 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
+    new Setting(frontmatterKeysSection)
+      .setName("Primary event interval field")
+      .setDesc("Default end field for views that do not choose their own. It stores minutes when that view uses duration mode, or a datetime otherwise.")
+      .addText((text) =>
+        text
+          .setPlaceholder("timeEstimate")
+          .setValue(this.plugin.settings.endProperty ?? "timeEstimate")
+          .onChange(async (value) => {
+            this.plugin.settings.endProperty = value.trim() || "timeEstimate";
+            await this.plugin.saveSettings();
+          }),
+      );
+
     frontmatterKeysSection.createEl("p", {
-      text: "Each Base view chooses its primary start and end. Configure additional timeline blocks under View & navigation; Base filters choose which notes reach the view.",
+      text: "A Base view's own start and end choices take precedence. Configure additional timeline blocks in View & navigation; Base filters choose which notes reach the view.",
     }).addClass("setting-item-description");
 
     const timelineSection = createSettingsGroup(

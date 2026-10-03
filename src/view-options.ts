@@ -25,7 +25,7 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
           displayName: "Start date",
           type: "property",
           key: "startDate",
-          placeholder: "note.scheduled",
+          placeholder: `note.${plugin?.settings?.startProperty || "scheduled"}`,
         },
         {
           displayName: "Duration (minutes, optional)",
@@ -47,7 +47,7 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
           displayName: "End property",
           type: "property",
           key: "endDate",
-          placeholder: "note.timeEstimate or note.due",
+          placeholder: `note.${plugin?.settings?.endProperty || "timeEstimate"}`,
         },
         {
           displayName: "Title",

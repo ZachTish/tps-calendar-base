@@ -2,7 +2,15 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current version: **1.1.0** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.1.0 release notes](release-notes/1.1.0.md) for test-vault validation and artifact hashes.
+Current version: **1.1.1** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.1.1 release notes](release-notes/1.1.1.md) for test-vault validation and artifact hashes.
+
+## 1.1.1 — Use configured fields for existing-note ranges
+
+Dragging a range to **Track existing event** now writes the Base view's configured start property and one configured end property. Duration mode stores minutes in that end property; end-datetime mode stores a datetime. The default pair remains `scheduled` and `timeEstimate`. The action no longer writes an extra `timeEstimate` or a literal `note.end` frontmatter key when another field is configured. Existing notes are not automatically rewritten.
+
+**Advanced → Frontmatter field names → Primary event date field** and **Primary event interval field** configure the fallback pair for a Base without its own start/end choices, including direct embedded calendars. A Base view's explicit fields take precedence. The interval field stores minutes when that Base chooses duration mode and a datetime otherwise. This release adds no persisted setting; it makes the existing `endProperty` setting editable. The selected configured start key alone determines whether a note is already scheduled for the existing-note picker or a file drop. A computed start cannot be written through the range action. No new background listener, scan, cache, or repair is added; the picker reads cached frontmatter once per candidate and resolves its configured key once.
+
+The focused actual-method tests cover custom duration and end-datetime keys, default behavior, repeated scheduling without a second key, configured-key selection, computed-start rejection, and direct-embed precedence. The full suite, final build, Test Vault reload, and desktop UI check are recorded in the release notes. Physical iPhone behavior remains unverified.
 
 ## 1.1.0 — Configurable timeline date pairs
 

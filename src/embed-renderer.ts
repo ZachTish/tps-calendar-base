@@ -110,9 +110,7 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
     }
 
     private withCalendarDefaults(config: Record<string, unknown>): Record<string, unknown> {
-        return {
-            startDate: "note.scheduled",
-            endDate: "note.timeEstimate",
+        const defaults: Record<string, unknown> = {
             titleProperty: "note.title",
             statusField: "note.status",
             allDayProperty: "note.allDay",
@@ -122,6 +120,13 @@ export class CalendarEmbedRenderChild extends MarkdownRenderChild {
             viewFilters: this.viewConfig.filters,
             ...config,
         };
+        if (!defaults.startDate && !defaults.startProperty && !defaults.start) {
+            defaults.startDate = `note.${this.plugin.settings?.startProperty || "scheduled"}`;
+        }
+        if (!defaults.endDate && !defaults.endProperty && !defaults.end) {
+            defaults.endDate = `note.${this.plugin.settings?.endProperty || "timeEstimate"}`;
+        }
+        return defaults;
     }
 
     private createVaultEntries(): any[] {

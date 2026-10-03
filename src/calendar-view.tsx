@@ -1604,9 +1604,13 @@ export class CalendarView extends BasesView {
       this.config.getAsPropertyId("endDate") ??
       this.config.getAsPropertyId("endProperty") ??
       this.config.getAsPropertyId("end");
-    this.startDateProp = startProp ?? ("note.scheduled" as BasesPropertyId);
+    this.startDateProp = startProp
+      ?? this.normalizeConfiguredPropertyId(this.plugin.settings.startProperty)
+      ?? ("note.scheduled" as BasesPropertyId);
     this.primaryDurationMinutes = this.parseOptionalDurationMinutes(this.config.get("primaryDurationMinutes"));
-    this.endDateProp = endProp ?? ("note.timeEstimate" as BasesPropertyId);
+    this.endDateProp = endProp
+      ?? this.normalizeConfiguredPropertyId(this.plugin.settings.endProperty)
+      ?? ("note.timeEstimate" as BasesPropertyId);
 
     this.titleProp = this.config.getAsPropertyId("titleProperty");
 
@@ -3953,8 +3957,9 @@ export class CalendarView extends BasesView {
   }
 
   private async promptForTimeTrackingNoteTarget(start: Date, end: Date): Promise<TimeTrackingNoteSelection | null> {
-    const files = this.app.vault.getMarkdownFiles()
-      .filter((file) => !this.noteHasScheduledValue(file))
+    const startField = this.getNoteField(this.startDateProp);
+    const files = (startField ? this.app.vault.getMarkdownFiles() : [])
+      .filter((file) => !this.fileHasScheduledValue(file, startField!))
       .sort((a, b) => a.basename.localeCompare(b.basename) || a.path.localeCompare(b.path));
 
     return new Promise((resolve) => {
@@ -4018,21 +4023,6 @@ export class CalendarView extends BasesView {
     }
   }
 
-  private noteHasScheduledValue(file: TFile): boolean {
-    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, any> | undefined;
-    if (!frontmatter || typeof frontmatter !== "object") return false;
-    const candidates = [
-      String(this.startDateProp || "scheduled"),
-      "scheduled",
-    ].map((key) => key.toLowerCase());
-    return Object.entries(frontmatter).some(([key, value]) => (
-      candidates.includes(key.toLowerCase())
-      && value !== null
-      && value !== undefined
-      && String(value).trim() !== ""
-    ));
-  }
-
   private buildUniqueStandaloneNotePath(title: string): string {
     const base = this.sanitizeStandaloneNoteTitle(title) || "Untitled";
     let candidate = `${base}.md`;
@@ -4053,14 +4043,18 @@ export class CalendarView extends BasesView {
   }
 
   private async applyScheduleToExistingNote(file: TFile, start: Date, end: Date): Promise<void> {
-    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
-      const startKey = String(this.startDateProp || "scheduled");
-      frontmatter[startKey] = formatDateTimeForFrontmatter(start);
-      if (this.endDateProp) {
-        frontmatter[String(this.endDateProp)] = formatDateTimeForFrontmatter(end);
+    const startField = this.getNoteField(this.startDateProp);
+    if (!startField || isCalendarFormulaProperty(this.startDateProp)) {
+      throw new Error("This Calendar has no writable start date property.");
+    }
+    const endField = this.getNoteField(this.endDateProp);
+    await this.processGcmFrontmatter(file, (frontmatter) => {
+      frontmatter[startField] = formatDateTimeForFrontmatter(start);
+      if (endField && !isCalendarFormulaProperty(this.endDateProp)) {
+        frontmatter[endField] = this.useEndDuration
+          ? Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000))
+          : formatDateTimeForFrontmatter(end);
       }
-      const durationMinutes = Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
-      frontmatter.timeEstimate = durationMinutes;
     });
   }
 
@@ -5151,11 +5145,7 @@ export class CalendarView extends BasesView {
 
   private fileHasScheduledValue(file: TFile, startField: string): boolean {
     const frontmatter = (this.app.metadataCache.getFileCache(file)?.frontmatter || {}) as Record<string, any>;
-    const primary = this.getFrontmatterValueCaseInsensitive(frontmatter, startField);
-    const fallback = startField.toLowerCase() === "scheduled"
-      ? undefined
-      : this.getFrontmatterValueCaseInsensitive(frontmatter, "scheduled");
-    return this.isNonEmptyFrontmatterValue(primary ?? fallback);
+    return this.isNonEmptyFrontmatterValue(this.getFrontmatterValueCaseInsensitive(frontmatter, startField));
   }
 
   private isNonEmptyFrontmatterValue(value: unknown): boolean {
