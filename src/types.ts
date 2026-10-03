@@ -1,4 +1,5 @@
 export type CalendarStyleMatch = "all" | "any";
+import type { TimelineDatePair } from "./utils/timeline-date-pairs";
 export type CalendarField = "status" | "priority" | string;
 export type CalendarPostCreateBehavior = "preview" | "open" | "stay";
 export type CalendarViewMode =
@@ -114,6 +115,7 @@ export interface CalendarPluginSettings {
     previousStatusKey: string;
     startProperty: string;
     endProperty: string;
+    timelineDatePairs: TimelineDatePair[];
     frontmatterColorField: string;
     frontmatterIconField: string;
     viewMode: CalendarViewMode;

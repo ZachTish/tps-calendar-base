@@ -325,14 +325,10 @@ export interface CalendarEntry {
   iconColor?: string;
   isAuxiliaryDate?: boolean;
   auxiliaryDateField?: string;
-  auxiliaryDateTooltip?: string;
-  auxiliaryDateCount?: number;
-  auxiliaryDateEntries?: CalendarEntry[];
 }
 
 type CalendarDayMarkerOverlay = {
   dateKey: string;
-  auxiliary: number;
   archived: number;
   title: string;
   left: number;
@@ -1072,7 +1068,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     };
 
     entries.forEach((calEntry) => {
-      if (calEntry.isAuxiliaryDate || calEntry.isArchivedExternalPlaceholder) return;
+      if (calEntry.isArchivedExternalPlaceholder) return;
       const allDayValue = allDayProperty
         ? tryGetValue(calEntry.entry, allDayProperty)
         : null;
@@ -1404,7 +1400,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, [isEmbedMode, resolvedFilterViewMode, scrollToNow, isProgrammaticScrollRef]);
 
   const renderableEntries = useMemo(
-    () => entries.filter((entry) => !entry.isAuxiliaryDate && !entry.isArchivedExternalPlaceholder),
+    () => entries.filter((entry) => !entry.isArchivedExternalPlaceholder),
     [entries],
   );
 
@@ -1457,28 +1453,21 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   });
 
   const dayMarkerSources = useMemo(() => {
-    const markersByDay = new Map<string, { auxiliary: number; archived: number; titleParts: string[] }>();
+    const markersByDay = new Map<string, { archived: number; titleParts: string[] }>();
     for (const entry of entries) {
-      const isAuxiliary = !!entry.isAuxiliaryDate;
       const isArchived = !!entry.isArchivedExternalPlaceholder;
-      if (!isAuxiliary && !isArchived) continue;
+      if (!isArchived) continue;
 
       const date = entry.startDate instanceof Date ? entry.startDate : new Date(entry.startDate);
       if (!Number.isFinite(date.getTime())) continue;
 
       const key = formatDateKey(date);
       const marker = markersByDay.get(key) || {
-        auxiliary: 0,
         archived: 0,
         titleParts: [],
       };
-      if (isAuxiliary) marker.auxiliary += Math.max(1, Number(entry.auxiliaryDateCount || 1));
-      if (isArchived) marker.archived += Math.max(1, Number(entry.archivedExternalCount || 1));
-      const tooltip = String(
-        isArchived
-          ? entry.archivedExternalTooltip || entry.title || "Hidden external event"
-          : entry.auxiliaryDateTooltip || entry.title || "Additional date",
-      ).trim();
+      marker.archived += Math.max(1, Number(entry.archivedExternalCount || 1));
+      const tooltip = String(entry.archivedExternalTooltip || entry.title || "Hidden external event").trim();
       if (tooltip) marker.titleParts.push(tooltip);
       markersByDay.set(key, marker);
     }
@@ -1486,7 +1475,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       logger.log("[CalendarReactView] Day markers prepared", {
         days: Array.from(markersByDay.entries()).map(([dateKey, marker]) => ({
           dateKey,
-          auxiliary: marker.auxiliary,
           archived: marker.archived,
         })),
       });
@@ -1517,7 +1505,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         if (columnRect.width <= 0 || columnRect.height <= 0) continue;
         next.push({
           dateKey,
-          auxiliary: marker.auxiliary,
           archived: marker.archived,
           title: marker.titleParts.join("\n"),
           left: Math.max(0, columnRect.right - rootRect.left - 8),
@@ -1949,64 +1936,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }, [viewName, currentDate, resolvedFilterViewMode, targetDayCount, safeWeekStartDay, rangeAnchor]);
 
   // --- Event handlers ---
-  const showAuxiliaryDateMenu = useCallback((sourceEntry: CalendarEntry, mouseEvent: MouseEvent) => {
-    const representedEntries = sourceEntry.auxiliaryDateEntries?.length
-      ? sourceEntry.auxiliaryDateEntries
-      : [sourceEntry];
-    const menu = new Menu();
-    const grouped = new Map<string, CalendarEntry[]>();
-    const seenByGroup = new Set<string>();
-
-    for (const representedEntry of representedEntries) {
-      const file = representedEntry.entry?.file;
-      if (!file?.path) continue;
-      const field = String(representedEntry.auxiliaryDateField || "Secondary date").trim();
-      const groupKey = field || "Secondary date";
-      const dedupeKey = `${groupKey}::${file.path}`;
-      if (seenByGroup.has(dedupeKey)) continue;
-      seenByGroup.add(dedupeKey);
-      const group = grouped.get(groupKey) || [];
-      group.push(representedEntry);
-      grouped.set(groupKey, group);
-    }
-
-    const sortedGroups = Array.from(grouped.entries()).sort(([a], [b]) => a.localeCompare(b));
-    sortedGroups.forEach(([field, fieldEntries], groupIndex) => {
-      if (fieldEntries.length === 0) return;
-      menu.addItem((item) => {
-        item
-          .setTitle(field)
-          .setIcon("list")
-          .setDisabled(true);
-      });
-
-      const sortedEntries = [...fieldEntries].sort((a, b) => {
-        const aTitle = a.title || a.entry?.file?.basename || "";
-        const bTitle = b.title || b.entry?.file?.basename || "";
-        return aTitle.localeCompare(bTitle);
-      });
-
-      for (const representedEntry of sortedEntries) {
-        const file = representedEntry.entry?.file;
-        if (!file?.path) continue;
-        const title = representedEntry.title || file.basename;
-        menu.addItem((item) => {
-          item
-            .setTitle(`  ${title}`)
-            .setIcon("file-text")
-            .onClick(() => {
-              void onEntryClick(representedEntry, false);
-            });
-        });
-      }
-      if (groupIndex < sortedGroups.length - 1) {
-        menu.addSeparator();
-      }
-    });
-    if (seenByGroup.size === 0) return;
-    menu.showAtMouseEvent(mouseEvent);
-  }, [onEntryClick]);
-
   const showArchivedExternalMenu = useCallback((sourceEntry: CalendarEntry, mouseEvent: MouseEvent) => {
     const representedEntries = sourceEntry.archivedExternalEntries?.length
       ? sourceEntry.archivedExternalEntries
@@ -2041,33 +1970,23 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     menu.showAtMouseEvent(mouseEvent);
   }, [onEntryClick]);
 
-  const showDayMarkerMenu = useCallback((marker: CalendarDayMarkerOverlay, type: "auxiliary" | "archived", event: React.MouseEvent) => {
+  const showDayMarkerMenu = useCallback((marker: CalendarDayMarkerOverlay, event: React.MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
 
     const matchingEntries = entries.filter((entry) => {
-      const isRequestedType = type === "auxiliary"
-        ? !!entry.isAuxiliaryDate
-        : !!entry.isArchivedExternalPlaceholder;
-      if (!isRequestedType) return false;
+      if (!entry.isArchivedExternalPlaceholder) return false;
       const date = entry.startDate instanceof Date ? entry.startDate : new Date(entry.startDate);
       return Number.isFinite(date.getTime()) && formatDateKey(date) === marker.dateKey;
     });
     if (!matchingEntries.length) return;
 
     const representative = { ...matchingEntries[0] };
-    if (type === "auxiliary") {
-      representative.auxiliaryDateEntries = matchingEntries.flatMap((entry) => (
-        entry.auxiliaryDateEntries?.length ? entry.auxiliaryDateEntries : [entry]
-      ));
-      showAuxiliaryDateMenu(representative, event.nativeEvent);
-    } else {
-      representative.archivedExternalEntries = matchingEntries.flatMap((entry) => (
-        entry.archivedExternalEntries?.length ? entry.archivedExternalEntries : [entry]
-      ));
-      showArchivedExternalMenu(representative, event.nativeEvent);
-    }
-  }, [entries, showArchivedExternalMenu, showAuxiliaryDateMenu]);
+    representative.archivedExternalEntries = matchingEntries.flatMap((entry) => (
+      entry.archivedExternalEntries?.length ? entry.archivedExternalEntries : [entry]
+    ));
+    showArchivedExternalMenu(representative, event.nativeEvent);
+  }, [entries, showArchivedExternalMenu]);
 
   const eventClickPreviewTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -2278,13 +2197,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       const inlineTask = (entry.entry as any)?.inlineTask as { lineNumber?: number } | undefined;
       const isInlineTaskEntry = !!inlineTask && typeof inlineTask.lineNumber === "number";
 
-      if (entry.isAuxiliaryDate) {
-        clickInfo.jsEvent.preventDefault();
-        clickInfo.jsEvent.stopPropagation();
-        showAuxiliaryDateMenu(entry, clickInfo.jsEvent);
-        return;
-      }
-
       if (entry.isArchivedExternalPlaceholder && (entry.archivedExternalEntries?.length || 0) > 1) {
         clickInfo.jsEvent.preventDefault();
         clickInfo.jsEvent.stopPropagation();
@@ -2354,7 +2266,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       clearEventClickPreview();
       onEntryClick(entry, isModEvent, clickInfo.jsEvent);
     },
-    [onEntryClick, onEntryContextMenu, entries, showAuxiliaryDateMenu, showArchivedExternalMenu, openEntryClickPreview, clearEventClickPreview],
+    [onEntryClick, onEntryContextMenu, entries, showArchivedExternalMenu, openEntryClickPreview, clearEventClickPreview],
   );
 
   const hoverTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -2388,7 +2300,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   const handleEventMouseEnter = useCallback(
     (mouseEnterInfo: { event: any; el: HTMLElement; jsEvent: MouseEvent }) => {
-      if (mouseEnterInfo.event.extendedProps?.isAuxiliaryDate) return;
       if (!shouldForceBaseLinkPreview(app)) return;
       if (!mouseEnterInfo.jsEvent.metaKey && !mouseEnterInfo.jsEvent.ctrlKey) return;
       const entryPath = mouseEnterInfo.event.extendedProps.entryPath;
@@ -2447,6 +2358,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         return;
       }
       const directCalendarEntry = dropInfo.event.extendedProps.calendarEntry as CalendarEntry | undefined;
+      if (directCalendarEntry?.isAuxiliaryDate) { dropInfo.revert(); return; }
       const directEntry = directCalendarEntry?.entry;
       const entryPath = dropInfo.event.extendedProps.entryPath;
       const entry = directEntry ?? (entryPath ? basesEntryMap.get(entryPath) : undefined);
@@ -2465,6 +2377,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     async (resizeInfo: any) => {
       if (!onEventResize) { resizeInfo.revert(); return; }
       const directCalendarEntry = resizeInfo.event.extendedProps.calendarEntry as CalendarEntry | undefined;
+      if (directCalendarEntry?.isAuxiliaryDate) { resizeInfo.revert(); return; }
       const directEntry = directCalendarEntry?.entry;
       const entryPath = resizeInfo.event.extendedProps.entryPath;
       const entry = directEntry ?? (entryPath ? basesEntryMap.get(entryPath) : undefined);
@@ -2578,37 +2491,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         element.style.setProperty("width", markerWidth, "important");
         element.style.setProperty("min-width", markerWidth, "important");
         element.style.setProperty("min-height", "18px");
-      } else if (isAuxiliaryDate) {
-        const tooltip = String(event.extendedProps?.auxiliaryDateTooltip || event.title || "").trim();
-        if (tooltip) element.setAttribute("title", tooltip);
-        const harness = element.closest(".fc-timegrid-event-harness, .fc-daygrid-event-harness") as HTMLElement | null;
-        if (harness) {
-          harness.classList.add("tps-calendar-aux-harness");
-          harness.style.setProperty("display", "block", "important");
-          harness.style.setProperty("visibility", "visible", "important");
-          harness.style.setProperty("opacity", "1", "important");
-          harness.style.setProperty("overflow", "visible", "important");
-          harness.style.setProperty("width", "auto", "important");
-          harness.style.setProperty("min-width", "16px", "important");
-          harness.style.setProperty("left", "auto", "important");
-          harness.style.setProperty("right", "4px", "important");
-          harness.style.setProperty("z-index", "4", "important");
-          harness.style.setProperty("pointer-events", "none", "important");
-        }
-        element.style.setProperty("display", "flex", "important");
-        element.style.setProperty("visibility", "visible", "important");
-        element.style.setProperty("opacity", "1", "important");
-        element.style.setProperty("overflow", "visible", "important");
-        element.style.setProperty("background", "transparent", "important");
-        element.style.setProperty("background-image", "none", "important");
-        element.style.setProperty("border-color", "transparent", "important");
-        element.style.setProperty("box-shadow", "none", "important");
-        element.style.setProperty("color", "var(--text-muted)");
-        element.style.setProperty("width", "auto", "important");
-        element.style.setProperty("min-width", "16px", "important");
-        element.style.setProperty("height", "16px", "important");
-        element.style.setProperty("min-height", "16px");
-        element.style.setProperty("pointer-events", "auto", "important");
       } else if (priorityColor) {
         const harness = element.closest(".fc-timegrid-event-harness, .fc-daygrid-event-harness") as HTMLElement | null;
         if (harness) {
@@ -3880,28 +3762,13 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             "--tps-marker-top": `${marker.top}px`,
           } as React.CSSProperties}
         >
-          {marker.auxiliary > 0 && (
-            <button
-              type="button"
-              className="tps-calendar-day-marker-chip is-auxiliary-date"
-              title={marker.title || "Open additional date records"}
-              aria-label={`Open ${marker.auxiliary} additional date ${marker.auxiliary === 1 ? "record" : "records"}`}
-              onClick={(event) => showDayMarkerMenu(marker, "auxiliary", event)}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <CalendarMarkerIcon iconName="file-text" />
-              {marker.auxiliary > 1 && (
-                <span className="tps-calendar-day-marker-count">{marker.auxiliary}</span>
-              )}
-            </button>
-          )}
           {marker.archived > 0 && (
             <button
               type="button"
               className="tps-calendar-day-marker-chip is-archived-external"
               title={marker.title || "Open hidden external events"}
               aria-label={`Open ${marker.archived} hidden external ${marker.archived === 1 ? "event" : "events"}`}
-              onClick={(event) => showDayMarkerMenu(marker, "archived", event)}
+              onClick={(event) => showDayMarkerMenu(marker, event)}
               onPointerDown={(event) => event.stopPropagation()}
             >
               <CalendarMarkerIcon iconName="triangle-alert" />

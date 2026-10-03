@@ -270,7 +270,7 @@ test('visible count label is explicit and grammatically stable', () => {
   assert.equal(formatVisibleEventCountLabel(2), '2 visible events');
 });
 
-test('counts local, inline, and external events while excluding marker entries', () => {
+test('counts local, inline, external, and configured date blocks while excluding hidden markers', () => {
   const range = {
     start: new Date(2026, 6, 10),
     end: new Date(2026, 6, 11),
@@ -287,7 +287,7 @@ test('counts local, inline, and external events while excluding marker entries',
     { ...common, isArchivedExternalPlaceholder: true },
   ];
 
-  assert.equal(countVisibleCalendarEntries(entries, range, 60, () => false), 3);
+  assert.equal(countVisibleCalendarEntries(entries, range, 60, () => false), 4);
 });
 
 test('date-only and all-day-like ranges stay exact across DST transitions', async () => {

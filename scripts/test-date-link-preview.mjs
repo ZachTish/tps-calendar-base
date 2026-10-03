@@ -37,8 +37,8 @@ test("calendar date links open previews from click, not hover", () => {
 test("calendar day marker chips leave the full header width available to the date label", () => {
   assert.match(reactViewSource, /const showDayMarkerMenu = useCallback/);
   assert.match(reactViewSource, /event\.stopPropagation\(\)/);
-  assert.match(reactViewSource, /<button\s+type="button"\s+className="tps-calendar-day-marker-chip is-auxiliary-date"/);
   assert.match(reactViewSource, /<button\s+type="button"\s+className="tps-calendar-day-marker-chip is-archived-external"/);
+  assert.doesNotMatch(reactViewSource, /tps-calendar-day-marker-chip is-auxiliary-date/);
   assert.doesNotMatch(reactViewSource, /className="tps-calendar-day-marker-overlay"[\s\S]{0,120}aria-hidden="true"/);
   assert.match(reactViewSource, /columnRect\.bottom - rootRect\.top - 24/);
 

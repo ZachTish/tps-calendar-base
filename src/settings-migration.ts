@@ -4,6 +4,7 @@ import {
     normalizeExternalCalendar
 } from "./utils";
 import { DEFAULT_PRIORITY_CARD_STYLE_RULES, normalizeStoredRule, PRIORITY_KEYS, STATUS_KEYS } from "./services/style-rule-service";
+import { DEFAULT_TIMELINE_DATE_PAIRS, normalizeTimelineDatePairs } from "./utils/timeline-date-pairs";
 
 export const DEFAULT_SETTINGS: CalendarPluginSettings = {
     enableExternalCalendars: true,
@@ -36,6 +37,7 @@ export const DEFAULT_SETTINGS: CalendarPluginSettings = {
     previousStatusKey: "tpsCalendarPrevStatus",
     startProperty: "scheduled",
     endProperty: "timeEstimate",
+    timelineDatePairs: DEFAULT_TIMELINE_DATE_PAIRS,
     frontmatterColorField: "color",
     frontmatterIconField: "icon",
     autoFocusBacklinksOnMdOpen: false,
@@ -164,6 +166,7 @@ export function migrateSettings(stored: any): CalendarPluginSettings {
         previousStatusKey: sanitizeNonIdentityKey(stored?.previousStatusKey, "tpsCalendarPrevStatus"),
         startProperty: sanitizeNonIdentityKey(stored?.startProperty, "scheduled"),
         endProperty: sanitizeNonIdentityKey(stored?.endProperty, "timeEstimate"),
+        timelineDatePairs: normalizeTimelineDatePairs(stored?.timelineDatePairs),
         frontmatterColorField: sanitizeNonIdentityKey(stored?.frontmatterColorField, "color"),
         frontmatterIconField: sanitizeNonIdentityKey(stored?.frontmatterIconField, "icon"),
         dailyDateLinkTarget: stored?.dailyDateLinkTarget === "daily-canvas" ? "daily-canvas" : "daily-note",

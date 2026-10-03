@@ -72,7 +72,7 @@ function fixture() {
     dispose() { cleanup?.(); },
   };
 }
-const markers = () => new Map([['2026-09-29', { auxiliary: 2, archived: 1, titleParts: ['Two dates', 'One archived event'] }]]);
+const markers = () => new Map([['2026-09-29', { archived: 1, titleParts: ['One archived event'] }]]);
 
 test('empty marker calendars settle without render feedback or observation work', () => {
   const f = fixture();
@@ -85,15 +85,15 @@ test('empty marker calendars settle without render feedback or observation work'
 test('real markers update geometry and content while unchanged bursts retain state', () => {
   const f = fixture(); f.install(markers()); f.flush();
   assert.equal(f.updates, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(f.overlays)), [{ dateKey: '2026-09-29', auxiliary: 2, archived: 1,
-    title: 'Two dates\nOne archived event', left: 172, top: 26 }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.overlays)), [{ dateKey: '2026-09-29', archived: 1,
+    title: 'One archived event', left: 172, top: 26 }]);
   const original = f.overlays, reads = f.reads; f.burst();
   assert.equal(f.updates, 1); assert.equal(f.overlays, original);
   assert.equal(f.reads - reads, 2, 'an unchanged observer burst measures root and column only once');
   f.move({ right: 230, bottom: 90, width: 140, height: 30 }); f.burst();
   assert.equal(f.updates, 2); assert.equal(f.overlays[0].left, 212);
-  const changed = markers(); changed.get('2026-09-29').auxiliary = 3;
-  f.install(changed); f.flush(); assert.equal(f.updates, 3); assert.equal(f.overlays[0].auxiliary, 3);
+  const changed = markers(); changed.get('2026-09-29').archived = 3;
+  f.install(changed); f.flush(); assert.equal(f.updates, 3); assert.equal(f.overlays[0].archived, 3);
   f.dispose(); assert.equal(f.observers.size + f.listeners.size + f.timers.size + f.frames.size, 0);
 });
 

@@ -40,7 +40,7 @@ export const DEFAULT_PRIORITY_CARD_STYLE_RULES: CalendarStyleRule[] = [
     label: "Priority: high",
     active: true,
     match: DEFAULT_MATCH,
-    conditions: [{ field: "priority", operator: "is", value: "high" }],
+    conditions: [{ field: "tags", operator: "is", value: "high" }],
     color: "#ef4444",
   },
   {
@@ -48,7 +48,7 @@ export const DEFAULT_PRIORITY_CARD_STYLE_RULES: CalendarStyleRule[] = [
     label: "Priority: medium",
     active: true,
     match: DEFAULT_MATCH,
-    conditions: [{ field: "priority", operator: "is", value: "medium" }],
+    conditions: [{ field: "tags", operator: "is", value: "medium" }],
     color: "#eab308",
   },
   {
@@ -56,7 +56,7 @@ export const DEFAULT_PRIORITY_CARD_STYLE_RULES: CalendarStyleRule[] = [
     label: "Priority: low",
     active: true,
     match: DEFAULT_MATCH,
-    conditions: [{ field: "priority", operator: "is", value: "low" }],
+    conditions: [{ field: "tags", operator: "is", value: "low" }],
     color: "#6b7280",
   },
   {
@@ -64,7 +64,7 @@ export const DEFAULT_PRIORITY_CARD_STYLE_RULES: CalendarStyleRule[] = [
     label: "Priority: normal",
     active: true,
     match: DEFAULT_MATCH,
-    conditions: [{ field: "priority", operator: "is", value: "normal" }],
+    conditions: [{ field: "tags", operator: "is", value: "normal" }],
     color: "#3b82f6",
   },
   {
@@ -72,7 +72,9 @@ export const DEFAULT_PRIORITY_CARD_STYLE_RULES: CalendarStyleRule[] = [
     label: "Default",
     active: true,
     match: DEFAULT_MATCH,
-    conditions: [{ field: "priority", operator: "!exists", value: "" }],
+    conditions: ["high", "medium", "low", "normal"].map((value) => ({
+      field: "tags", operator: "!is", value,
+    })),
     color: "#3b82f6",
   },
 ];
@@ -119,15 +121,17 @@ export const evaluateCondition = (
   condition: CalendarStyleCondition,
 ): boolean => {
   const field = condition.field;
-  const value = data[field] !== undefined ? String(data[field]) : ""; // Graceful fallback
-
-  const normalizedValue = (value || "").toLowerCase();
+  const rawValue = data[field];
+  const values = Array.isArray(rawValue)
+    ? rawValue.map((value) => String(value).trim().replace(/^#/, "").toLowerCase()).filter(Boolean)
+    : [rawValue === undefined || rawValue === null ? "" : String(rawValue).trim().toLowerCase()];
+  const normalizedValue = values.join(",");
   const normalizedTarget = (condition.value || "").toLowerCase();
   switch (condition.operator) {
     case "is":
-      return normalizedValue === normalizedTarget;
+      return values.includes(normalizedTarget);
     case "!is":
-      return normalizedValue !== normalizedTarget;
+      return !values.includes(normalizedTarget);
     case "contains":
       return normalizedValue.includes(normalizedTarget);
     case "!contains":
@@ -141,9 +145,9 @@ export const evaluateCondition = (
     case "!ends":
       return !normalizedValue.endsWith(normalizedTarget);
     case "exists":
-      return normalizedValue.length > 0;
+      return values.some(Boolean);
     case "!exists":
-      return normalizedValue.length === 0;
+      return !values.some(Boolean);
     default:
       return false;
   }

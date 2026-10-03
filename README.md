@@ -2,7 +2,15 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current version: **1.0.1** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.0.1 release notes](release-notes/1.0.1.md) for test-vault validation and artifact hashes.
+Current version: **1.1.0** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.1.0 release notes](release-notes/1.1.0.md) for test-vault validation and artifact hashes.
+
+## 1.1.0 — Configurable timeline date pairs
+
+**View & navigation → Timeline date pairs** configures additional display-only blocks from frontmatter. Each pair has a start property, an optional end property, an optional duration-in-minutes property, and a label. An end value takes precedence over a duration; a start without either uses Calendar's configured minimum visible duration (or an all-day block for a date-only value). The initial, editable examples are `scheduled`/`timeEstimate`, `completedDate`, and `startedAt`/`endedAt`/`durationMinutes`. Calendar reads only these configured start fields; it no longer guesses from arbitrary date-looking properties. The Base view's configured start/end remains its primary block, and a matching additional pair does not duplicate it. A note can therefore show both its scheduled and completed dates when its Base query includes that note. Base filters, rather than Calendar's date-pair settings, determine which notes enter each view; a Base filtered only on `scheduled` cannot display a note with only `completedDate`.
+
+The settings hub still defaults to **Rules & creation**. The pair editor lives one click away in **View & navigation**; it shows one selected pair at a time and supports add, edit, and remove. Pair selection and draft input are transient UI state. `timelineDatePairs` is the only new persisted setting, capped at twelve pairs, with an empty list disabling additional blocks. The editor stacks fields on narrow screens and restores input focus after a user-invoked selection. No note migration, automatic repair, listener, timer, or scan is attached to navigation. Priority card style defaults now match exact manual tags in `tags` rather than a `priority` property; saved style rules remain editable and are not rewritten. Existing vaults that saved priority-property rules must change those rules in **Appearance** if they move priority to tags. Secondary blocks open the source note but cannot be moved or resized; those edits still belong to the Base primary interval.
+
+Validation for 1.1.0: 332 declared subtests across 28 test files pass, including date-pair parsing, unchanged-note operation counts, priority tag styles, FullCalendar event conversion, and archived-marker preservation. A separate final build deploys to the test vault. In the installed test vault, a synthetic Base displayed four full blocks: one primary scheduled block, two additional blocks for completed and started dates, and a completed-only note. An unrelated date property did not create a block; the persisted Calendar settings file stayed byte-identical. This installed check covers desktop Obsidian. Physical iPhone behavior and the production vault's Base filters remain unverified until their own validation.
 
 ## 1.0.1 — Use Obsidian Page Preview for created notes
 

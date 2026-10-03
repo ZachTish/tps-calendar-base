@@ -8,6 +8,7 @@ import { renderListWithControls } from "./utils/list-renderer";
 import { CalendarStyleBuilderModal } from "./services/visual-builder";
 import { createDefaultCondition } from "./services/style-rule-service";
 import type { CalendarPostCreateBehavior, CalendarStyleRule } from "./types";
+import { normalizeTimelineDatePairs, type TimelineDatePair } from "./utils/timeline-date-pairs";
 
 const createCalendarId = () =>
   `calendar-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
@@ -78,6 +79,8 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
   private settingsScrollTop = 0;
   private hasRenderedSettings = false;
   private activeSettingsPage: CalendarSettingsPage = "rules";
+  private selectedTimelinePairIndex = 0;
+  private timelinePairDraft: TimelineDatePair | null = null;
 
   constructor(app: Plugin["app"], plugin: ObsidianCalendarPlugin) {
     super(app, plugin);
@@ -495,9 +498,15 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       );
 
     frontmatterKeysSection.createEl("p", {
-      text:
-        "Per-base controls: open each Calendar Base view options to choose the single start date source and optional duration. Other date fields render as small notice markers at their own dates.",
+      text: "Each Base view chooses its primary start and end. Configure additional timeline blocks under View & navigation; Base filters choose which notes reach the view.",
     }).addClass("setting-item-description");
+
+    const timelineSection = createSettingsGroup(
+      viewPage,
+      "Timeline date pairs",
+      "One block per configured start field. The Base view's primary start remains editable; other blocks are display-only.",
+    );
+    this.renderTimelineDatePairs(timelineSection);
 
     new Setting(viewBehaviorSection)
       .setName("Week starts on")
@@ -971,6 +980,117 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           : undefined,
       }),
     });
+  }
+
+  private renderTimelineDatePairs(parent: HTMLElement): void {
+    const pairs = this.plugin.settings.timelineDatePairs || [];
+    new Setting(parent)
+      .setClass("tps-calendar-timeline-pair-add")
+      .setName("Add date pair")
+      .setDesc("Choose the start field first; an end or duration field is optional.")
+      .addButton((button) => button
+        .setButtonText("Add date pair")
+        .onClick(() => {
+          if (pairs.length >= 12) {
+            new Notice("A timeline can have up to 12 date pairs.");
+            return;
+          }
+          this.selectedTimelinePairIndex = -1;
+          this.timelinePairDraft = { startProperty: "" };
+          this.display();
+          this.containerEl.querySelector<HTMLInputElement>(".tps-calendar-timeline-pair-editor input")?.focus();
+        }));
+
+    if (pairs.length) {
+      new Setting(parent)
+        .setClass("tps-calendar-timeline-pair-selector")
+        .setName("Configured pairs")
+        .addDropdown((dropdown) => {
+          pairs.forEach((pair, index) => {
+            dropdown.addOption(String(index), pair.label || pair.startProperty);
+          });
+          if (this.selectedTimelinePairIndex >= 0) {
+            this.selectedTimelinePairIndex = Math.min(this.selectedTimelinePairIndex, pairs.length - 1);
+            dropdown.setValue(String(this.selectedTimelinePairIndex));
+          }
+          dropdown.onChange((value) => {
+            this.selectedTimelinePairIndex = Number(value);
+            this.timelinePairDraft = { ...pairs[this.selectedTimelinePairIndex] };
+            this.display();
+            this.containerEl.querySelector<HTMLInputElement>(".tps-calendar-timeline-pair-editor input")?.focus();
+          });
+        });
+    }
+
+    const selected = this.selectedTimelinePairIndex;
+    if (!pairs.length && !this.timelinePairDraft) return;
+    const draft = this.timelinePairDraft ?? (selected >= 0 ? { ...pairs[selected] } : { startProperty: "" });
+    if (!draft) return;
+    this.timelinePairDraft = draft;
+    const editor = parent.createDiv({ cls: "tps-calendar-timeline-pair-editor" });
+    editor.createEl("h4", { text: selected < 0 ? "New date pair" : `Edit ${pairs[selected]?.label || pairs[selected]?.startProperty}` });
+    const field = (name: string, key: keyof TimelineDatePair, placeholder: string) => {
+      new Setting(editor)
+        .setName(name)
+        .addText((input) => input
+          .setPlaceholder(placeholder)
+          .setValue(draft[key] || "")
+          .onChange((value) => { draft[key] = value.trim(); }));
+    };
+    field("Start property", "startProperty", "completedDate");
+    field("End property", "endProperty", "Optional");
+    field("Duration in minutes property", "durationProperty", "Optional");
+    field("Block label", "label", "Optional");
+
+    new Setting(editor)
+      .addButton((button) => button
+        .setButtonText("Save date pair")
+        .setCta()
+        .onClick(async () => {
+          const normalized = normalizeTimelineDatePairs([draft]);
+          if (!normalized.length) {
+            new Notice("Enter a valid start property name.");
+            return;
+          }
+          const nextPair = normalized[0];
+          const duplicate = pairs.some((pair, index) =>
+            index !== selected && pair.startProperty.toLowerCase() === nextPair.startProperty.toLowerCase());
+          if (duplicate) {
+            new Notice("That start property already has a date pair.");
+            return;
+          }
+          const next = [...pairs];
+          if (selected < 0) next.push(nextPair);
+          else next[selected] = nextPair;
+          this.plugin.settings.timelineDatePairs = next;
+          this.selectedTimelinePairIndex = selected < 0 ? next.length - 1 : selected;
+          this.timelinePairDraft = null;
+          await this.plugin.saveSettings();
+          this.display();
+          this.containerEl.querySelector<HTMLSelectElement>(".tps-calendar-timeline-pair-selector select")?.focus();
+        }))
+      .addButton((button) => button
+        .setButtonText("Cancel")
+        .onClick(() => {
+          this.selectedTimelinePairIndex = 0;
+          this.timelinePairDraft = null;
+          this.display();
+          this.containerEl.querySelector<HTMLButtonElement>(".tps-calendar-timeline-pair-add button")?.focus();
+        }));
+    if (selected >= 0) {
+      new Setting(editor)
+        .setName("Remove date pair")
+        .addButton((button) => button
+          .setButtonText("Remove")
+          .onClick(async () => {
+            this.plugin.settings.timelineDatePairs = pairs.filter((_, index) => index !== selected);
+            this.selectedTimelinePairIndex = 0;
+            this.timelinePairDraft = null;
+            await this.plugin.saveSettings();
+            this.display();
+            this.containerEl.querySelector<HTMLSelectElement>(".tps-calendar-timeline-pair-selector select")?.focus();
+          }));
+    }
   }
 
   private describeStyleRule(rule: CalendarStyleRule): string {

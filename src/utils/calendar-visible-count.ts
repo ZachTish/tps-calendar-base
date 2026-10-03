@@ -30,8 +30,9 @@ export function countVisibleCalendarDisplayIntervals(
 }
 
 /**
- * Counts real calendar events that overlap FullCalendar's exact visible
- * [start, end) range. Marker-only entries are intentionally not events.
+ * Counts calendar blocks that overlap FullCalendar's exact visible [start, end)
+ * range. Configured secondary dates are blocks; hidden external placeholders
+ * remain day markers.
  */
 export function countVisibleCalendarEntries<T extends VisibleCalendarEntry>(
   entries: readonly T[],
@@ -41,7 +42,7 @@ export function countVisibleCalendarEntries<T extends VisibleCalendarEntry>(
 ): number {
   let count = 0;
   for (const entry of entries) {
-    if (entry.isAuxiliaryDate || entry.isArchivedExternalPlaceholder) continue;
+    if (entry.isArchivedExternalPlaceholder) continue;
     const interval = normalizeCalendarDisplayInterval({
       startDate: entry.startDate,
       endDate: entry.endDate,

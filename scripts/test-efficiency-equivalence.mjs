@@ -172,6 +172,43 @@ test("explicit intervals keep exact data while every time grid gets a readable h
     /\.fc-timegrid-event\.bases-calendar-event\s*\{\s*min-height:\s*18px\s*!important/u,
   );
 });
+
+test("configured secondary dates remain separate read-only calendar blocks", async () => {
+  const { useCalendarEvents } = await importBundled(
+    "../src/hooks/useCalendarEvents.ts",
+    [reactStub],
+  );
+  const primary = calendarEntry(0, "open");
+  const completed = {
+    ...calendarEntry(1, "complete"),
+    entry: primary.entry,
+    title: "Event 0 (Completed)",
+    isAuxiliaryDate: true,
+    auxiliaryDateField: "completedDate",
+  };
+  const started = {
+    ...calendarEntry(2, "open"),
+    entry: primary.entry,
+    title: "Event 0 (Started)",
+    isAuxiliaryDate: true,
+    auxiliaryDateField: "startedAt",
+    hasExplicitDisplayInterval: true,
+  };
+  const { events, visibleEventCount } = useCalendarEvents({
+    entries: [primary, completed, started],
+    defaultEventDuration: 15,
+    minEventHeight: 18,
+    noteEventsEditable: true,
+    visibleDateRange: { start: new Date(2026, 0, 1), end: new Date(2026, 0, 2) },
+    doneStatuses: [],
+  });
+  assert.equal(visibleEventCount, 3);
+  assert.deepEqual(events.map((event) => event.title), ["Event 0", "Event 0 (Completed)", "Event 0 (Started)"]);
+  assert.deepEqual(events.map((event) => event.editable), [true, false, false]);
+  assert.equal(events[1].extendedProps.minEventHeight, 18);
+  assert.equal(events[2].extendedProps.minEventHeight, 0);
+  assert.equal(new Set(events.map((event) => event.id)).size, 3);
+});
 test("style-rule outputs and decisive short-circuiting stay stable", async () => {
   const { findStyleOverride } = await importBundled(
     "../src/services/style-rule-service.ts",
@@ -227,7 +264,7 @@ test("style-rule outputs and decisive short-circuiting stay stable", async () =>
       data,
     );
     assert.deepEqual(actual, expected);
-    assert.equal(reads, 2, `${match} should stop after its decisive condition`);
+    assert.equal(reads, 1, `${match} should read the decisive condition once`);
   }
 });
 test("type-folder options use one snapshot and the authoritative contained template root", async () => {

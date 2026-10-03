@@ -123,6 +123,21 @@ button.tps-settings-destination[aria-pressed="true"] {
   min-width: 0;
 }
 
+.tps-calendar-timeline-pair-editor {
+  margin-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 10px;
+}
+
+.tps-calendar-timeline-pair-editor h4 {
+  margin: 0 0 4px;
+}
+
+.tps-calendar-timeline-pair-editor input[type="text"] {
+  min-width: 0;
+  width: min(100%, 22rem);
+}
+
 .tps-settings-managed-notice {
   margin-top: 8px;
   padding: 12px;
@@ -207,6 +222,21 @@ button.tps-settings-destination[aria-pressed="true"] {
 }
 
 @media (max-width: 520px) {
+  .tps-calendar-timeline-pair-editor .setting-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tps-calendar-timeline-pair-editor .setting-item-control {
+    justify-content: flex-start;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .tps-calendar-timeline-pair-editor input[type="text"] {
+    width: 100%;
+  }
+
   .tps-settings-hub {
     padding: 8px;
   }

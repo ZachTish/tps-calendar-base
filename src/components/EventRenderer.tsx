@@ -45,45 +45,6 @@ export function useEventRenderer({
       const inlineTask = ((props.calendarEntry as any)?.entry as any)?.inlineTask;
       const iconName = typeof props.iconName === "string" ? props.iconName.trim() : "";
       const iconColor = inlineTask ? "" : typeof props.iconColor === "string" ? props.iconColor.trim() : "";
-      const isAuxiliaryDate = !!props.isAuxiliaryDate;
-      const auxiliaryDateTooltip = String(props.auxiliaryDateTooltip || title).trim();
-      const auxiliaryDateCount = Number(props.auxiliaryDateCount || 0);
-
-      if (isAuxiliaryDate) {
-        return (
-          <div
-            className="bases-calendar-aux-date-content tps-calendar-entry"
-            data-path={entryPath}
-            aria-label={auxiliaryDateTooltip}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: "auto",
-              minWidth: "16px",
-              height: "16px",
-              minHeight: "16px",
-              padding: 0,
-              margin: 0,
-              overflow: "visible",
-              color: "var(--text-muted)",
-              opacity: 0.74,
-              gap: "2px",
-              fontSize: "11px",
-              lineHeight: "16px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <EventIcon iconName="file-text" />
-            {auxiliaryDateCount > 1 && (
-              <span className="bases-calendar-aux-date-count">
-                ({auxiliaryDateCount})
-              </span>
-            )}
-          </div>
-        );
-      }
-
       if (isArchivedExternalPlaceholder) {
         return (
           <div

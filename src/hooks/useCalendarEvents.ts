@@ -114,9 +114,7 @@ export function useCalendarEvents({
         ? "transparent"
         : calEntry.isExternal
         ? normalizeCssColorValue(calEntry.color || "")
-        : isAuxiliaryDate
-          ? "transparent"
-          : normalizeCssColorValue(calEntry.backgroundColor || "");
+        : normalizeCssColorValue(calEntry.backgroundColor || "");
       const effectiveColor = explicitColor || (calEntry.isExternal ? "#3788d8" : "");
       const backgroundColor = effectiveColor;
       const borderColor = normalizeCssColorValue(calEntry.borderColor || "") || backgroundColor;
@@ -162,15 +160,12 @@ export function useCalendarEvents({
           iconColor: normalizeCssColorValue(calEntry.iconColor || ""),
           isAuxiliaryDate,
           auxiliaryDateField: calEntry.auxiliaryDateField,
-          auxiliaryDateTooltip: calEntry.auxiliaryDateTooltip,
-          auxiliaryDateCount: calEntry.auxiliaryDateCount,
-          auxiliaryDateEntries: calEntry.auxiliaryDateEntries,
           status: calEntry.status,
           priorityColor: explicitColor === "transparent" ? "" : explicitColor,
           // A minimum on FullCalendar's outer event box changes its geometric
           // duration. Keep it only for fallback instants that have no authored
           // end/duration; explicit intervals must retain FullCalendar's height.
-          minEventHeight: isAuxiliaryDate || hasExplicitDisplayInterval ? 0 : minEventHeight,
+          minEventHeight: hasExplicitDisplayInterval ? 0 : minEventHeight,
           hasExplicitDisplayInterval,
           isExternal: calEntry.isExternal,
           isArchivedExternalPlaceholder,

@@ -73,6 +73,7 @@ import {
   type TaskAssociatedNoteCandidate,
 } from "./utils/task-associated-note";
 import { CalendarPluginSettings, CalendarPostCreateBehavior, CalendarViewMode, ExternalCalendarEvent } from "./types";
+import { configuredTimelineMarkers, type TimelineDateMarker } from "./utils/timeline-date-pairs";
 import { findStyleOverride } from "./services/style-rule-service";
 import { ExternalEventModal, createMeetingNoteFromExternalEvent } from "./modals/external-event-modal";
 import { applyParentLinkToChild, createBidirectionalLink } from "./services/parent-child-link";
@@ -182,11 +183,7 @@ interface ResolvedEntryStartDate {
   isDateOnly: boolean;
 }
 
-interface AuxiliaryDateMarker {
-  field: string;
-  date: Date;
-  isDateOnly: boolean;
-}
+type AuxiliaryDateMarker = TimelineDateMarker;
 
 type TimeTrackingCalendarTarget =
   { file: TFile; lineNumber?: number; type: string; title: string };
@@ -2156,27 +2153,26 @@ export class CalendarView extends BasesView {
         : false;
 
       if (
-        !nativeRecordMode
-        && entryFile
+        entryFile
         && entryPassesFilters
         && !entryIsArchived
         && this.shouldRenderNoteEvent(entryFile, entryCache)
       ) {
         for (const marker of this.getAuxiliaryDateMarkers(entryFrontmatter)) {
-          const markerEnd = marker.isDateOnly
+          const markerEnd = marker.endDate ?? (marker.isDateOnly
             ? new Date(marker.date.getFullYear(), marker.date.getMonth(), marker.date.getDate() + 1)
-            : new Date(marker.date.getTime() + this.getMinimumEventDurationMinutes() * 60 * 1000);
+            : new Date(marker.date.getTime() + this.getMinimumEventDurationMinutes() * 60 * 1000));
           currentEntries.push({
             entry,
             startDate: marker.date,
             endDate: markerEnd,
-            title: entryDisplayTitle,
+            title: `${entryDisplayTitle} (${marker.label})`,
             forceAllDay: marker.isDateOnly,
             isExternal: false,
             isAuxiliaryDate: true,
             auxiliaryDateField: marker.field,
-            auxiliaryDateTooltip: `${entryDisplayTitle}${marker.field ? ` (${marker.field})` : ""}`,
-            cssClasses: ["bases-calendar-aux-date-marker"],
+            hasExplicitDisplayInterval: !!marker.endDate,
+            cssClasses: ["bases-calendar-date-pair-block"],
           });
         }
       }
@@ -2642,9 +2638,7 @@ export class CalendarView extends BasesView {
 
     // console.log(`[CalendarView] Render update with ${currentEntries.length} events`);
 
-    const groupedCurrentEntries = this.groupNearbyArchivedExternalPlaceholders(
-      this.groupNearbyAuxiliaryDateMarkers(currentEntries),
-    );
+    const groupedCurrentEntries = this.groupNearbyArchivedExternalPlaceholders(currentEntries);
 
     // DEDUPLICATION STEP: Ensure unique IDs without collapsing valid multi-slot entries.
     const uniqueEntries = new Map<string, CalendarEntry>();
@@ -2703,7 +2697,7 @@ export class CalendarView extends BasesView {
    * Returns local, non-virtual entries used as fallback when filter bounds are not explicit.
    */
   private getEffectiveFilterRangeEntries(entries: CalendarEntry[]): CalendarEntry[] {
-    return entries.filter((entry) => !entry.isExternal && !entry.isGhost && !entry.isAuxiliaryDate);
+    return entries.filter((entry) => !entry.isExternal && !entry.isGhost);
   }
 
   private getCalendarFilterSources(extraSources: unknown[] = []): unknown[] {
@@ -7434,69 +7428,6 @@ export class CalendarView extends BasesView {
     return `local:${(entry.entry as any).file?.path || entry.title || "unknown"}:${startTs}:${endTs}`;
   }
 
-  private getAuxiliaryMarkerDayKey(entry: CalendarEntry): string {
-    const date = entry.startDate;
-    return [
-      date.getFullYear(),
-      String(date.getMonth() + 1).padStart(2, "0"),
-      String(date.getDate()).padStart(2, "0"),
-      entry.forceAllDay === true ? "all-day" : "timed",
-    ].join("-");
-  }
-
-  private groupNearbyAuxiliaryDateMarkers(entries: CalendarEntry[]): CalendarEntry[] {
-    const grouped: CalendarEntry[] = [];
-    const auxiliaryByDay = new Map<string, CalendarEntry[]>();
-
-    for (const entry of entries) {
-      if (!entry.isAuxiliaryDate) {
-        grouped.push(entry);
-        continue;
-      }
-      const key = this.getAuxiliaryMarkerDayKey(entry);
-      const bucket = auxiliaryByDay.get(key) || [];
-      bucket.push(entry);
-      auxiliaryByDay.set(key, bucket);
-    }
-
-    for (const bucket of auxiliaryByDay.values()) {
-      grouped.push(this.createAuxiliaryDateClusterEntry(bucket));
-    }
-
-    return grouped;
-  }
-
-  private createAuxiliaryDateClusterEntry(cluster: CalendarEntry[]): CalendarEntry {
-    if (cluster.length <= 1) {
-      const single = cluster[0];
-      return {
-        ...single,
-        auxiliaryDateCount: 1,
-        auxiliaryDateEntries: [single],
-      };
-    }
-
-    const sorted = [...cluster].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
-    const first = sorted[0];
-    const latestEnd = sorted.reduce((latest, entry) => {
-      const end = entry.endDate?.getTime?.() ?? entry.startDate.getTime();
-      return Math.max(latest, end);
-    }, first.endDate?.getTime?.() ?? first.startDate.getTime());
-    const list = sorted
-      .map((entry) => String(entry.auxiliaryDateTooltip || entry.title || "Record").trim())
-      .filter(Boolean);
-
-    return {
-      ...first,
-      startDate: new Date(first.startDate.getFullYear(), first.startDate.getMonth(), first.startDate.getDate(), first.startDate.getHours(), 0, 0, 0),
-      endDate: new Date(latestEnd),
-      title: "Records",
-      auxiliaryDateTooltip: list.join("\n"),
-      auxiliaryDateCount: sorted.length,
-      auxiliaryDateEntries: sorted,
-    };
-  }
-
   private getArchivedExternalPlaceholderDayKey(entry: CalendarEntry): string {
     const date = entry.startDate;
     return [
@@ -7862,87 +7793,14 @@ export class CalendarView extends BasesView {
   }
 
   private getAuxiliaryDateMarkers(frontmatter: Record<string, any> | undefined | null): AuxiliaryDateMarker[] {
-    if (!frontmatter) return [];
-
-    const excluded = new Set<string>();
-    const addExcluded = (field: string | null | undefined) => {
-      const normalized = this.normalizeDateFieldName(field);
-      if (normalized) excluded.add(normalized);
-    };
-
-    addExcluded(this.getNoteField(this.startDateProp));
-    addExcluded(this.getNoteField(this.endDateProp));
-    addExcluded(this.getNoteField(this.allDayProperty));
-    [
-      "title",
-      "status",
-      "priority",
-      "tags",
-      "aliases",
-      "cssclasses",
-      this.plugin.settings.eventIdKey,
-      this.plugin.settings.uidKey,
-      "tpsCalendarSourceUrl",
-      this.plugin.settings.frontmatterColorField,
-      this.plugin.settings.frontmatterIconField,
-    ].forEach(addExcluded);
-
-    const markers: AuxiliaryDateMarker[] = [];
-    for (const [key, value] of Object.entries(frontmatter)) {
-      const normalized = this.normalizeDateFieldName(key);
-      if (!normalized || excluded.has(normalized)) continue;
-      const parsed = this.parseAuxiliaryDateFieldValue(key, value);
-      if (!parsed) continue;
-      markers.push({
-        field: key,
-        date: parsed.date,
-        isDateOnly: parsed.isDateOnly,
-      });
-      if (markers.length >= 4) break;
-    }
-    return markers;
-  }
-
-  private normalizeDateFieldName(field: string | null | undefined): string {
-    return String(field || "").trim().toLowerCase().replace(/[\s_.-]+/g, "");
-  }
-
-  private looksLikeAuxiliaryDateField(key: string, value: unknown): boolean {
-    if (value === null || value === undefined) return false;
-    const normalizedKey = this.normalizeDateFieldName(key);
-    const keySuggestsDate = /(date|created|modified|completed|scheduled|due|start|end|time)/i.test(normalizedKey);
-
-    if (value instanceof Date) return Number.isFinite(value.getTime());
-    if (typeof value === "object" && value !== null && (value as any).date instanceof Date) return true;
-
-    if (typeof value === "number") {
-      if (!keySuggestsDate) return false;
-      const parsed = this.parseFrontmatterDateValue(value);
-      return !!parsed && parsed.getFullYear() >= 1990 && parsed.getFullYear() <= 2200;
-    }
-
-    if (typeof value !== "string") return false;
-    const trimmed = value.trim();
-    if (!trimmed) return false;
-    if (!keySuggestsDate && !/^\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2})?/.test(trimmed)) return false;
-
-    const parsed = this.parseFrontmatterDateValue(trimmed);
-    return !!parsed && parsed.getFullYear() >= 1900 && parsed.getFullYear() <= 2200;
-  }
-
-  private parseAuxiliaryDateFieldValue(
-    key: string,
-    value: unknown,
-  ): { date: Date; isDateOnly: boolean } | null {
-    if (!this.looksLikeAuxiliaryDateField(key, value)) return null;
-    const date = this.parseFrontmatterDateValue(value);
-    if (!date || date.getFullYear() < 1900 || date.getFullYear() > 2200) return null;
-    return {
-      date,
-      isDateOnly: this.isDateOnlyValue(value) || (
-        typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
-      ),
-    };
+    return configuredTimelineMarkers(
+      frontmatter,
+      this.plugin.settings.timelineDatePairs || [],
+      this.getNoteField(this.startDateProp),
+      (value) => this.parseFrontmatterDateValue(value),
+      (value) => this.parseDurationMinutesFromValue(value),
+      (value) => this.isDateOnlyValue(value),
+    );
   }
 
   private resolveEntryDisplayTitle(
