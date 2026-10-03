@@ -2,7 +2,13 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current version: **1.0.0** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.0.0 release notes](release-notes/1.0.0.md) for test-vault validation and artifact hashes.
+Current version: **1.0.1** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.0.1 release notes](release-notes/1.0.1.md) for test-vault validation and artifact hashes.
+
+## 1.0.1 — Use Obsidian Page Preview for created notes
+
+Calendar no longer offers or invokes its custom editable-preview card. **After creating an item** offers Obsidian Page Preview, Open created item, and Stay on Calendar when Calendar owns the setting. A saved `postCreateBehavior: preview` remains Preview; the previous task-only toggle still fills an absent preference. On desktop, Calendar's standalone Preview fallback emits its existing `hover-link` source for the created note, using the rendered event or invoking surface as the anchor. On mobile, Preview opens the note in Obsidian's native editor because an asynchronous touch preview is not yet verified. This changes presentation only and does not rewrite notes. If GCM's note-opening UI contract is version 2 or later, Calendar hands creation and the settings button to GCM. With an older or unavailable contract, Calendar uses its own native Page Preview/Open/Stay route and does not call GCM's custom preview API or native Base creation takeover.
+
+Obsidian 1.7 introduced editing by clicking inside core Page Preview. Calendar does not build a separate note editor. GCM must also be updated to its core-preview release to remove the shared custom card for Navigator, native Bases, and GCM-owned links. Calendar's historical inline task previews remain source navigation, not a creation editor. Minimum Obsidian remains 1.10.0; physical iPhone acceptance is separate. Focused regression coverage verifies saved-preview preservation, absence of the custom-preview API and setting, core `hover-link` fallback, mobile native-editor route, the v2 ownership boundary, and all nine whole-note creation callsites. Full-suite, installed Test-vault, and release-artifact evidence belongs in the [1.0.1 release notes](release-notes/1.0.1.md).
 
 ## 1.0.0 — Whole-note Calendar authoring
 

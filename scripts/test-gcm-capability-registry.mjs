@@ -391,103 +391,11 @@ test("optional calendar classification requires verified canonical identity and 
   assert.equal(isGcmNativeCalendarRecord({ id: "calendar-local", kind: "calendar-event", frontmatter: { kind: "calendar-event" } }, {}), true, "standalone and historical verified calendar records retain their existing API-v6 compatibility");
 });
 
-test("editable note previews require the exact UI v1 capability and normalize every provider outcome", async () => {
-  const { installGcmApiRegistry, openGcmEditableNotePreview } =
-    await loadRegistry();
-  const workspace = createWorkspace();
-  const app = { workspace };
-  const owner = createOwner(workspace);
-  installGcmApiRegistry(owner, app);
-
-  const anchorEl = { id: "calendar-create-anchor" };
-  const request = {
-    filePath: "Calendar/Created event.md",
-    anchorEl,
-    sourcePluginId: "tps-calendar-base",
-    focusEditor: true,
-  };
-  assert.equal(await openGcmEditableNotePreview(app, request), "unavailable");
-
-  let incompatibleCalls = 0;
-  workspace.trigger(
-    "tps:gcm-api-changed",
-    availablePayload({
-      ui: {
-        version: 2,
-        openEditableNotePreview: () => {
-          incompatibleCalls += 1;
-          return true;
-        },
-      },
-    }),
-  );
-  assert.equal(await openGcmEditableNotePreview(app, request), "unavailable");
-  assert.equal(
-    incompatibleCalls,
-    0,
-    "an unknown UI version must not be invoked",
-  );
-
-  let receivedRequest = null;
-  workspace.trigger(
-    "tps:gcm-api-changed",
-    availablePayload({
-      ui: {
-        version: 1,
-        openEditableNotePreview: async (candidate) => {
-          receivedRequest = candidate;
-          return true;
-        },
-      },
-    }),
-  );
-  assert.equal(await openGcmEditableNotePreview(app, request), "opened");
-  assert.deepEqual(receivedRequest, request);
-  assert.equal(receivedRequest.anchorEl, anchorEl);
-
-  workspace.trigger(
-    "tps:gcm-api-changed",
-    availablePayload({
-      ui: { version: 1, openEditableNotePreview: () => false },
-    }),
-  );
-  assert.equal(await openGcmEditableNotePreview(app, request), "declined");
-
-  workspace.trigger(
-    "tps:gcm-api-changed",
-    availablePayload({
-      ui: { version: 1, openEditableNotePreview: () => undefined },
-    }),
-  );
-  assert.equal(await openGcmEditableNotePreview(app, request), "declined");
-
-  workspace.trigger(
-    "tps:gcm-api-changed",
-    availablePayload({
-      ui: {
-        version: 1,
-        openEditableNotePreview: () =>
-          Promise.reject(new Error("provider unavailable")),
-      },
-    }),
-  );
-  assert.equal(await openGcmEditableNotePreview(app, request), "failed");
-
-  workspace.trigger(
-    "tps:gcm-api-changed",
-    availablePayload({
-      ui: {
-        version: 1,
-        openEditableNotePreview: () => {
-          throw new Error("provider unavailable");
-        },
-      },
-    }),
-  );
-  assert.equal(await openGcmEditableNotePreview(app, request), "failed");
-
-  owner.unload();
-  assert.equal(await openGcmEditableNotePreview(app, request), "unavailable");
+test("Calendar does not expose or call the GCM custom editable note preview", () => {
+  const source = readFileSync(new URL("../src/tps-gcm-api.ts", import.meta.url), "utf8");
+  const view = readFileSync(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /openEditableNotePreview|openGcmEditableNotePreview|GcmEditableNotePreview/);
+  assert.doesNotMatch(view, /openEditableNotePreview|openGcmEditableNotePreview|showBaseLinkEditablePreview/);
 });
 
 test("typed status, task-checkbox, inline-property, and parent-link capabilities validate version, output, and failures", async () => {

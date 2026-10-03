@@ -46,7 +46,6 @@ import {
   getGcmTaskStatusForCheckboxState,
   normalizeGcmTaskCheckboxState,
   onGcmApiChanged,
-  openGcmEditableNotePreview,
   registerCalendarRefresh,
   registerExplicitAction,
   registerFilesUpdated,
@@ -166,7 +165,6 @@ export const CalendarViewType = "calendar";
 const FOLLOW_ACTIVE_NOTE_DAY_CONFIG_KEY = "followActiveNoteDay";
 const LEGACY_CONTEXT_DATE_CONFIG_KEY = "contextDateEnabled";
 const TPS_TASK_LINE_POINTER_DROP_EVENT = "tps-task-line-pointer-drop";
-const POST_CREATE_PREVIEW_FALLBACK_NOTICED_APPS = new WeakSet<App>();
 const INLINE_TASK_COMPLETION_FILTER_KEYS = new Set([
   "open",
   "done",
@@ -803,7 +801,8 @@ export class CalendarView extends BasesView {
 
     const calendarLeaf = this.findOwningCalendarLeaf();
     const invokingAnchor = this.toolbarCreateAnchor;
-    if (getGcmApi(this.app)?.ui?.handlesNativeBaseCreation?.(this.controller)) {
+    const noteOpening = getGcmApi(this.app)?.ui;
+    if (noteOpening && (noteOpening.version ?? 0) >= 2 && noteOpening.handlesNativeBaseCreation?.(this.controller)) {
       await super.createFileForView(resolvedBaseFileName, mergedProcessor);
       await this.updateCalendar(true);
       return;
@@ -864,11 +863,7 @@ export class CalendarView extends BasesView {
       const generation = ++this.postCreateGeneration;
       await this.restoreCalendarSurface(calendarLeaf);
       if (generation !== this.postCreateGeneration) return;
-      if (behavior === "stay") {
-        if (this.containerEl.isConnected) this.containerEl.focus({ preventScroll: true });
-      } else {
-        this.noticePostCreatePreviewFallback();
-      }
+      if (this.containerEl.isConnected) this.containerEl.focus({ preventScroll: true });
     }
   }
 
@@ -5528,7 +5523,8 @@ export class CalendarView extends BasesView {
     context: CalendarPostCreateContext = {},
   ): Promise<void> {
     const generation = ++this.postCreateGeneration;
-    const present = getGcmApi(this.app)?.ui?.presentCreatedNote;
+    const ui = getGcmApi(this.app)?.ui;
+    const present = (ui?.version ?? 0) >= 2 ? ui?.presentCreatedNote : undefined;
     if (present) {
       // Older native menus may already have opened a phone tab before this fallback runs.
       if (context.calendarLeaf) await this.restoreCalendarSurface(context.calendarLeaf);
@@ -5537,7 +5533,9 @@ export class CalendarView extends BasesView {
         filePath: file.path,
         sourcePluginId: "tps-calendar-base",
         sourceLeaf: context.calendarLeaf ?? this.findOwningCalendarLeaf(),
-        anchorEl: context.invokingAnchor?.isConnected ? context.invokingAnchor : this.containerEl,
+        anchorEl: this.findRenderedEventAnchor(file)
+          ?? (context.invokingAnchor?.isConnected ? context.invokingAnchor : null)
+          ?? (this.containerEl.isConnected ? this.containerEl : null),
         renameTitle: /^Untitled(?: \d+)?$/u.test(file.basename),
       });
       return;
@@ -5546,10 +5544,10 @@ export class CalendarView extends BasesView {
     const calendarLeaf = context.calendarLeaf ?? this.findOwningCalendarLeaf();
     logger.flow("CalendarCreate", "post-create:route", { path: file.path, behavior });
 
-    if (behavior === "open") {
+    if (behavior === "open" || (behavior === "preview" && Platform.isMobile)) {
       await this.openOrFocusFile(file);
       if (generation !== this.postCreateGeneration) return;
-      logger.flow("CalendarCreate", "post-create:done", { path: file.path, behavior });
+      logger.flow("CalendarCreate", "post-create:done", { path: file.path, behavior, route: "native-editor" });
       return;
     }
 
@@ -5561,38 +5559,38 @@ export class CalendarView extends BasesView {
       return;
     }
 
-    const eventAnchor = await this.findCreatedEventAnchor(file.path, generation);
-    if (generation !== this.postCreateGeneration) return;
+    const eventAnchor = this.findRenderedEventAnchor(file);
     const anchorEl = eventAnchor
       ?? (context.invokingAnchor?.isConnected ? context.invokingAnchor : null)
       ?? (this.containerEl.isConnected ? this.containerEl : null);
-    if (!anchorEl) {
-      logger.flowWarn("CalendarCreate", "post-create:preview-skipped", {
-        path: file.path,
-        reason: "calendar-detached",
-      });
-      this.noticePostCreatePreviewFallback();
+    const hoverParent = calendarLeaf ?? this.app.workspace.activeLeaf ?? this.app.workspace.getMostRecentLeaf() ?? (this.app as any).renderContext;
+    const ownerWindow = anchorEl?.ownerDocument.defaultView;
+    if (!anchorEl || !hoverParent || !ownerWindow) {
+      await this.openOrFocusFile(file);
       return;
     }
-
-    const result = await openGcmEditableNotePreview(this.app, {
-      filePath: file.path,
-      anchorEl,
-      sourcePluginId: "tps-calendar-base",
-      focusEditor: !Platform.isMobile,
+    const anchorBounds = anchorEl.getBoundingClientRect();
+    const hoverEvent = new ownerWindow.MouseEvent("mouseover", {
+      bubbles: false,
+      clientX: anchorBounds.left + Math.min(anchorBounds.width / 2, 12),
+      clientY: anchorBounds.top + Math.min(anchorBounds.height / 2, 12),
+      view: ownerWindow,
     });
-    if (generation !== this.postCreateGeneration) return;
-    const previewLog = {
-      path: file.path,
-      result,
-      anchor: eventAnchor ? "event" : context.invokingAnchor?.isConnected ? "invoker" : "container",
-    };
-    if (result === "opened") {
-      logger.flow("CalendarCreate", "post-create:preview-result", previewLog);
-    } else {
-      logger.flowWarn("CalendarCreate", "post-create:preview-result", previewLog);
-    }
-    if (result !== "opened") this.noticePostCreatePreviewFallback();
+    anchorEl.dispatchEvent(hoverEvent);
+    this.app.workspace.trigger("hover-link", {
+      event: hoverEvent,
+      source: "tps-calendar",
+      hoverParent,
+      targetEl: anchorEl,
+      linktext: file.path,
+      sourcePath: this.app.workspace.getActiveFile()?.path || file.path,
+    });
+    logger.flow("CalendarCreate", "post-create:preview-requested", { path: file.path, anchor: eventAnchor ? "entry" : "surface" });
+  }
+
+  private findRenderedEventAnchor(file: TFile): HTMLElement | null {
+    return Array.from(this.containerEl.querySelectorAll<HTMLElement>(".tps-calendar-entry[data-path]"))
+      .find((element) => element.isConnected && element.getAttribute("data-path") === file.path) ?? null;
   }
 
   private findOwningCalendarLeaf(): WorkspaceLeaf | null {
@@ -5615,29 +5613,6 @@ export class CalendarView extends BasesView {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-  }
-
-  private async findCreatedEventAnchor(filePath: string, generation: number): Promise<HTMLElement | null> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (generation !== this.postCreateGeneration) return null;
-      const matches = Array.from(
-        this.containerEl.querySelectorAll<HTMLElement>(".tps-calendar-entry[data-path]"),
-      ).filter((element) => element.isConnected && element.getAttribute("data-path") === filePath);
-      const visible = matches.find((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      });
-      if (visible) return visible;
-      if (matches[0]) return matches[0];
-      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
-    }
-    return null;
-  }
-
-  private noticePostCreatePreviewFallback(): void {
-    if (POST_CREATE_PREVIEW_FALLBACK_NOTICED_APPS.has(this.app)) return;
-    POST_CREATE_PREVIEW_FALLBACK_NOTICED_APPS.add(this.app);
-    new Notice("Editable preview is unavailable. Your item was created and Calendar stayed open.");
   }
 
   private showInlineTaskOpenMenu(evt: MouseEvent, calEntry: CalendarEntry): void {

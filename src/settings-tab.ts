@@ -339,19 +339,19 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       );
 
     const noteOpening = getGcmApi(this.app)?.ui;
-    if (noteOpening?.presentCreatedNote && noteOpening.openNoteOpeningSettings) {
+    if (noteOpening && (noteOpening.version ?? 0) >= 2 && noteOpening.presentCreatedNote && noteOpening.openNoteOpeningSettings) {
       new Setting(generalSection)
         .setName("After creating an item")
-        .setDesc("TPS Global Context Menu controls editable preview, open, or stay for Calendar, Bases, and Navigator.")
+        .setDesc("TPS Global Context Menu controls Obsidian Page Preview, Open, or Stay for newly created notes.")
         .addButton(button => button.setButtonText("Configure note opening")
           .onClick(() => noteOpening.openNoteOpeningSettings?.()));
     } else {
       new Setting(generalSection)
         .setName("After creating an item")
-        .setDesc("Stay on Calendar, open the created note, or show an editable preview for adding body content.")
+        .setDesc("Preview the created note in Obsidian, open it, or stay on Calendar.")
         .addDropdown((dropdown) =>
           dropdown
-            .addOption("preview", "Editable preview over Calendar")
+            .addOption("preview", "Obsidian Page Preview")
             .addOption("open", "Open created item")
             .addOption("stay", "Stay on Calendar")
             .setValue(this.plugin.settings.postCreateBehavior || "open")

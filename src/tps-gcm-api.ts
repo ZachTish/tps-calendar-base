@@ -151,9 +151,6 @@ export interface GcmApi {
     handlesNativeBaseCreation?: (controller: unknown) => boolean;
     openNoteOpeningSettings?: () => void;
     shouldForceBaseLinkPreview?: () => boolean;
-    openEditableNotePreview?: (
-      request: GcmEditableNotePreviewRequest,
-    ) => boolean | Promise<boolean>;
   };
   completedCheckboxes?: {
     revealForFile?: (filePath: string, lineNumber?: number) => void;
@@ -190,19 +187,6 @@ export interface GcmParentLinkPolicy {
   tag: unknown;
   autoSelfLink: boolean;
 }
-
-export interface GcmEditableNotePreviewRequest {
-  filePath: string;
-  anchorEl: HTMLElement;
-  sourcePluginId: "tps-calendar-base";
-  focusEditor: boolean;
-}
-
-export type GcmEditableNotePreviewResult =
-  | "opened"
-  | "unavailable"
-  | "declined"
-  | "failed";
 
 type GcmApiListener = (api: GcmApi | null, previousApi: GcmApi | null) => void;
 
@@ -356,27 +340,6 @@ export function shouldForceBaseLinkPreview(app: App): boolean {
   return typeof api?.ui?.shouldForceBaseLinkPreview === "function"
     ? api.ui.shouldForceBaseLinkPreview() === true
     : false;
-}
-
-/**
- * Opens GCM's exact public version-1 editable-preview capability. Capability
- * discovery stays inside the workspace-handshake registry above.
- */
-export async function openGcmEditableNotePreview(
-  app: App,
-  request: GcmEditableNotePreviewRequest,
-): Promise<GcmEditableNotePreviewResult> {
-  const ui = getGcmApi(app)?.ui;
-  if (ui?.version !== 1 || typeof ui.openEditableNotePreview !== "function") {
-    return "unavailable";
-  }
-  try {
-    return (await ui.openEditableNotePreview(request)) === true
-      ? "opened"
-      : "declined";
-  } catch {
-    return "failed";
-  }
 }
 
 export interface EventOwner {

@@ -229,7 +229,7 @@ test("saved empty style rules and supported color targets survive settings migra
   assert.doesNotMatch(settingsTabSource, /const debouncedSave = debounce/);
 });
 
-test("post-create behavior migrates the legacy toggle and stays visible for note and task creation", async () => {
+test("saved Preview stays Preview and settings use Obsidian Page Preview", async () => {
   const { migrateSettings, DEFAULT_SETTINGS } = await importSettingsMigration();
 
   for (const behavior of ["preview", "open", "stay"]) {
@@ -242,6 +242,7 @@ test("post-create behavior migrates the legacy toggle and stays visible for note
       "a valid post-create behavior must win over the legacy task-only toggle",
     );
   }
+  assert.equal(migrateSettings({ postCreateBehavior: "preview", openTaskDestinationAfterCreate: false }).postCreateBehavior, "preview");
   assert.equal(
     migrateSettings({ openTaskDestinationAfterCreate: false })
       .postCreateBehavior,
@@ -268,6 +269,8 @@ test("post-create behavior migrates the legacy toggle and stays visible for note
     3,
     "the dropdown must expose exactly the three supported outcomes",
   );
+  assert.match(settingsTabSource, /\.addOption\("preview", "Obsidian Page Preview"\)/);
+  assert.doesNotMatch(settingsTabSource, /Editable preview over Calendar/);
 
   const postCreateControl = settingsTabSource.indexOf("postCreateBehavior");
   assert.ok(postCreateControl >= 0, "the post-create dropdown is rendered");
@@ -1403,7 +1406,7 @@ test("legacy task target path parsing remains stable for historical references",
   assert.equal(normalizeCalendarTaskTargetPath(""), null);
 });
 
-test("every create-new route uses one post-create dispatcher without a read-only preview fallback", () => {
+test("every create-new route uses one post-create dispatcher without a custom editor fallback", () => {
   const between = (start, end) => {
     const startIndex = calendarViewSource.indexOf(start);
     const endIndex = calendarViewSource.indexOf(end, startIndex + start.length);
@@ -1420,44 +1423,35 @@ test("every create-new route uses one post-create dispatcher without a read-only
   assert.equal(
     (dispatcher.match(/generation !== this\.postCreateGeneration/g) || [])
       .length,
-    5,
-    "a superseded request stops after each awaited navigation, anchor, or provider step",
+    3,
+    "a superseded request stops after each awaited navigation or surface restoration",
+  );
+  assert.match(dispatcher, /\(ui\?\.version \?\? 0\) >= 2 \? ui\?\.presentCreatedNote : undefined/);
+  assert.match(
+    dispatcher,
+    /anchorEl: this\.findRenderedEventAnchor\(file\)[\s\S]*?context\.invokingAnchor\?\.isConnected[\s\S]*?this\.containerEl\.isConnected/,
+    "GCM native preview prefers the connected, newly rendered Calendar event",
   );
   assert.match(dispatcher, /const behavior = this\.getPostCreateBehavior\(\)/);
   assert.match(
     dispatcher,
-    /if \(behavior === "open"\) \{[\s\S]*?await this\.openOrFocusFile\(file\);[\s\S]*?return;/,
+    /if \(behavior === "open" \|\| \(behavior === "preview" && Platform\.isMobile\)\) \{[\s\S]*?await this\.openOrFocusFile\(file\);[\s\S]*?return;/,
   );
   assert.match(
     dispatcher,
     /await this\.restoreCalendarSurface\(calendarLeaf\)/,
   );
-  assert.match(
-    dispatcher,
-    /if \(behavior === "stay"\) \{[\s\S]*?this\.containerEl\.focus\(\{ preventScroll: true \}\);[\s\S]*?return;/,
-  );
-  assert.match(
-    dispatcher,
-    /await this\.findCreatedEventAnchor\(file\.path, generation\)/,
-  );
-  assert.match(dispatcher, /context\.invokingAnchor\?\.isConnected/);
-  assert.match(dispatcher, /this\.containerEl\.isConnected/);
-  assert.match(
-    dispatcher,
-    /openGcmEditableNotePreview\(this\.app, \{[\s\S]*?filePath: file\.path,[\s\S]*?anchorEl,[\s\S]*?sourcePluginId: "tps-calendar-base",[\s\S]*?focusEditor: !Platform\.isMobile,[\s\S]*?\}\)/,
-  );
-  assert.match(
-    dispatcher,
-    /if \(result !== "opened"\) this\.noticePostCreatePreviewFallback\(\)/,
-  );
+  assert.match(dispatcher, /if \(behavior === "stay"\) \{[\s\S]*?this\.containerEl\.focus\(\{ preventScroll: true \}\);[\s\S]*?return;/);
+  assert.match(dispatcher, /source: "tps-calendar",[\s\S]*?hoverParent,[\s\S]*?targetEl: anchorEl,[\s\S]*?linktext: file\.path/);
+  assert.match(dispatcher, /const hoverEvent = new ownerWindow\.MouseEvent\("mouseover",[\s\S]*?anchorEl\.dispatchEvent\(hoverEvent\);[\s\S]*?event: hoverEvent/);
   assert.equal(
     (dispatcher.match(/openOrFocusFile\(/g) || []).length,
-    1,
-    "preview unavailable/declined/failed outcomes must not navigate to the note",
+    2,
+    "Open/mobile and unavailable-preview fallback use the native editor",
   );
   assert.doesNotMatch(
     dispatcher,
-    /hover-link|workspace\.trigger|shouldForceBaseLinkPreview/,
+    /shouldForceBaseLinkPreview|openGcmEditableNotePreview|showBaseLinkEditablePreview/,
   );
 
   const toolbarCreate = between(
@@ -1516,10 +1510,7 @@ test("every create-new route uses one post-create dispatcher without a read-only
     toolbarCreate,
     /"note-base-result-unresolved"[\s\S]*?if \(behavior !== "open"\)[\s\S]*?await this\.restoreCalendarSurface\(calendarLeaf\)/,
   );
-  assert.match(
-    toolbarCreate,
-    /if \(behavior === "stay"\)[\s\S]*?this\.containerEl\.focus[\s\S]*?else \{[\s\S]*?this\.noticePostCreatePreviewFallback\(\)/,
-  );
+  assert.doesNotMatch(toolbarCreate, /noticePostCreatePreviewFallback/);
   assert.doesNotMatch(toolbarCreate, /this\.newEventService\.createEvent\(/);
   assert.match(toolbarCreate, /super\.createFileForView/);
   assert.doesNotMatch(toolbarCreate, /openOrFocusFile|openFile/);
@@ -1618,14 +1609,7 @@ test("every create-new route uses one post-create dispatcher without a read-only
     calendarViewSource,
     /onunload\(\): void \{[\s\S]*?this\.postCreateGeneration \+= 1/,
   );
-  assert.match(
-    calendarViewSource,
-    /private noticePostCreatePreviewFallback\(\): void \{[\s\S]*?Your item was created and Calendar stayed open\./,
-  );
-  assert.match(
-    calendarViewSource,
-    /querySelectorAll<HTMLElement>\("\.tps-calendar-entry\[data-path\]"\)/,
-  );
+  assert.doesNotMatch(calendarViewSource, /openGcmEditableNotePreview|noticePostCreatePreviewFallback|findCreatedEventAnchor/);
 });
 
 test("note-driven mode uses scoped host before active-note context", () => {
@@ -1644,6 +1628,7 @@ test('shared note opening owns Calendar outcomes and bypasses the legacy native-
   assert.match(dispatcher, /context\.calendarLeaf\) await this\.restoreCalendarSurface\(context\.calendarLeaf\)/);
   assert.match(dispatcher, /await present\(\{[\s\S]*?sourcePluginId: "tps-calendar-base"/);
   const toolbar = calendarViewSource.slice(calendarViewSource.indexOf('async createFileForView('));
+  assert.match(toolbar, /noteOpening && \(noteOpening\.version \?\? 0\) >= 2 && noteOpening\.handlesNativeBaseCreation\?\.\(this\.controller\)/);
   assert.ok(toolbar.indexOf('handlesNativeBaseCreation?.(this.controller)') < toolbar.indexOf('const observedMarkdownCreates'));
   assert.match(settingsTabSource, /noteOpening\.openNoteOpeningSettings/);
   assert.match(settingsTabSource, /Configure note opening/);
