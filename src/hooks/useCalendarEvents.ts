@@ -137,6 +137,7 @@ export function useCalendarEvents({
       const inlineTaskEventId = inlineTask && typeof inlineTask.lineNumber === "number"
         ? `inline-task-${entryPath}-${inlineTask.lineNumber}-${startDate.getTime()}-${endDate.getTime()}`
         : null;
+      const canEditEvent = noteEventsEditable && !inlineTaskEventId && !isArchivedExternalPlaceholder && !isAuxiliaryDate;
       const localEventId = `${entryPath}-${startDate.getTime()}-${endDate.getTime()}-${backgroundColor}`;
 
       const baseEvent = {
@@ -183,9 +184,9 @@ export function useCalendarEvents({
           isNonActive,
         } as Record<string, any>,
         display: isAuxiliaryDate ? "block" : isAllDay ? "auto" : "block",
-        editable: isArchivedExternalPlaceholder ? false : isAuxiliaryDate ? false : noteEventsEditable,
-        startEditable: isArchivedExternalPlaceholder ? false : isAuxiliaryDate ? false : noteEventsEditable,
-        durationEditable: isArchivedExternalPlaceholder ? false : isAuxiliaryDate ? false : noteEventsEditable,
+        editable: canEditEvent,
+        startEditable: canEditEvent,
+        durationEditable: canEditEvent,
         backgroundColor: backgroundColor || undefined,
         borderColor: borderColor || undefined,
         textColor: "#ffffff",

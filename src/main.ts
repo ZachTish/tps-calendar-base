@@ -232,8 +232,6 @@ export default class ObsidianCalendarPlugin
     logger.flow("Settings", "load:done", {
       enableLogging: this.settings.enableLogging,
       sidebarBasePath: this.settings.sidebarBasePath || "",
-      createMode: this.settings.initialCreateMode || "",
-      taskCreateTargetPath: this.settings.taskCreateTargetPath || "",
     });
   }
 
@@ -296,8 +294,6 @@ export default class ObsidianCalendarPlugin
       logger.flow("Settings", "save:start", {
         enableLogging: snapshot.enableLogging,
         sidebarBasePath: snapshot.sidebarBasePath || "",
-        createMode: snapshot.initialCreateMode || "",
-        taskCreateTargetPath: snapshot.taskCreateTargetPath || "",
       });
       await this.settingsPersistence.request(snapshot);
       logger.flow("Settings", "save:done");

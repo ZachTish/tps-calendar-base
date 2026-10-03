@@ -284,10 +284,8 @@ test("every native Calendar mutation route stays behind API v6 and shared public
   assert.match(fileDrop, /associatedNoteFile: file/u);
 
   const taskDrop = methodSource("private async handleExternalTaskDrop(", "private async handleTaskPointerDropEvent(");
-  assert.ok(
-    taskDrop.indexOf("if (this.isNativeCalendarRecordMode())") < taskDrop.indexOf("this.buildCalendarTaskDropPlan"),
-    "native task drops must be rejected before any task mutation plan is built",
-  );
+  assert.match(taskDrop, /"drop:blocked"/u);
+  assert.doesNotMatch(taskDrop, /buildCalendarTaskDropPlan|vault\.process|createTaskInDailyNote/u);
 
   const update = methodSource("private async updateEntryDates(", "private async syncNoteToEvent(");
   assert.match(update, /updateNativeCalendarRecordSchedule\([\s\S]*surface: nativeSurface/u);

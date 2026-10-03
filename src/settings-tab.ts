@@ -321,7 +321,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     const generalSection = createSettingsGroup(
       rulesPage,
       "New items and date clicks",
-      "Choose what Calendar creates and where task items are stored.",
+      "Calendar creates whole notes and uses Base rules for their folder and frontmatter.",
     );
 
     new Setting(generalSection)
@@ -338,21 +338,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(generalSection)
-      .setName("Initial calendar create")
-      .setDesc("Choose whether drag-select and dropped unscheduled items create a note event or a task item.")
-      .addDropdown((dropdown) =>
-        dropdown
-          .addOption("note", "Note")
-          .addOption("task", "Task item")
-          .setValue(this.plugin.settings.initialCreateMode || "note")
-          .onChange(async (value: "note" | "task") => {
-            this.plugin.settings.initialCreateMode = value;
-            await this.plugin.saveSettings();
-            this.display();
-          }),
-      );
-
     const noteOpening = getGcmApi(this.app)?.ui;
     if (noteOpening?.presentCreatedNote && noteOpening.openNoteOpeningSettings) {
       new Setting(generalSection)
@@ -363,7 +348,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     } else {
       new Setting(generalSection)
         .setName("After creating an item")
-        .setDesc("Stay on Calendar, open the created item or task destination, or show an editable preview for adding body content.")
+        .setDesc("Stay on Calendar, open the created note, or show an editable preview for adding body content.")
         .addDropdown((dropdown) =>
           dropdown
             .addOption("preview", "Editable preview over Calendar")
@@ -375,37 +360,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
-    }
-
-    if ((this.plugin.settings.initialCreateMode || "note") === "task") {
-      new Setting(generalSection)
-        .setName("Task item destination")
-        .setDesc("Create task items in the scheduled day's daily note, a configured dedicated note, or a separate event note.")
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOption("daily-note", "Daily note")
-            .addOption("event-note", "Dedicated note / event note")
-            .setValue(this.plugin.settings.taskCreateDestination || "daily-note")
-            .onChange(async (value: "daily-note" | "event-note") => {
-              this.plugin.settings.taskCreateDestination = value;
-              await this.plugin.saveSettings();
-              this.display();
-            }),
-        );
-
-      new Setting(generalSection)
-        .setName("Dedicated task note path")
-        .setDesc("Optional. When set, Calendar writes new task items into this note by default. Base filters using task.path still override this path.")
-        .addText((text) =>
-          text
-            .setPlaceholder("Inbox.md")
-            .setValue(this.plugin.settings.taskCreateTargetPath || "")
-            .onChange(async (value) => {
-              this.plugin.settings.taskCreateTargetPath = value.trim();
-              await this.plugin.saveSettings();
-            }),
-        );
-
     }
 
     const fileSection = createSettingsGroup(
@@ -810,7 +764,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
 
     new Setting(appearanceSection)
       .setName("Snap Drag-Create")
-      .setDesc("Snap new calendar selections to a separate interval before creating the note or task.")
+      .setDesc("Snap new calendar selections to a separate interval before creating the note.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.snapCreateSelections !== false)
@@ -1139,8 +1093,8 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     defaults.createEl("li", { text: "Use note.scheduled, note.due, or the configured date field for visible calendar events." });
     defaults.createEl("li", { text: "Positive folder or file.path filters can choose where new event notes are created." });
     defaults.createEl("li", { text: "Positive note property equality filters can become frontmatter defaults on created event notes." });
-    defaults.createEl("li", { text: "Task creation in daily-note mode writes scheduled inline tasks to the scheduled day's daily note unless task.path chooses a target note." });
-    defaults.createEl("li", { text: "Use task.tags for inline task tags; use tags or note.tags only for note frontmatter tags." });
+    defaults.createEl("li", { text: "A kind == task rule creates a whole note with kind: task; Calendar does not create checkbox lines." });
+    defaults.createEl("li", { text: "Use tags or note.tags for new note frontmatter tags. task.tags filters only select existing lines." });
     defaults.createEl("li", { text: "Negative filters and ambiguous OR branches constrain matching but are not guessed as creation defaults." });
 
     const reference = section.createEl("details", {
@@ -1172,19 +1126,12 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
       "        - status == \"scheduled\"",
       "        - status == \"working\"",
     ]);
-    this.renderGuideExample(examples, "Scheduled tasks tagged #todo without notes tagged #todo", [
+    this.renderGuideExample(examples, "Whole-note tasks tagged #todo", [
       "filters:",
       "  and:",
       "    - kind == \"task\"",
-      "    - task.tags.contains(\"#todo\")",
+      "    - note.tags.contains(\"#todo\")",
       "    - !scheduled.isEmpty()",
-    ]);
-    this.renderGuideExample(examples, "Create scheduled tasks in a specific file", [
-      "filters:",
-      "  and:",
-      "    - kind == \"task\"",
-      "    - task.path == \"Collections/Toget.md\"",
-      "    - task.tags.contains(\"#type/task/toget\")",
     ]);
   }
 

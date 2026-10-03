@@ -23,7 +23,7 @@ test('Calendar view consumes GCM-owned event helper registrations', () => {
   assert.doesNotMatch(view, /TPS_EVENTS\.GCM_EXPLICIT_ACTION/);
 });
 
-test('Calendar daily-note creation routes use the canonical GCM API with a shared fallback', () => {
+test('Calendar date-link daily-note creation uses the canonical GCM API with a shared fallback', () => {
   const adapter = read('src/tps-gcm-api.ts');
   const service = read('src/services/new-event-service.ts');
   const view = read('src/calendar-view.tsx');
@@ -44,13 +44,8 @@ test('Calendar daily-note creation routes use the canonical GCM API with a share
   );
   assert.match(fallback, /Configured Daily Notes template was not found/);
 
-  const taskCreationStart = service.indexOf('private async ensureDailyNoteFile');
-  const taskCreationEnd = service.indexOf('private getNoteFieldName', taskCreationStart);
-  assert.notEqual(taskCreationStart, -1);
-  assert.notEqual(taskCreationEnd, -1);
-  const taskCreation = service.slice(taskCreationStart, taskCreationEnd);
-  assert.match(taskCreation, /return ensureCalendarDailyNote\(this\.config\.app, date/);
-  assert.doesNotMatch(taskCreation, /vault\.create\(/);
+  assert.doesNotMatch(service, /private async ensureDailyNoteFile|private buildTaskLine/);
+  assert.match(service, /async createTaskInDailyNote[\s\S]*?"task-line:blocked"/);
 
   const dateCreationStart = view.indexOf('private async getOrCreateDailyNote');
   const dateCreationEnd = view.indexOf('private async getOrCreateDailyCanvas', dateCreationStart);

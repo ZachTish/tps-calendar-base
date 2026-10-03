@@ -123,10 +123,8 @@ test("GCM capability discovery uses only the exact public workspace handshake", 
   assert.match(main, /installGcmApiRegistry\(this, this\.app\)/u);
   assert.match(main, /getGcmStatusOptions\(this\.app\)/u);
   assert.match(view, /return getGcmApi\(this\.app\)/u);
-  assert.match(
-    newEvent,
-    /isGcmInlinePropertyAllowed\(this\.config\.app, normalized\)/u,
-  );
+  assert.doesNotMatch(newEvent, /isGcmInlinePropertyAllowed\(this\.config\.app, normalized\)/u);
+  assert.match(newEvent, /"task-line:blocked"/u);
   assert.match(
     typeFolders,
     /const TYPE_TEMPLATE_ROOT = ["']System\/Templates\/Types["']/u,

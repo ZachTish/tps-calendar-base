@@ -2,7 +2,17 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current release: [0.16.9](https://github.com/ZachTish/tps-calendar-base/releases/tag/0.16.9) · Obsidian 1.10.0+ · Desktop and mobile.
+Current version: **1.0.0** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.0.0 release notes](release-notes/1.0.0.md) for test-vault validation and artifact hashes.
+
+## 1.0.0 — Whole-note Calendar authoring
+
+Calendar creates whole Markdown notes for toolbar, range, template-drop, and external-event actions. Dropping an existing unscheduled note schedules that note; it does not create a checkbox line. Native Calendar records remain supported because each record is a whole Markdown note with GCM-owned canonical metadata. In the regular Base note route, positive folder and note-property defaults still determine the new note's folder and frontmatter. A Base `kind == task` default creates a whole note with `kind: task`, even when an old saved create mode says `task`; `task.*` filters continue to select historical lines but do not supply new-note defaults. External-event defaults apply only to newly created notes, not reused notes.
+
+Calendar no longer offers **Initial calendar create**, **Task item destination**, or **Dedicated task note path**. Their old persisted keys remain readable for compatibility but have no creation effect; no settings migration or note rewrite runs. Historical inline tasks still display, preview, and open their source lines. Calendar blocks dropping those lines onto a date, moving or resizing them, direct task-line creation, and the prior task-edit context handoff. Edit a historical line in its source note if needed. Calendar adds no background repair or startup scan.
+
+The settings hub defaults to **Rules & creation**. Its other one-click destinations are **Calendar sources**, **View & navigation**, **Appearance**, and **Advanced**. **Base rule examples** is the single intentional disclosure in Rules & creation. The hub becomes a horizontally scrollable strip on narrow screens; route selection and disclosure/scroll state remain transient, with no new persisted field. GCM owns the **After creating an item** handoff when its API is available; Controller owns external source synchronization.
+
+Focused creation, task-drop, resize, and historical-display regressions assert zero task-line writes. All 326 declared checks pass with zero failures/skips/cancellations. A separate TypeScript/production build deployed changed `main.js` and `manifest.json` to the named Test runtime; its `data.json` remained byte-identical. The installed Test-vault settings showed all five destinations and no task destination controls. With Controller's existing `native-records` mode, Calendar New created one canonical whole-note event in a temporary Base, displayed it, and wrote no checkbox body. Both QA files were archived and the previous view returned. This installed check covers native creation; the regular Base `kind: task` branch is covered by focused source/service tests and awaits an installed check in a vault configured for that mode. No settings were changed. Physical iOS QA remains separate; artifact hashes are in the [1.0.0 release notes](release-notes/1.0.0.md).
 
 ## 0.16.9 — Stop waiting once Calendar data arrives
 
@@ -95,6 +105,8 @@ Embedded timelines containing today return to now after 20 seconds without scrol
 
 ## Two-level Daily Notes — 0.14.0
 
+Historical release behavior: Calendar 1.0.0 retires task-line creation into Daily Notes. This section documents the earlier 0.14.0 workflow and does not describe current authoring.
+
 An explicitly selected task destination with `kind: note` and `noteKind: daily` receives calendar tasks inside its Scheduled section, including when its path differs from the event date. Both values are required, with case-insensitive keys/values and surrounding whitespace ignored. Existing Daily Note path, `kind: dailynote`, and tag recognition remain supported. Other note/task subtypes retain ordinary task placement.
 
 This additive feature preserves the note's metadata and existing section ordering. It introduces no settings, defaults, automatic destination selection, or migration. GCM 2.4.0 supplies shared recognition for Daily Note creation, date lookup and Navigator; update both plugins for the complete workflow. A generic task destination is not converted into a Daily Note.
@@ -103,9 +115,9 @@ Regression coverage exercises actual task creation and section placement for com
 
 ## Ownership and settings
 
-Calendar owns presentation, event interactions, and per-view display options. GCM owns shared fields, statuses, entity identity, task creation contracts, and Base formula services. Controller owns external calendar synchronization and reminder scheduling. Configure those services in their owning plugins.
+Calendar owns presentation, event interactions, whole-note creation, and per-view display options. GCM owns shared fields, statuses, entity identity, task contracts, and Base formula services. Controller owns external calendar synchronization and reminder scheduling. Configure those services in their owning plugins.
 
-Atomic notes and Atomic lines use their appropriate creation paths. A task creation path requires an explicit destination; the calendar must not invent a Daily Note or generic task sink. Shared Source mode remains literal Markdown.
+Calendar authoring uses whole Markdown notes only. Historical checkbox lines remain visible and can be opened in their source note. Shared Source mode remains literal Markdown.
 
 See [detailed historical reference](REFERENCE.md) for command inventory, source layout, filtering, embedding, mobile modal behavior, and release-specific QA. Unsupported or experimental behavior recorded there is not a current guarantee.
 

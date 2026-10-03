@@ -1,36 +1,37 @@
 import type { NewEventCreationOptions } from "../services/new-event-service";
-import {
-  extractCalendarCreationModeFromFilters,
-  type CalendarTaskLineDefaults,
-} from "./filter-creation-defaults";
 
 export type CalendarCreationDefaults = {
   folderPath: string | null;
   frontmatter: Record<string, any>;
 };
 
-export type CalendarCreateOptionOverrides = Omit<
+export type CalendarCreateOptionOverrides = Pick<
   NewEventCreationOptions,
-  "createMode" | "useBaseDefaults" | "frontmatterDefaults" | "taskTags" | "taskStatus" | "taskTargetPath"
+  "allDay" | "typeFolderOverride" | "templateOverride" | "templateTypeOverride" | "titleOverride" | "taskAssociatedNotePath"
 >;
 
 export function buildCalendarNewEventOptions(args: {
-  filters: unknown[];
-  initialCreateMode?: "note" | "task" | null;
   creationDefaults: CalendarCreationDefaults;
-  taskDefaults: CalendarTaskLineDefaults;
   overrides?: CalendarCreateOptionOverrides;
-}): NewEventCreationOptions & { createMode: "note" | "task" } {
-  const createMode = extractCalendarCreationModeFromFilters(args.filters) ?? args.initialCreateMode ?? "note";
+}): NewEventCreationOptions & { createMode: "note" } {
+  const {
+    allDay,
+    typeFolderOverride,
+    templateOverride,
+    templateTypeOverride,
+    titleOverride,
+    taskAssociatedNotePath,
+  } = args.overrides || {};
   return {
-    createMode,
+    allDay,
+    templateOverride,
+    templateTypeOverride,
+    titleOverride,
+    taskAssociatedNotePath,
+    createMode: "note",
     useBaseDefaults: true,
     frontmatterDefaults: args.creationDefaults.frontmatter,
-    taskTags: args.taskDefaults.tags,
-    taskStatus: args.taskDefaults.status,
-    taskTargetPath: args.taskDefaults.targetPath,
-    typeFolderOverride: args.creationDefaults.folderPath,
-    ...(args.overrides || {}),
+    typeFolderOverride: typeFolderOverride !== undefined ? typeFolderOverride : args.creationDefaults.folderPath,
   };
 }
 
@@ -39,7 +40,7 @@ export type CalendarDropCreateKind = "template-file" | "unscheduled-note";
 export type CalendarDropCreateRequest = {
   start: Date;
   end: Date;
-  options: NewEventCreationOptions & { createMode: "note" | "task" };
+  options: NewEventCreationOptions & { createMode: "note" };
 };
 
 export function buildCalendarDropCreateRequest(args: {
@@ -49,10 +50,7 @@ export function buildCalendarDropCreateRequest(args: {
   defaultEventDurationMinutes: number;
   droppedFilePath: string;
   droppedFileTitle?: string | null;
-  filters: unknown[];
-  initialCreateMode?: "note" | "task" | null;
   creationDefaults: CalendarCreationDefaults;
-  taskDefaults: CalendarTaskLineDefaults;
 }): CalendarDropCreateRequest {
   const end = args.allDay
     ? new Date(args.start.getTime() + 24 * 60 * 60 * 1000)
@@ -73,10 +71,7 @@ export function buildCalendarDropCreateRequest(args: {
     start: args.start,
     end,
     options: buildCalendarNewEventOptions({
-      filters: args.filters,
-      initialCreateMode: args.initialCreateMode,
       creationDefaults: args.creationDefaults,
-      taskDefaults: args.taskDefaults,
       overrides,
     }),
   };

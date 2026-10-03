@@ -7,6 +7,7 @@ import * as esbuild from "esbuild";
 
 const reactViewSource = readFileSync(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
 const calendarViewSource = readFileSync(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
+const externalEventModalSource = readFileSync(new URL("../src/modals/external-event-modal.ts", import.meta.url), "utf8");
 const eventRendererSource = readFileSync(new URL("../src/components/EventRenderer.tsx", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../src/settings-migration.ts", import.meta.url), "utf8");
 const continuousSource = readFileSync(new URL("../src/components/ContinuousScrollView.tsx", import.meta.url), "utf8");
@@ -269,14 +270,9 @@ test("post-create behavior migrates the legacy toggle and stays visible for note
   );
 
   const postCreateControl = settingsTabSource.indexOf("postCreateBehavior");
-  const taskOnlyControls = settingsTabSource.indexOf(
-    'if ((this.plugin.settings.initialCreateMode || "note") === "task")',
-  );
   assert.ok(postCreateControl >= 0, "the post-create dropdown is rendered");
-  assert.ok(
-    taskOnlyControls >= 0 && postCreateControl < taskOnlyControls,
-    "the post-create dropdown stays outside the task-only conditional",
-  );
+  assert.doesNotMatch(settingsTabSource, /\.setName\("Initial calendar create"\)/);
+  assert.doesNotMatch(settingsTabSource, /\.setName\("Task item destination"\)/);
   assert.doesNotMatch(
     settingsTabSource,
     /\.setName\("Open task destination after create"\)/,
@@ -503,50 +499,24 @@ test("calendar settings persistence starts a new drain for a completion-window r
   assert.equal(stored.sidebarBasePath, "Completion-window value");
 });
 
-test("creation callsites pass resolved create mode and explicit task target overrides", () => {
-  assert.match(calendarViewSource, /private resolveEffectiveCreateMode\(filters: unknown\[\]\): "note" \| "task"/);
-  assert.match(calendarViewSource, /return this\.extractCreationModeFromFilters\(filters\) \?\? this\.plugin\.settings\.initialCreateMode \?\? "note";/);
+test("Calendar create callsites route whole notes despite legacy task preferences", () => {
   assert.match(calendarViewSource, /from "\.\/utils\/calendar-create-options"/);
   assert.match(calendarViewSource, /private buildCalendarNewEventOptions\(/);
-  assert.match(calendarViewSource, /const mergedProcessor = \(frontmatter: Record<string, unknown>\) => \{/);
-  assert.match(calendarViewSource, /const filteredFolder = normalizePath\(String\(createOptions\.typeFolderOverride \|\| ""\)\)/);
-  assert.match(calendarViewSource, /frontmatter\[endField\] = this\.useEndDuration[\s\S]*Math\.max\(1, Math\.round\(\(nowRange\.end\.getTime\(\) - nowRange\.start\.getTime\(\)\) \/ 60000\)\)[\s\S]*formatDateTimeForFrontmatter\(nowRange\.end\)/);
-  assert.match(calendarViewSource, /if \(filteredFolder\) await this\.ensureCalendarCreationFolder\(filteredFolder\)/);
-  assert.match(calendarViewSource, /const resolvedBaseFileName = baseFileName \|\| \(filteredFolder \? `\$\{filteredFolder\}\/Untitled` : undefined\)/);
-  assert.match(calendarViewSource, /"note-base-route"/);
-  assert.match(calendarViewSource, /await super\.createFileForView\(resolvedBaseFileName, mergedProcessor\)/);
-  assert.match(calendarViewSource, /buildCalendarNewEventOptionsFromFilters\(\{/);
-  assert.match(calendarViewSource, /initialCreateMode: this\.plugin\.settings\.initialCreateMode/);
   assert.match(calendarViewSource, /creationDefaults: this\.getFilterCreationDefaults\(filterSources\)/);
-  assert.match(calendarViewSource, /taskDefaults: this\.extractTaskLineDefaultsFromFilters\(filterSources\)/);
-  assert.match(calendarViewSource, /const createOptions = this\.buildCalendarNewEventOptions\(filterSources\);[\s\S]*?createEvent\(nowRange\.start, nowRange\.end, undefined, createOptions\)/);
-  assert.match(calendarViewSource, /const createOptions = this\.buildCalendarNewEventOptions\(filterSources, \{[\s\S]*?titleOverride: title,[\s\S]*?templateOverride: titlePrompt\.templatePath \|\| undefined/);
-  assert.match(calendarViewSource, /createEvent\(createRange\.start, createRange\.end, undefined, createOptions\)/);
-  assert.match(calendarViewSource, /const createMode = this\.resolveEffectiveCreateMode\(filterSources\);[\s\S]*?Scheduling note for time tracking from drag-create[\s\S]*?createMode,[\s\S]*?if \(createMode === "task"\) \{/);
-  assert.match(calendarViewSource, /buildCalendarDropCreateRequest as buildCalendarDropCreateRequestFromFilters/);
-  assert.match(calendarViewSource, /private buildCalendarDropCreateRequest\(/);
-  assert.match(calendarViewSource, /this\.buildCalendarDropCreateRequest\("template-file", file, start, allDay, filterSources\)/);
-  assert.match(calendarViewSource, /this\.buildCalendarDropCreateRequest\("unscheduled-note", file, start, allDay, filterSources\)/);
-  assert.match(calendarViewSource, /createEvent\(request\.start, request\.end, undefined, request\.options\)/);
-  assert.match(calendarViewSource, /if \(createMode === "note"\) await this\.linkExistingNoteToEvent\(created, file\)/);
-  assert.match(calendarViewSource, /const overrides: Record<string, any> = \{ associatedNotePath: file\.path \}/);
-  assert.match(calendarViewSource, /createTaskInDailyNote\([\s\S]*?file\.basename,[\s\S]*?start,[\s\S]*?end,[\s\S]*?filterDefaults\.tags,[\s\S]*?overrides/);
-  assert.doesNotMatch(calendarViewSource, /buildTaskLinkForFile/);
-  assert.match(calendarViewSource, /this\.buildCalendarNewEventOptions\(filterSources, \{[\s\S]*?taskTitleOverride: taskTitle,[\s\S]*?typeFolderOverride: finalFolderPath/);
-  assert.match(calendarViewSource, /const createMode = this\.resolveEffectiveCreateMode\(filterSources\);[\s\S]*?if \(createMode === "task"\) \{/);
-  assert.match(newEventServiceSource, /const optionTaskTargetPath =\s*normalizeCalendarTaskTargetPath\(\s*options\?\.taskTargetPath,?\s*\);/);
-  assert.match(newEventServiceSource, /const resolvedTaskTargetPath =\s*optionTaskTargetPath \|\|\s*normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\) \|\|\s*null;/);
-  assert.match(newEventServiceSource, /interface NewEventPromptContext/);
-  assert.match(newEventServiceSource, /taskTargetPath: resolvedTaskTargetPath/);
-  assert.match(newEventServiceSource, /hasTaskTargetPathOverride: !!optionTaskTargetPath/);
-  assert.match(newEventServiceSource, /await this\.promptForTitle\([\s\S]*?options\?\.typeFolderOverride,[\s\S]*?promptContext/);
-  assert.match(newEventServiceSource, /private getPromptDestinationDisplay\([\s\S]*?typeFolderOverride: string \| null \| undefined,[\s\S]*?context: NewEventPromptContext,[\s\S]*?\): string/);
-  assert.match(newEventServiceSource, /return `\$\{context\.taskTargetPath\} \(\$\{context\.hasTaskTargetPathOverride \? "from filter" : "from settings"\}\)`/);
-  assert.match(newEventServiceSource, /if \(context\.taskDestination === "daily-note"\)\s*return "Scheduled day's daily note";/);
-  assert.match(newEventServiceSource, /typeRow\.createSpan\(\{[\s\S]*?text: isTaskMode \? "Task target:" : "Type:"[\s\S]*?\}\)/);
-  assert.match(newEventServiceSource, /if \(!isTaskMode\) \{[\s\S]*const typeBtn = buttons\.createEl\("button", \{[\s\S]*?text: "Type\.\.\.",[\s\S]*?type: "button"[\s\S]*?\}\)/);
-  assert.doesNotMatch(newEventServiceSource, /hasOwnProperty\.call\(options, "taskTargetPath"\)/);
+  assert.doesNotMatch(calendarViewSource, /resolveEffectiveCreateMode|extractCreationModeFromFilters/);
+  assert.doesNotMatch(calendarViewSource, /this\.plugin\.settings\.initialCreateMode/);
+  assert.doesNotMatch(calendarViewSource, /this\.plugin\.settings\.taskCreateDestination/);
+  assert.doesNotMatch(calendarViewSource, /this\.plugin\.settings\.taskCreateTargetPath/);
+  assert.doesNotMatch(calendarViewSource, /this\.newEventService\.createTaskInDailyNote\(/);
+  assert.match(calendarViewSource, /await this\.applyScheduleToExistingNote\(target\.file, createRange\.start, createRange\.end\)/);
+  assert.match(calendarViewSource, /await this\.linkExistingNoteToEvent\(created, file\)/);
+  assert.match(calendarViewSource, /const file = await createMeetingNoteFromExternalEvent\(/);
+  assert.match(calendarViewSource, /undefined,\s*creationDefaults\.frontmatter,\s*\)/);
+  assert.match(externalEventModalSource, /if \(createdNewFile\) \{\s*for \(const \[key, value\] of Object\.entries\(frontmatterDefaults \|\| \{\}\)\)/);
+  assert.match(newEventServiceSource, /createMode: "note"/);
+  assert.doesNotMatch(newEventServiceSource, /const createMode =\s*options\?\.createMode/);
 });
+
 
 test("calendar external drop utilities parse native drag payloads deterministically", async () => {
   const {
@@ -656,136 +626,52 @@ test("calendar external drop utilities parse native drag payloads deterministica
   }).end.getTime(), start.getTime() + 24 * 60 * 60 * 1000);
 });
 
-test("calendar wrapper create options are deterministic across modal and drop callsites", async () => {
-  const {
-    buildCalendarDropCreateRequest,
-    buildCalendarNewEventOptions,
-  } = await importCalendarCreateOptionsUtility();
-  const options = buildCalendarNewEventOptions({
-    filters: [
-      {
-        and: [
-          { property: "task.kind", operator: "is", value: "task" },
-          { property: "task.path", operator: "is", value: "[[Inbox/Calendar Tasks|Tasks]]" },
-          { property: "task.status", operator: "is", value: "Next" },
-          { property: "task.tags", operator: "contains", value: "#deep work" },
-        ],
-      },
-    ],
-    initialCreateMode: "note",
-    creationDefaults: {
-      folderPath: "Meetings",
-      frontmatter: { priority: "medium" },
-    },
-    taskDefaults: {
-      tags: ["deep-work"],
-      status: "next",
-      targetPath: "Inbox/Calendar Tasks.md",
-    },
-    overrides: {
-      allDay: true,
-      titleOverride: "Planning",
-      templateOverride: "Templates/Event.md",
-      templateTypeOverride: "file",
-    },
+test("Calendar modal and drop options always create whole notes with Base frontmatter", async () => {
+  const { buildCalendarDropCreateRequest, buildCalendarNewEventOptions } = await importCalendarCreateOptionsUtility();
+  const creationDefaults = { folderPath: "Meetings", frontmatter: { kind: "task", priority: "medium" } };
+  const options = buildCalendarNewEventOptions({ creationDefaults, overrides: { titleOverride: "Planning" } });
+  assert.equal(options.createMode, "note");
+  assert.equal(options.useBaseDefaults, true);
+  assert.deepEqual(options.frontmatterDefaults, { kind: "task", priority: "medium" });
+  assert.equal(options.typeFolderOverride, "Meetings");
+  assert.equal(options.titleOverride, "Planning");
+  const legacyOverride = buildCalendarNewEventOptions({
+    creationDefaults,
+    overrides: { createMode: "task", taskTargetPath: "Inbox/Tasks.md", titleOverride: "Legacy" },
   });
-
-  assert.deepEqual(options, {
-    createMode: "task",
-    useBaseDefaults: true,
-    frontmatterDefaults: { priority: "medium" },
-    taskTags: ["deep-work"],
-    taskStatus: "next",
-    taskTargetPath: "Inbox/Calendar Tasks.md",
-    typeFolderOverride: "Meetings",
-    allDay: true,
-    titleOverride: "Planning",
-    templateOverride: "Templates/Event.md",
-    templateTypeOverride: "file",
-  });
-
-  assert.equal(
-    buildCalendarNewEventOptions({
-      filters: [],
-      initialCreateMode: null,
-      creationDefaults: { folderPath: null, frontmatter: {} },
-      taskDefaults: { tags: [], status: null, targetPath: null },
-    }).createMode,
-    "note",
-  );
-
+  assert.equal(legacyOverride.createMode, "note");
+  assert.equal(legacyOverride.taskTargetPath, undefined);
+  assert.equal(legacyOverride.titleOverride, "Legacy");
   const start = new Date("2027-01-03T14:00:00");
-  const templateRequest = buildCalendarDropCreateRequest({
-    kind: "template-file",
-    start,
-    allDay: false,
-    defaultEventDurationMinutes: 45,
-    droppedFilePath: "Templates/Event.md",
+  const template = buildCalendarDropCreateRequest({
+    kind: "template-file", start, allDay: false, defaultEventDurationMinutes: 45,
+    droppedFilePath: "Templates/Event.md", creationDefaults,
     filters: [{ property: "task.kind", operator: "is", value: "task" }],
-    initialCreateMode: "note",
-    creationDefaults: { folderPath: "Meetings", frontmatter: { area: "ops" } },
-    taskDefaults: { tags: ["ops"], status: "next", targetPath: "Inbox/Calendar Tasks.md" },
+    initialCreateMode: "task", taskDefaults: { tags: ["x"], status: "working", targetPath: "Inbox/Tasks.md" },
   });
-
-  assert.equal(templateRequest.start, start);
-  assert.equal(templateRequest.end.getTime(), start.getTime() + 45 * 60 * 1000);
-  assert.deepEqual(templateRequest.options, {
-    createMode: "task",
-    useBaseDefaults: true,
-    frontmatterDefaults: { area: "ops" },
-    taskTags: ["ops"],
-    taskStatus: "next",
-    taskTargetPath: "Inbox/Calendar Tasks.md",
-    typeFolderOverride: "Meetings",
-    allDay: false,
-    templateOverride: "Templates/Event.md",
-    templateTypeOverride: "file",
+  assert.equal(template.options.createMode, "note");
+  assert.equal(template.options.frontmatterDefaults.kind, "task");
+  assert.equal(template.options.taskTargetPath, undefined);
+  assert.equal(template.options.templateOverride, "Templates/Event.md");
+  const dropped = buildCalendarDropCreateRequest({
+    kind: "unscheduled-note", start, allDay: true, defaultEventDurationMinutes: 45,
+    droppedFilePath: "Inbox/Project.md", droppedFileTitle: "Project kickoff", creationDefaults,
   });
-
-  const noteRequest = buildCalendarDropCreateRequest({
-    kind: "unscheduled-note",
-    start,
-    allDay: true,
-    defaultEventDurationMinutes: 45,
-    droppedFilePath: "Inbox/Project.md",
-    droppedFileTitle: "Project kickoff",
-    filters: [],
-    initialCreateMode: "task",
-    creationDefaults: { folderPath: null, frontmatter: {} },
-    taskDefaults: { tags: [], status: null, targetPath: null },
-  });
-
-  assert.equal(noteRequest.end.getTime(), start.getTime() + 24 * 60 * 60 * 1000);
-  assert.deepEqual(noteRequest.options, {
-    createMode: "task",
-    useBaseDefaults: true,
-    frontmatterDefaults: {},
-    taskTags: [],
-    taskStatus: null,
-    taskTargetPath: null,
-    typeFolderOverride: null,
-    allDay: true,
-    titleOverride: "Project kickoff",
-    taskAssociatedNotePath: "Inbox/Project.md",
-  });
+  assert.equal(dropped.options.createMode, "note");
+  assert.equal(dropped.options.taskAssociatedNotePath, "Inbox/Project.md");
+  assert.equal(dropped.end.getTime() - start.getTime(), 24 * 60 * 60 * 1000);
 });
 
-test("settings include concise Base-native rule guidance", () => {
+
+test("settings explain whole-note Base defaults and omit task destination controls", () => {
   assert.match(settingsTabSource, /"Base rules"/);
-  assert.match(settingsTabSource, /Set visibility and creation rules in the Filter controls of each Obsidian Base/);
-  assert.match(settingsTabSource, /Base rule examples/);
-  assert.match(settingsTabSource, /Keep filters Base-native/);
-  assert.match(settingsTabSource, /positive folder\/path filters as creation location hints/);
   assert.match(settingsTabSource, /Positive note property equality filters can become frontmatter defaults/);
-  assert.match(settingsTabSource, /Task creation in daily-note mode writes scheduled inline tasks/);
-  assert.match(settingsTabSource, /unless task\.path chooses a target note/);
-  assert.match(settingsTabSource, /task\.path == \\"Collections\/Toget\.md\\"/);
-  assert.match(settingsTabSource, /Use task\.tags for inline task tags/);
-  assert.match(settingsTabSource, /Scheduled tasks tagged #todo without notes tagged #todo/);
-  assert.match(settingsTabSource, /task\.tags\.contains/);
-  assert.match(settingsTabSource, /#todo/);
-  assert.match(settingsTabSource, /Negative filters and ambiguous OR branches constrain matching but are not guessed as creation defaults/);
+  assert.match(settingsTabSource, /kind == task rule creates a whole note/);
+  assert.doesNotMatch(settingsTabSource, /\.setName\("Initial calendar create"\)/);
+  assert.doesNotMatch(settingsTabSource, /\.setName\("Task item destination"\)/);
+  assert.doesNotMatch(settingsTabSource, /\.setName\("Dedicated task note path"\)/);
 });
+
 
 test("settings use a shallow routed hub and visual style-rule manager", () => {
   for (const destination of [
@@ -807,8 +693,8 @@ test("settings use a shallow routed hub and visual style-rule manager", () => {
   assert.match(settingsTabSource, /tabindex: "-1"/);
   assert.match(settingsTabSource, /\.focus\(\{ preventScroll: false \}\)/);
   assert.match(settingsTabSource, /const generalSection = createSettingsGroup\(\s*rulesPage/);
-  assert.match(settingsTabSource, /new Setting\(generalSection\)\s*\.setName\("Initial calendar create"\)/);
-  assert.match(settingsTabSource, /new Setting\(generalSection\)\s*\.setName\("Task item destination"\)/);
+  assert.doesNotMatch(settingsTabSource, /\.setName\("Initial calendar create"\)/);
+  assert.doesNotMatch(settingsTabSource, /\.setName\("Task item destination"\)/);
   assert.match(settingsTabSource, /new Setting\(viewBehaviorSection\)\s*\.setName\("Default view mode"\)/);
   assert.match(settingsTabSource, /new Setting\(fileSection\)\s*\.setName\("Default calendar base path"\)/);
   assert.match(settingsTabSource, /new Setting\(frontmatterKeysSection\)\s*\.setName\("Primary event date field"\)/);
@@ -1003,7 +889,7 @@ test("reading-mode embedded calendars stay compact and preserve Bases chrome by 
   assert.match(reactViewSource, /getAdaptiveTimeGridDayCount/);
   assert.match(reactViewSource, /const _DRAG_EVENT_TYPES = \['mousedown','mousemove','mouseup'\] as const/);
   assert.doesNotMatch(reactViewSource, /new PointerEvent\(e\.type/);
-  assert.match(reactViewSource, /Task events are handled directly by GCM's task-line menu/);
+  assert.match(reactViewSource, /Historical task rows use Calendar's read-only source menu/);
   assert.match(reactViewSource, /if \(isInlineTaskEntry \|\| !isEmbedModeRef\.current\) \{/);
   assert.match(reactViewSource, /const \[containerWidth, setContainerWidth\] = useState<number>\(0\)/);
   assert.match(reactViewSource, /const visualWidth = _origBCR\.call\(container\)\.width/);
@@ -1292,21 +1178,9 @@ test("calendar task clicks open an associated-note/source-line chooser", () => {
   assert.match(calendarViewSource, /Open associated note:/);
   assert.match(calendarViewSource, /Create associated note/);
   assert.match(calendarViewSource, /Open source task line/);
-  assert.match(calendarViewSource, /private getGcmTaskLineContextMenuService\(\): any/);
-  assert.match(calendarViewSource, /private addGcmInlineTaskMenuItems\(menu: Menu, inlineTask: InlineScheduledTask, calEntry: CalendarEntry\): boolean/);
-  assert.match(calendarViewSource, /taskLineContextMenuService\.addMenuItems\(/);
-  assert.match(calendarViewSource, /lineNumber: lineIndex \+ 1/);
-  assert.match(calendarViewSource, /rawLine: inlineTask\.line/);
-  assert.match(calendarViewSource, /const checkboxToken = normalizeGcmTaskCheckboxState\(inlineTask\.checkboxState\)/);
-  assert.match(calendarViewSource, /!checkboxToken \|\| !getGcmTaskStatusForCheckboxState\(this\.app, checkboxToken\)/);
-  assert.match(calendarViewSource, /checkboxToken,/);
-  assert.doesNotMatch(calendarViewSource, /checkboxToken: inlineTask\.checkboxState \|\| "\[ \]"/);
-  assert.match(calendarViewSource, /isCalendarTask: true/);
-  assert.match(calendarViewSource, /calendarAllDay: this\.isInlineTaskCalendarAllDay\(inlineTask, calEntry\)/);
-  assert.match(calendarViewSource, /\{ includeNoteActions: false \}/);
-  assert.match(calendarViewSource, /const service = this\.getGcmApi\(\)\?\.taskLines;[\s\S]*service\.createNoteForLine\(\{/);
-  assert.match(calendarViewSource, /this\.handleCreateMeetingNote\(externalEvent, \{ forceNoteMode: true \}\)/);
-  assert.match(calendarViewSource, /private isInlineTaskCalendarAllDay\(inlineTask: InlineScheduledTask, calEntry: CalendarEntry\): boolean/);
+  assert.doesNotMatch(calendarViewSource, /taskLineContextMenuService\.addMenuItems\(/);
+  assert.doesNotMatch(calendarViewSource, /service\.createNoteForLine\(/);
+  assert.match(calendarViewSource, /this\.handleCreateMeetingNote\(externalEvent\)/);
   assert.doesNotMatch(calendarViewSource, /Edit task properties/);
   assert.doesNotMatch(calendarViewSource, /CalendarInlineTaskPropertiesModal/);
   assert.match(calendarViewSource, /private async openCalendarInlineTaskSource/);
@@ -1343,13 +1217,11 @@ test("calendar storage notes do not steal clicks from matching inline task event
   assert.match(calendarViewSource, /this\.normalizeExternalMatchTitle\(task\.title\) === normalizedTitle/);
 });
 
-test("calendar inline task events expose the GCM task context contract", () => {
-  assert.match(reactViewSource, /data-tps-gcm-context", "calendar-task"/);
-  assert.match(reactViewSource, /data-task-path", entryPath/);
-  assert.match(reactViewSource, /data-task-line", taskLineNumber/);
-  assert.match(reactViewSource, /data-tps-calendar-all-day", event\.allDay \? "true" : "false"/);
-  assert.match(reactViewSource, /data-tps-calendar-start", event\.start \? event\.start\.toISOString\(\) : ""/);
-  assert.match(reactViewSource, /lineNumber!? \+ 1/);
+test("historical inline task entries retain source navigation without a mutation context", () => {
+  assert.doesNotMatch(reactViewSource, /data-tps-gcm-context", "calendar-task"/);
+  assert.doesNotMatch(reactViewSource, /data-task-path|data-task-line|data-tps-calendar-task-text/);
+  assert.match(reactViewSource, /const taskCalendarEntry = renderedCalendarEntry \?\? calendarEntry/);
+  assert.match(reactViewSource, /onEntryClick\(taskCalendarEntry, e\.ctrlKey \|\| e\.metaKey, e\)/);
   assert.match(reactViewSource, /tps-calendar-task-entry/);
 });
 
@@ -1389,135 +1261,27 @@ test("calendar inline task events dedupe by source task line", () => {
   assert.match(calendarEventsHookSource, /inlineTaskEventId \?\? localEventId/);
 });
 
-test("calendar task drop confirmation labels the resolved task title", () => {
-  assert.match(calendarViewSource, /const taskLine = await this\.resolveDraggedTaskLineInfo\(file, payload\);/);
-  assert.match(calendarViewSource, /const taskLabel = taskLine\?\.title \|\| String\(payload\.text \|\| ""\)\.trim\(\) \|\| `\$\{file\.path\}:\$\{payload\.line\}`;/);
-  assert.match(calendarViewSource, /`Task: \$\{taskLabel\}`/);
-  assert.match(calendarViewSource, /private async resolveDraggedTaskLineInfo/);
-  assert.match(calendarViewSource, /const title = this\.cleanInlineTaskTitle\(taskText\);/);
+
+test("task-line drop and reschedule methods fail closed before source writes", () => {
+  const drop = calendarViewSource.match(/private async handleExternalTaskDrop[\s\S]*?private async handleTaskPointerDropEvent/)?.[0] || "";
+  const apply = calendarViewSource.match(/private async applyCalendarTaskDropPlan[\s\S]*?private fileHasScheduledValue/)?.[0] || "";
+  const reschedule = calendarViewSource.match(/private async updateInlineScheduledTask[\s\S]*?private getSlotRange/)?.[0] || "";
+  assert.match(drop, /"drop:blocked"/);
+  assert.doesNotMatch(drop, /buildCalendarTaskDropPlan|vault\.process|createTaskInDailyNote/);
+  assert.match(apply, /return false/);
+  assert.doesNotMatch(apply, /vault\.process|vault\.modify/);
+  assert.match(reschedule, /"reschedule:blocked"/);
+  assert.doesNotMatch(reschedule, /vault\.process|vault\.modify/);
+  assert.match(calendarEventsHookSource, /const canEditEvent = noteEventsEditable && !inlineTaskEventId/);
+  assert.match(calendarEventsHookSource, /editable: canEditEvent/);
 });
 
-test("calendar task drops apply only canonical GCM status mappings", () => {
-  assert.match(calendarViewSource, /filterCheckboxState: string \| null/);
-  assert.match(calendarViewSource, /const filterCheckboxState = filterDefaults\.status\s+\? this\.getCheckboxStateForStatus\(filterDefaults\.status\)\s+: null;/);
-  assert.match(calendarViewSource, /if \(plan\.filterStatus && !plan\.filterCheckboxState\) \{[\s\S]*?Task drop blocked because Base status is unmapped[\s\S]*?Cannot schedule this task: GCM has no checkbox mapping/);
-  assert.match(calendarViewSource, /let next = plan\.filterCheckboxState[\s\S]*?current\.replace\([\s\S]*?`\$1\$\{plan\.filterCheckboxState\}\$2`\)[\s\S]*?: current;/);
-  assert.doesNotMatch(calendarViewSource, /Set checkbox state for Base status filter[\s\S]{0,120}\|\| "\[ \]"/);
-});
 
-test("calendar drag-created Daily Note tasks use Scheduled while dedicated targets append", async () => {
-  const newEventServiceSource = readFileSync(new URL("../src/services/new-event-service.ts", import.meta.url), "utf8");
-  assert.match(newEventServiceSource, /createTaskInDailyNote/);
-  assert.match(newEventServiceSource, /vault\.process\(dailyFile, \(content\) => \{/);
-  assert.match(newEventServiceSource, /if \(externalId && this\.hasTaskWithExternalId\(content, externalId\)\)/);
-  assert.match(newEventServiceSource, /insertLineInMarkdownSection\([\s\S]*?content,[\s\S]*?taskLine,[\s\S]*?"Scheduled",[\s\S]*?2,[\s\S]*?scheduledKey/);
-  assert.match(newEventServiceSource, /"task-line:skip-duplicate"/);
-  assert.match(newEventServiceSource, /from "\.\.\/utils\/frontmatter-insert"/);
-  assert.doesNotMatch(newEventServiceSource, /\$\{content\}\$\{taskLine\}\\n/);
 
-  const { insertLineAfterFrontmatter } = await importFrontmatterInsertUtility();
-  assert.equal(
-    insertLineAfterFrontmatter("---\ntitle: Daily\n---\n\nExisting body\n", "- [ ] new task"),
-    "---\ntitle: Daily\n---\n\nExisting body\n- [ ] new task\n",
-  );
-  assert.equal(
-    insertLineAfterFrontmatter("Existing body\n", "- [ ] new task"),
-    "Existing body\n- [ ] new task\n",
-  );
-});
 
-test("calendar reschedules the current task line atomically without dropping concurrent metadata", async () => {
-  const updateMethod = calendarViewSource.match(/private async updateInlineScheduledTask[\s\S]*?private replaceOrAppendInlineProperty/)?.[0] || "";
-  assert.match(updateMethod, /this\.app\.vault\.process\(task\.file/);
-  assert.match(updateMethod, /patchInlineTaskLineContent\(/);
-  assert.match(updateMethod, /tpsId: task\.inlineProperties\.get\("tpsid"\)/);
-  assert.match(updateMethod, /subitemId: task\.inlineProperties\.get\("subitemid"\)/);
-  assert.doesNotMatch(updateMethod, /vault\.read|vault\.modify/);
-  assert.match(inlineTaskLineUpdateSource, /"exact" \| "tpsId" \| "subitemId" \| "title"/);
-
-  const { patchInlineTaskLineContent } = await importInlineTaskLineUpdateUtility();
-  const inspectLine = (line) => {
-    const match = line.match(/^\s*[-*]\s+\[[^\]]*]\s+(.+)$/);
-    if (!match) return null;
-    const read = (key) => line.match(new RegExp(`\\[${key}::\\s*([^\\]]+)]`, "i"))?.[1]?.trim();
-    return {
-      title: match[1]
-        .replace(/\s*%%\s*tps-inline-props:[\s\S]*?\s*%%/g, "")
-        .replace(/\s*\[[^\[\]:]+::\s*[^\]]+]/g, "")
-        .trim(),
-      tpsId: read("tpsId"),
-      subitemId: read("subitemId"),
-    };
-  };
-  const patchSchedule = (line) => line.replace(/\[scheduled::\s*[^\]]+]/i, "[scheduled:: 2026-07-15 09:30:00]");
-
-  const staleLine = "- [ ] Write report [scheduled:: 2026-07-14 09:00:00] [tpsId:: task-1]";
-  const liveLine = `${staleLine} %% tps-inline-props:{"associatedNotePath":"Notes/Write report.md"} %%`;
-  const byId = patchInlineTaskLineContent(
-    `Inserted concurrently\r\n${liveLine}\r\n`,
-    { preferredLineIndex: 0, rawLine: staleLine, title: "Write report", tpsId: "task-1" },
-    inspectLine,
-    patchSchedule,
-  );
-  assert.equal(byId?.matchedBy, "tpsId");
-  assert.equal(byId?.lineIndex, 1);
-  assert.equal(
-    byId?.content,
-    `Inserted concurrently\r\n- [ ] Write report [scheduled:: 2026-07-15 09:30:00] [tpsId:: task-1] %% tps-inline-props:{"associatedNotePath":"Notes/Write report.md"} %%\r\n`,
-  );
-
-  const bySubitem = patchInlineTaskLineContent(
-    "Header\n- [ ] Child task [scheduled:: 2026-07-14] [subitemId:: child-7]",
-    { preferredLineIndex: 0, rawLine: "stale", title: "Child task", subitemId: "child-7" },
-    inspectLine,
-    patchSchedule,
-  );
-  assert.equal(bySubitem?.matchedBy, "subitemId");
-  assert.equal(bySubitem?.content.endsWith("\n"), false);
-
-  const exact = patchInlineTaskLineContent(
-    `Header\n${staleLine}\n`,
-    { preferredLineIndex: 0, rawLine: staleLine, title: "Write report" },
-    inspectLine,
-    patchSchedule,
-  );
-  assert.equal(exact?.matchedBy, "exact");
-  assert.equal(exact?.lineIndex, 1);
-
-  const mixedNewlines = patchInlineTaskLineContent(
-    `Header\r\n${staleLine}\nTail`,
-    { preferredLineIndex: 1, rawLine: staleLine, title: "Write report" },
-    inspectLine,
-    patchSchedule,
-  );
-  assert.equal(
-    mixedNewlines?.content,
-    "Header\r\n- [ ] Write report [scheduled:: 2026-07-15 09:30:00] [tpsId:: task-1]\nTail",
-  );
-
-  const byTitle = patchInlineTaskLineContent(
-    "Header\n- [ ] Write report [scheduled:: 2026-07-14] %% tps-inline-props:{\"associatedNotePath\":\"Moved.md\"} %%",
-    { preferredLineIndex: 0, rawLine: "stale", title: "Write report" },
-    inspectLine,
-    patchSchedule,
-  );
-  assert.equal(byTitle?.matchedBy, "title");
-  assert.match(byTitle?.content || "", /associatedNotePath/);
-
-  const ambiguous = patchInlineTaskLineContent(
-    "- [ ] Same title [scheduled:: 2026-07-14]\n- [ ] Same title [scheduled:: 2026-07-15]",
-    { preferredLineIndex: 8, rawLine: "stale", title: "Same title" },
-    inspectLine,
-    patchSchedule,
-  );
-  assert.equal(ambiguous, null);
-});
-
-test("calendar task titles stay plain and associations resolve hidden metadata before legacy links", async () => {
+test("historical task associations resolve hidden metadata before legacy links", async () => {
   assert.doesNotMatch(newEventServiceSource, /from "\.\.\/utils\/task-title-link"/);
-  assert.match(newEventServiceSource, /const visibleTitle =\s*String\(title \|\| this\.config\.defaultTitle \|\| "Untitled"\)/);
-  assert.match(newEventServiceSource, /const parts = \[`- \$\{checkboxState\} \$\{visibleTitle\}`]/);
-  assert.doesNotMatch(newEventServiceSource, /const parts = \[`- \[ \] \$\{visibleTitle\}`]/);
+  assert.doesNotMatch(newEventServiceSource, /private buildTaskLine|private buildDedicatedTaskNoteContent/);
   assert.doesNotMatch(calendarViewSource, /amendScheduledTaskLineTitleAsContextLink/);
   assert.match(taskAssociatedNoteSource, /associatedNotePath/);
   assert.match(taskAssociatedNoteSource, /extractAssociatedNotePathFromHiddenMetadata/);
@@ -1598,179 +1362,21 @@ test("calendar task titles stay plain and associations resolve hidden metadata b
   );
 });
 
-test("external calendar task titles stay plain while the URL remains task metadata", () => {
-  const titleBuilder = calendarViewSource.match(/private buildExternalEventTaskTitle[\s\S]*?private buildExternalEventTaskOverrides/)?.[0] || "";
-  assert.match(titleBuilder, /return this\.escapeMarkdownLinkText\(event\.title \|\| "External calendar event"\)/);
-  assert.doesNotMatch(titleBuilder, /event\.url|encodeMarkdownLinkTarget|`\[\$\{title\}\]/);
-  assert.match(calendarViewSource, /if \(event\.url\) overrides\.url = event\.url/);
-});
 
-test("calendar creation uses Base task filters as task defaults without leaking them to note frontmatter", async () => {
-  const newEventServiceSource = readFileSync(new URL("../src/services/new-event-service.ts", import.meta.url), "utf8");
-  assert.match(newEventServiceSource, /taskTargetPath\?: string \| null/);
-  assert.match(newEventServiceSource, /taskTags\?: string\[\]/);
-  assert.match(newEventServiceSource, /taskStatus\?: string \| null/);
-  assert.match(newEventServiceSource, /taskAssociatedNotePath\?: string \| null/);
-  assert.match(newEventServiceSource, /this\.createTaskInDailyNote\([\s\S]*?taskTitle,[\s\S]*?taskCheckboxState,[\s\S]*?\)/);
-  assert.match(newEventServiceSource, /getGcmTaskCheckboxStateForStatus\(/);
-  assert.match(newEventServiceSource, /normalized === "associatednotepath"/);
-  assert.match(newEventServiceSource, /private async ensureTaskTargetFile\(rawPath: string\): Promise<TFile>/);
-  assert.match(newEventServiceSource, /normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\)/);
-
-  assert.match(calendarViewSource, /from "\.\/utils\/filter-creation-defaults"/);
+test("Calendar copies note Base defaults without task-line destination defaults", () => {
   const createOptionsSource = readFileSync(new URL("../src/utils/calendar-create-options.ts", import.meta.url), "utf8");
+  assert.match(createOptionsSource, /createMode: "note"/);
   assert.match(createOptionsSource, /frontmatterDefaults: args\.creationDefaults\.frontmatter/);
-  assert.match(createOptionsSource, /taskTags: args\.taskDefaults\.tags/);
-  assert.match(createOptionsSource, /taskStatus: args\.taskDefaults\.status/);
-  assert.match(createOptionsSource, /taskTargetPath: args\.taskDefaults\.targetPath/);
-  assert.match(createOptionsSource, /typeFolderOverride: args\.creationDefaults\.folderPath/);
-  assert.match(calendarViewSource, /return extractCalendarCreationModeFromFilters\(filters\)/);
-  assert.match(calendarViewSource, /extractCalendarTaskLineDefaultsFromFilters\(filters,/);
-  assert.match(calendarViewSource, /private buildCalendarNewEventOptions\(/);
-  assert.match(calendarViewSource, /private extractCreationModeFromFilters\(filters: unknown\[\]\): "note" \| "task" \| null/);
-  assert.match(calendarViewSource, /private resolveEffectiveCreateMode\(filters: unknown\[\]\): "note" \| "task"/);
-  assert.match(calendarViewSource, /const createMode = this\.resolveEffectiveCreateMode\(filterSources\)/);
-  assert.match(calendarViewSource, /if \(createMode === "task"\) \{/);
+  assert.match(createOptionsSource, /typeFolderOverride: typeFolderOverride !== undefined \? typeFolderOverride : args\.creationDefaults\.folderPath/);
+  assert.doesNotMatch(createOptionsSource, /taskTags: args\.taskDefaults|taskStatus: args\.taskDefaults|taskTargetPath: args\.taskDefaults/);
   assert.match(calendarViewSource, /property\.startsWith\("task\."\)/);
-  assert.match(calendarViewSource, /property\.startsWith\("line\."\)/);
-  assert.match(calendarViewSource, /property\.startsWith\("block\."\)/);
-  assert.match(calendarViewSource, /this\.plugin\.settings\.taskCreateDestination/);
-  assert.match(calendarViewSource, /this\.plugin\.settings\.taskCreateTargetPath/);
-
-  const {
-    extractCalendarCreationModeFromFilters,
-    extractCalendarTaskLineDefaultsFromFilters,
-  } = await importFilterCreationDefaultsUtility();
-
-  assert.equal(
-    extractCalendarCreationModeFromFilters([
-      { and: [{ property: "note.kind", operator: "is", value: "note" }] },
-      { and: [{ property: "task.kind", operator: "is", value: "task" }] },
-    ]),
-    "note",
-    "the active-view mode should win before lower-priority all-view defaults",
-  );
-  assert.equal(
-    extractCalendarCreationModeFromFilters([
-      { and: [{ property: "task.kind", operator: "is", value: "task-item" }] },
-    ]),
-    "task",
-  );
-  for (const semanticKind of ["run", "workout", "food", "log", "meeting"]) {
-    assert.equal(
-      extractCalendarCreationModeFromFilters([
-        { and: [{ property: "kind", operator: "is", value: semanticKind }] },
-      ]),
-      "note",
-      `bare semantic kind ${semanticKind} should create a note record`,
-    );
-  }
-  assert.equal(
-    extractCalendarCreationModeFromFilters([
-      { and: [{ property: "task.kind", operator: "is", value: "workout" }] },
-    ]),
-    "task",
-    "an explicit task namespace remains task-line mode even with a semantic value",
-  );
-  assert.equal(
-    extractCalendarCreationModeFromFilters([
-      { and: [{ property: "kind", operator: "is", value: "mixed" }] },
-    ]),
-    null,
-    "mixed/all structural kinds continue to defer to the configured default",
-  );
-  assert.equal(
-    extractCalendarCreationModeFromFilters([
-      {
-        or: [
-          { property: "note.kind", operator: "is", value: "note" },
-          { property: "task.kind", operator: "is", value: "task" },
-        ],
-      },
-    ]),
-    "note",
-    "the first matching or/any branch supplies the creation mode",
-  );
-
-  assert.deepEqual(
-    extractCalendarTaskLineDefaultsFromFilters([
-      {
-        or: [
-          {
-            and: [
-              { property: "task.status", operator: "is", value: "Next" },
-              { property: "task.path", operator: "is", value: "[[Inbox/Active Tasks|Active]]" },
-            ],
-          },
-          {
-            and: [
-              { property: "task.status", operator: "is", value: "Later" },
-              { property: "task.path", operator: "is", value: "Inbox/Later Tasks.md" },
-            ],
-          },
-        ],
-      },
-      {
-        and: [
-          { property: "tags", operator: "is", value: "#deep work" },
-          { property: "note.status", operator: "is", value: "draft" },
-        ],
-      },
-    ]),
-    {
-      tags: ["deep-work"],
-      status: "next",
-      targetPath: "Inbox/Active Tasks.md",
-    },
-    "current-view branch defaults win first; lower-priority sources fill missing fields only",
-  );
-
-  assert.deepEqual(
-    extractCalendarTaskLineDefaultsFromFilters([
-      {
-        any: [
-          { property: "note.status", operator: "is", value: "draft" },
-          { property: "task.path", operator: "is", value: "Inbox/Skipped.md" },
-        ],
-      },
-      {
-        and: [
-          { property: "path", operator: "is", value: "Inbox/Fallback.md" },
-          { property: "status", operator: "is", value: "open" },
-        ],
-      },
-    ]),
-    {
-      tags: [],
-      status: "open",
-      targetPath: "Inbox/Fallback.md",
-    },
-    "ordered any/or branches should not borrow defaults from later alternate branches",
-  );
-
-  assert.deepEqual(
-    extractCalendarTaskLineDefaultsFromFilters([
-      {
-        and: [
-          { property: "task.path", operator: "is", value: "Inbox/A.md" },
-          { property: "task.path", operator: "is", value: "Inbox/B.md" },
-          { property: "note.tags", operator: "is", value: "#note-only" },
-        ],
-      },
-      { property: "task.path", operator: "is", value: "Inbox/Resolved.md" },
-    ]),
-    {
-      tags: [],
-      status: null,
-      targetPath: "Inbox/Resolved.md",
-    },
-    "ambiguous source paths are ignored so lower-priority unambiguous paths can fill the target",
-  );
+  assert.match(calendarViewSource, /private getFilterCreationDefaults/);
 });
 
-test("task target paths fall back to settings and normalize link-shaped values", async () => {
+
+test("legacy task target path parsing remains stable for historical references", async () => {
   assert.match(taskTargetPathSource, /export function normalizeCalendarTaskTargetPath/);
-  assert.match(newEventServiceSource, /optionTaskTargetPath \|\|\s*normalizeCalendarTaskTargetPath\(this\.config\.taskTargetPath\) \|\|\s*null/);
+  assert.doesNotMatch(calendarViewSource, /this\.plugin\.settings\.taskCreateTargetPath/);
   assert.match(calendarViewSource, /private handleCalendarBaseToolbarCreateClick\(evt: MouseEvent\): void/);
   assert.match(calendarViewSource, /const target = evt\.target instanceof Element \? evt\.target : null/);
   assert.match(calendarViewSource, /const createOwner = this\.getCalendarBaseToolbarCreateOwner\(target\)/);
@@ -1860,14 +1466,14 @@ test("every create-new route uses one post-create dispatcher without a read-only
   );
   assert.equal(
     (toolbarCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
-    3,
-    "toolbar native-note, task-destination, and Base-native note routes all dispatch",
+    2,
+    "native and Base whole-note toolbar routes both dispatch",
   );
   assert.equal(
     (toolbarCreate.match(/invokingAnchor: this\.toolbarCreateAnchor/g) || [])
       .length,
-    2,
-    "native and task toolbar routes use the current invoking button directly",
+    1,
+    "native toolbar creation uses the current invoking button directly",
   );
   assert.match(
     toolbarCreate,
@@ -1914,7 +1520,7 @@ test("every create-new route uses one post-create dispatcher without a read-only
     toolbarCreate,
     /if \(behavior === "stay"\)[\s\S]*?this\.containerEl\.focus[\s\S]*?else \{[\s\S]*?this\.noticePostCreatePreviewFallback\(\)/,
   );
-  assert.match(toolbarCreate, /this\.newEventService\.createEvent\(/);
+  assert.doesNotMatch(toolbarCreate, /this\.newEventService\.createEvent\(/);
   assert.match(toolbarCreate, /super\.createFileForView/);
   assert.doesNotMatch(toolbarCreate, /openOrFocusFile|openFile/);
 
@@ -1975,12 +1581,12 @@ test("every create-new route uses one post-create dispatcher without a read-only
 
   const externalCreate = between(
     "private async handleCreateMeetingNote(",
-    "private buildExternalEventTaskTitle(",
+    "// Daily note embed syncing/validation",
   );
   assert.equal(
     (externalCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
-    3,
-    "external daily-note task, dedicated task-note, and note routes all dispatch",
+    1,
+    "external event conversion dispatches its whole note",
   );
   assert.match(
     externalCreate,
@@ -2001,8 +1607,8 @@ test("every create-new route uses one post-create dispatcher without a read-only
   assert.equal(
     (calendarViewSource.match(/this\.handlePostCreateBehavior\(/g) || [])
       .length,
-    12,
-    "the complete create-new surface stays wired to one dispatcher",
+    9,
+    "the complete whole-note create surface stays wired to one dispatcher",
   );
   assert.doesNotMatch(
     calendarViewSource,

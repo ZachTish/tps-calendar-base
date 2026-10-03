@@ -402,177 +402,22 @@ function createBareView({
   return view;
 }
 
-function configureTaskDropFixture(view, status = 'working') {
-  view.startDateProp = 'note.scheduled';
-  view.endDateProp = 'note.timeEstimate';
-  view.defaultEventDuration = 30;
-  view.getNoteField = (property) => String(property || '').replace(/^note\./u, '');
-  view.readBaseFileFilterSources = async () => [];
-  view.extractTaskLineDefaultsFromFilters = () => ({ tags: ['qa'], status, targetPath: null });
-  view.resolveDraggedTaskLineInfo = async (_file, payload) => ({
-    lineIndex: payload.line - 1,
-    rawLine: payload.rawLine,
-    title: payload.text,
-  });
-  view.updateCalendar = async () => {};
-}
-
-test('calendar task-drop source resolution accepts only currently mapped one-character checkbox states', async () => {
-  const view = createBareView({ api: makeFormulaApi(() => value('noop', null)).api });
-  const mappedLine = '- [ ] Mapped task';
-  const malformedLine = '- [ab] Not a task';
-  const unmappedLine = '- [*] Unknown state';
-  const file = createFile('Inbox/Task Drop Sources.md', `${mappedLine}\n${malformedLine}\n${unmappedLine}\n`);
-
-  assert.deepEqual(
-    await view.resolveDraggedTaskLineInfo(file, {
-      type: 'task', filePath: file.path, line: 1, rawLine: mappedLine, checkboxState: '[ ]', text: 'Mapped task',
-    }),
-    { lineIndex: 0, rawLine: mappedLine, title: 'Mapped task' },
-  );
-  assert.equal(
-    await view.resolveDraggedTaskLineInfo(file, {
-      type: 'task', filePath: file.path, line: 2, rawLine: malformedLine, checkboxState: '[ab]', text: 'Not a task',
-    }),
-    null,
-  );
-  assert.equal(
-    await view.resolveDraggedTaskLineInfo(file, {
-      type: 'task', filePath: file.path, line: 3, rawLine: unmappedLine, checkboxState: '[*]', text: 'Unknown state',
-    }),
-    null,
-  );
-});
-
-test('calendar task drops fail closed before process and apply one captured mapping atomically', async () => {
+test('calendar rejects task-line drops before inspection or mutation', async () => {
   globalThis.__calendarFormulaNotices.length = 0;
   const view = createBareView({ api: makeFormulaApi(() => value('noop', null)).api });
-  configureTaskDropFixture(view, 'working');
-  const sourceLine = '- [ ] Ship it [status:: todo] [task.status:: stale] [checkbox_Status:: stale] `[task.status:: example]` [relationshipStatus:: [[Statuses/Todo]]]';
+  const sourceLine = '- [ ] Historical task [scheduled:: 2026-08-02 09:00:00]';
   const file = createFile('Inbox/Tasks.md', `${sourceLine}\n`);
   let processCalls = 0;
-  view.app.vault.process = async (target, mutator) => {
-    processCalls += 1;
-    target.contents = mutator(target.contents);
-  };
-  const payload = {
-    type: 'task',
-    filePath: file.path,
-    line: 1,
-    rawLine: sourceLine,
-    checkboxState: '[ ]',
-    text: 'Ship it',
-  };
-
-  const plan = await view.buildCalendarTaskDropPlan(file, payload, new Date(2026, 7, 2, 12, 0, 0), false);
-  assert.equal(plan.filterCheckboxState, '[/]');
-  assert.equal(plan.sourceLineIndex, 0);
-  assert.equal(plan.sourceLine, sourceLine);
-  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), true);
-  assert.equal(processCalls, 1);
-  assert.match(file.contents, /^- \[\/\] Ship it `\[task\.status:: example\]` \[relationshipStatus:: \[\[Statuses\/Todo\]\]\] \[scheduled:: 2026-08-02 12:00:00\] \[timeEstimate:: 30\] #qa$/mu);
-
-  file.contents = '- [?] Concurrent edit\n';
-  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
-  assert.equal(file.contents, '- [?] Concurrent edit\n');
-
-  file.contents = `Heading\n${plan.sourceLine}\n`;
-  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), true);
-  assert.match(file.contents, /^Heading\n- \[\/\] Ship it /u);
-
-  file.contents = `Heading\n${plan.sourceLine}\n${plan.sourceLine}\n`;
-  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
-  assert.equal(file.contents, `Heading\n${plan.sourceLine}\n${plan.sourceLine}\n`);
-
-  file.contents = `${plan.sourceLine}\n`;
-  const mappedStateForStatus = view.getCheckboxStateForStatus.bind(view);
-  let mappingReads = 0;
-  view.getCheckboxStateForStatus = () => ++mappingReads === 1 ? '[/]' : null;
-  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
-  assert.equal(file.contents, `${plan.sourceLine}\n`);
-  assert.equal(processCalls, 5, 'a mapping changed during vault.process must perform no write');
-  view.getCheckboxStateForStatus = mappedStateForStatus;
-
-  configureTaskDropFixture(view, 'unmapped');
+  view.app.vault.process = async () => { processCalls += 1; throw new Error('unexpected source write'); };
+  const payload = { type: 'task', filePath: file.path, line: 1, rawLine: sourceLine, checkboxState: '[ ]', text: 'Historical task' };
   await view.handleExternalTaskDrop(file, payload, new Date(2026, 7, 3, 12, 0, 0), false);
-  assert.equal(processCalls, 5, 'an unmapped status must not invoke vault.process');
-  assert.match(globalThis.__calendarFormulaNotices.at(-1) || '', /no checkbox mapping/u);
-
-  view.app.workspace.trigger('tps:gcm-api-changed', {
-    source: 'tps-global-context-menu',
-    sourcePluginId: 'tps-global-context-menu',
-    timestamp: Date.now(),
-    available: true,
-    taskCheckboxesVersion: 1,
-    api: {
-      taskCheckboxes: {
-        version: 1,
-        contract: 'ordered-strict-v1',
-        getMappings: () => [],
-        stateForStatus: () => '[/]',
-        statusForState: () => 'working',
-      },
-    },
-  });
-  configureTaskDropFixture(view, 'working');
-  await view.handleExternalTaskDrop(file, payload, new Date(2026, 7, 4, 12, 0, 0), false);
-  assert.equal(processCalls, 5, 'a malformed provider must not invoke vault.process');
-
-  file.contents = `${plan.sourceLine}\n`;
-  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), false);
-  assert.equal(processCalls, 5, 'a mapping changed after confirmation must fail before vault.process');
+  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, {}), false);
+  assert.equal(processCalls, 0);
+  assert.equal(file.contents, `${sourceLine}\n`);
+  assert.match(globalThis.__calendarFormulaNotices.at(-1) || '', /whole note/u);
 });
 
-test('calendar task drops clear every checkbox-owned workflow carrier and preserve the exact relational field', async () => {
-  const view = createBareView({ api: makeFormulaApi(() => value('noop', null)).api });
-  configureTaskDropFixture(view, 'working');
-  const mappings = Object.freeze([
-    Object.freeze({ checkboxState: '[ ]', statuses: Object.freeze(['todo']) }),
-    Object.freeze({ checkboxState: '[/]', statuses: Object.freeze(['working']) }),
-  ]);
-  view.app.workspace.trigger('tps:gcm-api-changed', {
-    source: 'tps-global-context-menu',
-    sourcePluginId: 'tps-global-context-menu',
-    timestamp: Date.now(),
-    available: true,
-    taskCheckboxesVersion: 1,
-    api: {
-      services: {
-        status: {
-          getStatusPropertyKey: () => 'workflowState',
-          getRelationalStatusPropertyKey: () => 'status',
-        },
-      },
-      taskCheckboxes: {
-        version: 1,
-        contract: 'ordered-strict-v1',
-        getMappings: () => mappings,
-        stateForStatus: (status) => status === 'working' ? '[/]' : status === 'todo' ? '[ ]' : '',
-        statusForState: (state) => state === '[/]' ? 'working' : state === '[ ]' ? 'todo' : '',
-      },
-    },
-  });
-  const sourceLine = '- [ ] Cleanup [status:: [[Statuses/Todo]]] [workflowState:: todo] [taskStatus:: todo] [task.status:: todo] [task.checkboxStatus:: todo] [checkboxStatus:: todo] `[taskStatus:: example]`';
-  const file = createFile('Inbox/Workflow Cleanup.md', `${sourceLine}\n`);
-  view.app.vault.process = async (target, mutator) => {
-    target.contents = mutator(target.contents);
-  };
-  const payload = {
-    type: 'task',
-    filePath: file.path,
-    line: 1,
-    rawLine: sourceLine,
-    checkboxState: '[ ]',
-    text: 'Cleanup',
-  };
 
-  const plan = await view.buildCalendarTaskDropPlan(file, payload, new Date(2026, 7, 2, 12, 0, 0), false);
-  assert.equal(await view.applyCalendarTaskDropPlan(file, payload, plan), true);
-  assert.equal(
-    file.contents,
-    '- [/] Cleanup [status:: [[Statuses/Todo]]] `[taskStatus:: example]` [scheduled:: 2026-08-02 12:00:00] [timeEstimate:: 30] #qa\n',
-  );
-});
 
 test("extracts only authoritative, named Base formulas and recognizes formula property IDs", () => {
   assert.deepEqual(
@@ -1239,38 +1084,19 @@ test("Calendar task status filters use checkbox workflow state and support negat
   );
 });
 
-test('calendar rescheduling revalidates the current checkbox mapping inside the atomic source update', async () => {
-  const { api } = makeFormulaApi(() => value('noop', null));
-  const view = createBareView({ api });
+test('historical inline task rescheduling rejects before the serialized source queue', async () => {
+  const view = createBareView({ api: makeFormulaApi(() => value('noop', null)).api });
   await view.prepareFormulaRuntime();
-  const line = '- [ ] Mapping race [scheduled:: 2026-08-05 09:00:00]';
-  const source = createFile('Inbox/Reschedule Mapping.md', `${line}\n`);
-  const task = view.parseInlineScheduledTask(
-    source,
-    0,
-    line,
-    'scheduled',
-    'timeEstimate',
-    new Map(),
-  );
+  const line = '- [ ] Historical task [scheduled:: 2026-08-05 09:00:00]';
+  const source = createFile('Inbox/Historical Task.md', `${line}\n`);
+  const task = view.parseInlineScheduledTask(source, 0, line, 'scheduled', 'timeEstimate', new Map());
   let processCalls = 0;
-  view.app.vault.process = async (file, mutator) => {
-    processCalls += 1;
-    file.contents = mutator(file.contents);
-  };
-  view.app.workspace.trigger('tps:gcm-api-changed', {
-    source: 'tps-global-context-menu',
-    sourcePluginId: 'tps-global-context-menu',
-    timestamp: Date.now(),
-    available: false,
-    taskCheckboxesVersion: null,
-  });
-
+  view.app.vault.process = async () => { processCalls += 1; throw new Error('unexpected source write'); };
   await assert.rejects(
     view.updateInlineScheduledTask(task, new Date(2026, 7, 6, 10, 0, 0)),
-    /safely find the task line/u,
+    /cannot edit them/u,
   );
-  assert.equal(processCalls, 1);
+  assert.equal(processCalls, 0);
   assert.equal(source.contents, `${line}\n`);
 });
 
@@ -1359,8 +1185,8 @@ test("literal task estimates remain row-owned and preserve distinct rendered int
   );
 });
 
-test("a configured task duration field wins and remains synchronized with canonical timeEstimate", async () => {
-  const line = "- [ ] Custom duration [scheduled:: 2026-08-05 09:00:00] [duration:: 55] [timeEstimate:: 15] [tpsId:: custom-duration-1]";
+test('a configured task duration field wins for historical read-only task rows', async () => {
+  const line = "- [ ] Custom duration [scheduled:: 2026-08-05 09:00:00] [duration:: 55] [timeEstimate:: 15]";
   const source = createFile("Inbox/Custom Task Duration.md", `${line}\n`);
   const view = createBareView({
     lineMetadata: makeLineMetadataApi(),
@@ -1368,42 +1194,15 @@ test("a configured task duration field wins and remains synchronized with canoni
     frontmatterByPath: { [source.path]: { duration: 5, timeEstimate: 10 } },
   });
   Object.assign(view, {
-    startDateProp: "note.scheduled",
-    endDateProp: "note.duration",
-    titleProp: null,
-    statusField: null,
-    priorityField: null,
-    allDayProperty: "note.allDay",
-    useEndDuration: true,
+    startDateProp: "note.scheduled", endDateProp: "note.duration",
+    titleProp: null, statusField: null, priorityField: null,
+    allDayProperty: "note.allDay", useEndDuration: true,
   });
   await view.prepareFormulaRuntime();
-
   const entries = await view.collectInlineScheduledTaskEntries();
   assert.equal(entries.length, 1);
-  assert.equal(
-    (entries[0].endDate.getTime() - entries[0].startDate.getTime()) / 60000,
-    55,
-    "the configured row field wins over both canonical and containing-note values",
-  );
-
-  const task = view.parseInlineScheduledTask(source, 0, line, "scheduled", "duration", new Map());
-  assert.ok(task);
-  view.app.vault.process = async (file, mutator) => {
-    file.contents = mutator(file.contents);
-  };
-  await view.updateInlineScheduledTask(
-    task,
-    new Date(2026, 7, 5, 10, 0, 0),
-    new Date(2026, 7, 5, 11, 10, 0),
-    false,
-  );
-  assert.match(source.contents, /\[timeEstimate:: 70\]/u);
-  assert.match(source.contents, /\[duration:: 70\]/u);
-
-  await view.updateInlineScheduledTask(task, new Date(2026, 7, 6, 0, 0, 0), undefined, true);
-  assert.match(source.contents, /\[allDay:: true\]/u);
-  assert.doesNotMatch(source.contents, /\[timeEstimate::/iu);
-  assert.doesNotMatch(source.contents, /\[duration::/iu);
+  assert.equal((entries[0].endDate.getTime() - entries[0].startDate.getTime()) / 60000, 55);
+  assert.equal(source.contents, `${line}\n`);
 });
 
 test("task end-datetime views use a row end and fall back to canonical timeEstimate", async () => {
@@ -1433,51 +1232,7 @@ test("task end-datetime views use a row end and fall back to canonical timeEstim
   assert.ok(entries.every((entry) => entry.hasExplicitDisplayInterval));
 });
 
-test("task resize keeps canonical minutes separate from an explicit end datetime", async () => {
-  const line = "- [ ] Resize me [scheduled:: 2026-08-07 09:00:00] [timeEstimate:: 30] [end:: 2026-08-07 09:30:00] [tpsId:: resize-1]";
-  const source = createFile("Inbox/Resize Task.md", `${line}\n`);
-  const view = createBareView({ lineMetadata: makeLineMetadataApi(), markdownFiles: [source] });
-  Object.assign(view, {
-    startDateProp: "note.scheduled",
-    endDateProp: "note.end",
-    allDayProperty: "note.allDay",
-    useEndDuration: false,
-  });
-  await view.prepareFormulaRuntime();
-  const task = view.parseInlineScheduledTask(source, 0, line, "scheduled", "end", new Map());
-  assert.ok(task);
-  view.app.vault.process = async (file, mutator) => {
-    file.contents = mutator(file.contents);
-  };
 
-  await view.updateInlineScheduledTask(
-    task,
-    new Date(2026, 7, 7, 10, 0, 0),
-    new Date(2026, 7, 7, 11, 30, 0),
-    false,
-  );
-  assert.match(source.contents, /\[scheduled:: 2026-08-07 10:00:00\]/u);
-  assert.match(source.contents, /\[timeEstimate:: 90\]/u);
-  assert.match(source.contents, /\[end:: 2026-08-07 11:30:00\]/u);
-  assert.doesNotMatch(source.contents, /\[end:: 90\]/u);
-
-  await view.updateInlineScheduledTask(task, new Date(2026, 7, 8, 0, 0, 0), undefined, true);
-  assert.match(source.contents, /\[scheduled:: 2026-08-08\]/u);
-  assert.match(source.contents, /\[allDay:: true\]/u);
-  assert.doesNotMatch(source.contents, /\[timeEstimate::/iu);
-  assert.doesNotMatch(source.contents, /\[end::/iu);
-
-  await view.updateInlineScheduledTask(
-    task,
-    new Date(2026, 7, 8, 10, 0, 0),
-    new Date(2026, 7, 8, 10, 40, 0),
-    false,
-  );
-  assert.match(source.contents, /\[scheduled:: 2026-08-08 10:00:00\]/u);
-  assert.match(source.contents, /\[timeEstimate:: 40\]/u);
-  assert.match(source.contents, /\[end:: 2026-08-08 10:40:00\]/u);
-  assert.doesNotMatch(source.contents, /\[allDay::/iu);
-});
 
 test("inline task collection isolates failed sources and reuses only matching path-plus-mtime cache entries", async () => {
   const good = createFile("Inbox/Good.md", "- [ ] Good [scheduled:: 2026-08-05]");

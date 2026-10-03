@@ -238,6 +238,7 @@ export async function createMeetingNoteFromExternalEvent(
     statusKey: string;
   },
   existingFile?: TFile,
+  frontmatterDefaults?: Record<string, any>,
 ): Promise<TFile | null> {
   // Load template (supports templater folder + relative paths)
   let templateContent = "";
@@ -300,6 +301,7 @@ export async function createMeetingNoteFromExternalEvent(
 
   let file: TFile | null = null;
   let templateAppliedToFile = false;
+  let createdNewFile = false;
 
   if (existingFile) {
     // Preserve existing non-empty content; only write body if the file is empty.
@@ -414,6 +416,7 @@ export async function createMeetingNoteFromExternalEvent(
           safeBasename,
         );
         file = await app.vault.create(availablePath, noteContent);
+        createdNewFile = true;
         templateAppliedToFile = templateFile instanceof TFile;
       }
     } else {
@@ -424,6 +427,7 @@ export async function createMeetingNoteFromExternalEvent(
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
           file = await app.vault.create(deterministicPath, noteContent);
+          createdNewFile = true;
           templateAppliedToFile = templateFile instanceof TFile;
           logger.log(
             `[CreateMeetingNote] Created note: "${file.basename}" at ${file.path}`,
@@ -504,9 +508,19 @@ export async function createMeetingNoteFromExternalEvent(
     }
   }
 
-  // Apply event frontmatter additively (merge, never overwrite existing values).
-  // TPS fields are stamped on top of whatever Templater produced.
+  // Only newly created notes receive Base defaults; reused notes retain their
+  // existing non-calendar fields. Calendar identity and schedule win afterward.
   await processFrontmatterSafely(app, file, "external-event-create", (fm) => {
+    if (createdNewFile) {
+      for (const [key, value] of Object.entries(frontmatterDefaults || {})) {
+        if (value === undefined) continue;
+        if (normalizeKey(key) === "tags") {
+          fm.tags = mergeTagInputs(fm.tags, value);
+        } else {
+          setFrontmatterValueCaseInsensitive(fm, key, value);
+        }
+      }
+    }
     const normalizedCalendarTag = normalizeTagValue(calendarTag);
     if (normalizedCalendarTag) {
       fm.tags = mergeTagInputs(fm.tags, normalizedCalendarTag);

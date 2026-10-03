@@ -127,7 +127,7 @@ test("calendar logging records high-level fetch, parse, and creation outcomes", 
   assert.match(newEventServiceSource, /logger\.flow\("NewEvent", "route:resolved"/);
   assert.match(newEventServiceSource, /logger\.flow\("NewEvent", "note-target:resolved"/);
   assert.match(newEventServiceSource, /logger\.flow\("NewEvent", "template:resolved"/);
-  assert.match(newEventServiceSource, /logger\.flow\("NewEvent", "task-line:done"/);
+  assert.match(newEventServiceSource, /logger\.flowWarn\("NewEvent", "task-line:blocked"/);
   assert.match(newEventServiceSource, /logger\.flow\("NewEvent", "create:done"/);
   assert.match(newEventServiceSource, /logger\.flowError\("NewEvent", "create:failed"/);
 });

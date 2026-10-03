@@ -2757,7 +2757,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         }
         if (isInlineTaskEntry) {
           const taskCalendarEntry = renderedCalendarEntry ?? calendarEntry;
-          const taskLineNumber = String(inlineTask.lineNumber! + 1);
           element.classList.remove("internal-link");
           element.removeAttribute("data-href");
           element.removeAttribute("data-linkpath");
@@ -2769,20 +2768,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             titleEl.removeAttribute("data-linkpath");
             titleEl.removeAttribute("href");
           }
-          element.setAttribute("data-tps-gcm-context", "calendar-task");
-          element.setAttribute("data-task-path", entryPath);
-          element.setAttribute("data-task-line", taskLineNumber);
-          element.setAttribute("data-tps-calendar-task-text", String(inlineTask.title || event.title || ""));
-          element.setAttribute("data-tps-calendar-all-day", event.allDay ? "true" : "false");
-          element.setAttribute("data-tps-calendar-start", event.start ? event.start.toISOString() : "");
-          element.setAttribute("data-tps-calendar-end", event.end ? event.end.toISOString() : "");
           element.classList.add("tps-calendar-task-entry");
-          if (titleEl) {
-            titleEl.setAttribute("data-tps-gcm-context", "calendar-task");
-            titleEl.setAttribute("data-task-path", entryPath);
-            titleEl.setAttribute("data-task-line", taskLineNumber);
-            titleEl.setAttribute("data-tps-calendar-all-day", event.allDay ? "true" : "false");
-          }
           const previousTaskClickHandler = (element as any)._tpsCalendarTaskClickHandler as EventListener | undefined;
           if (previousTaskClickHandler) {
             element.removeEventListener("click", previousTaskClickHandler, true);
@@ -2859,7 +2845,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         const calendarEntry = event.extendedProps.calendarEntry as CalendarEntry | undefined;
         const inlineTask = (calendarEntry?.entry as any)?.inlineTask as { lineNumber?: number } | undefined;
         const isInlineTaskEntry = !!inlineTask && typeof inlineTask.lineNumber === "number";
-        // Task events are handled directly by GCM's task-line menu. Do not let
+        // Historical task rows use Calendar's read-only source menu. Do not let
         // Canvas replace that with the node/file context menu.
         if (isInlineTaskEntry || !isEmbedModeRef.current) {
           e.stopPropagation();

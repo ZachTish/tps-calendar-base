@@ -22,19 +22,6 @@ import { mergeTagInputs, normalizeTagValue } from "../utils/tag-utils";
 import { applyParentLinkToChild } from "./parent-child-link";
 import { getPluginById } from "../core";
 import {
-  insertLineAfterFrontmatter,
-  insertLineInMarkdownSection,
-} from "../utils/frontmatter-insert";
-import { normalizeCalendarTaskTargetPath } from "../utils/task-target-path";
-import { normalizeTaskAssociatedNotePath } from "../utils/task-associated-note";
-import {
-  ensureCalendarDailyNote,
-  getCalendarDailyNotePath,
-} from "../utils/daily-note-creation";
-import {
-  getGcmApi,
-  getGcmTaskCheckboxStateForStatus,
-  isGcmInlinePropertyAllowed,
   prepareGcmTemplateInstanceSource,
   sanitizeGcmTemplateInstanceFile,
 } from "../tps-gcm-api";
@@ -78,13 +65,6 @@ export interface NewEventCreationOptions {
   taskAssociatedNotePath?: string | null;
 }
 
-interface NewEventPromptContext {
-  createMode: "note" | "task";
-  taskDestination: "daily-note" | "event-note";
-  taskTargetPath: string | null;
-  hasTaskTargetPathOverride: boolean;
-}
-
 export class NewEventService {
   private config: NewEventServiceConfig;
   private modalInput: HTMLInputElement | null = null;
@@ -121,19 +101,8 @@ export class NewEventService {
     this.createInProgress = true;
     const startedAt = Date.now();
     try {
-      const createMode =
-        options?.createMode || this.config.createMode || "note";
-      const taskDestination = this.config.taskDestination || "daily-note";
-      const optionTaskTargetPath = normalizeCalendarTaskTargetPath(
-        options?.taskTargetPath,
-      );
-      const resolvedTaskTargetPath =
-        optionTaskTargetPath ||
-        normalizeCalendarTaskTargetPath(this.config.taskTargetPath) ||
-        null;
       const logContext = {
-        createMode,
-        taskDestination,
+        createMode: "note",
         start: start?.toISOString(),
         end: end?.toISOString(),
         allDay: !!options?.allDay,
@@ -141,22 +110,13 @@ export class NewEventService {
         hasFrontmatterOverrides:
           !!frontmatterOverrides &&
           Object.keys(frontmatterOverrides).length > 0,
-        hasTaskTargetPathOverride: !!optionTaskTargetPath,
-        resolvedTaskTargetPath: resolvedTaskTargetPath || "",
       };
       logger.flow("NewEvent", "create:start", logContext);
-      const promptContext: NewEventPromptContext = {
-        createMode,
-        taskDestination,
-        taskTargetPath: resolvedTaskTargetPath,
-        hasTaskTargetPathOverride: !!optionTaskTargetPath,
-      };
       const rawTitle =
         options?.titleOverride != null
           ? options.titleOverride
           : await this.promptForTitle(
               options?.typeFolderOverride,
-              promptContext,
             );
 
       if (rawTitle === undefined) {
@@ -271,89 +231,13 @@ export class NewEventService {
         }
       }
 
-      const taskTitle = options?.taskTitleOverride?.trim() || cleanTitle;
-      const taskTags = mergeTagInputs(resolvedTags, options?.taskTags ?? []);
-      const taskAssociatedNotePath =
-        createMode === "task"
-          ? normalizeTaskAssociatedNotePath(options?.taskAssociatedNotePath) ||
-            (isLinkingExisting
-              ? normalizeTaskAssociatedNotePath(parentFile?.path)
-              : "")
-          : "";
-      const taskOverrides = {
-        ...finalOverrides,
-        ...(options?.taskStatus ? { status: options.taskStatus } : {}),
-        ...(taskAssociatedNotePath
-          ? { associatedNotePath: taskAssociatedNotePath }
-          : {}),
-      };
-      const taskNoteOverrides =
-        createMode === "task"
-          ? this.resolveTaskNoteFrontmatterOverrides({
-              ...finalOverrides,
-              ...(options?.taskStatus ? { status: options.taskStatus } : {}),
-            })
-          : finalOverrides;
-      const taskNoteFrontmatterDefaults =
-        createMode === "task"
-          ? this.resolveTaskNoteFrontmatterDefaults(
-              options?.frontmatterDefaults ?? {},
-              taskOverrides,
-            )
-          : (options?.frontmatterDefaults ?? {});
-      const taskCheckboxState =
-        createMode === "task"
-          ? this.resolveTaskCheckboxState(taskOverrides)
-          : null;
-      if (createMode === "task" && !taskCheckboxState) {
-        const desiredStatus = this.getDesiredTaskStatus(taskOverrides);
-        logger.flowWarn("NewEvent", "task-create:blocked", {
-          ...logContext,
-          reason: "unmapped-status",
-          status: desiredStatus,
-        });
-        new Notice(
-          `Could not create the task because GCM has no checkbox mapping for status "${desiredStatus}".`,
-        );
-        return null;
-      }
-
       logger.flow("NewEvent", "route:resolved", {
         ...logContext,
-        createMode,
-        taskDestination,
-        hasTaskTargetPathOverride: !!optionTaskTargetPath,
-        hasResolvedTaskTargetPath: !!resolvedTaskTargetPath,
-        taskTargetPath: resolvedTaskTargetPath,
         title: cleanTitle,
         tags: resolvedTags.length,
         parentPath: parentFile?.path || "",
         linkExisting: isLinkingExisting,
-        hasTaskAssociation: !!taskAssociatedNotePath,
-        taskAssociationPath: taskAssociatedNotePath,
       });
-      if (
-        createMode === "task" &&
-        (taskDestination === "daily-note" || resolvedTaskTargetPath)
-      ) {
-        const file = await this.createTaskInDailyNote(
-          taskTitle,
-          start,
-          end,
-          taskTags,
-          taskOverrides,
-          resolvedTaskTargetPath,
-          options?.allDay,
-          taskCheckboxState,
-        );
-        logger.flow("NewEvent", "create:done", {
-          ...logContext,
-          route: "task-line",
-          path: file?.path || "",
-          durationMs: Date.now() - startedAt,
-        });
-        return file;
-      }
 
       const folderPath = this.resolveFolderPath(
         this.pendingTypeFolderPath ?? options?.typeFolderOverride,
@@ -386,7 +270,7 @@ export class NewEventService {
         start,
         end,
         resolvedTags,
-        taskNoteOverrides,
+        finalOverrides,
         includeAdditionalFrontmatter,
         options?.allDay,
       );
@@ -402,24 +286,11 @@ export class NewEventService {
           title: cleanTitle,
           scheduled: frontmatter.scheduled,
           due: frontmatter.due,
-          status:
-            createMode === "task" ? taskOverrides.status : frontmatter.status,
+          status: frontmatter.status,
           priority: frontmatter.priority,
           tags: resolvedTags,
         };
-        const initialContent =
-          createMode === "task"
-            ? this.buildDedicatedTaskNoteContent(
-                taskTitle,
-                start,
-                end,
-                taskTags,
-                taskOverrides,
-                taskCheckboxState!,
-                frontmatter,
-                options?.allDay,
-              )
-            : await this.buildInitialContent(templateFile, path, templateVars);
+        const initialContent = await this.buildInitialContent(templateFile, path, templateVars);
         if (initialContent === null) {
           throw new Error(
             `The selected template could not be prepared safely: ${templateFile.path}`,
@@ -456,7 +327,7 @@ export class NewEventService {
         }
 
         if (options?.useBaseDefaults) {
-          const defaults = taskNoteFrontmatterDefaults;
+          const defaults = options?.frontmatterDefaults ?? {};
           await this.applyFrontmatterDefaultsAndOverrides(
             file,
             defaults,
@@ -477,31 +348,17 @@ export class NewEventService {
       } else {
         const initialFrontmatter = options?.useBaseDefaults
           ? this.mergeFrontmatterDefaultsAndOverrides(
-              taskNoteFrontmatterDefaults,
+              options?.frontmatterDefaults ?? {},
               frontmatter,
             )
           : frontmatter;
         const file = await this.createFileRetrying(
           path,
-          createMode === "task"
-            ? this.buildDedicatedTaskNoteContent(
-                taskTitle,
-                start,
-                end,
-                taskTags,
-                taskOverrides,
-                taskCheckboxState!,
-                initialFrontmatter,
-                options?.allDay,
-              )
-            : this.buildFrontmatterOnlyContent(initialFrontmatter),
+          this.buildFrontmatterOnlyContent(initialFrontmatter),
         );
         logger.flow("NewEvent", "note:create-file-done", {
           ...logContext,
-          route:
-            createMode === "task"
-              ? "dedicated-task-note"
-              : "frontmatter-only-note",
+          route: "frontmatter-only-note",
           path: file.path,
         });
 
@@ -515,7 +372,7 @@ export class NewEventService {
 
         logger.flow("NewEvent", "create:done", {
           ...logContext,
-          route: createMode === "task" ? "dedicated-task-note" : "note",
+          route: "note",
           path: file.path,
           durationMs: Date.now() - startedAt,
         });
@@ -544,491 +401,14 @@ export class NewEventService {
     allDay?: boolean,
     capturedCheckboxState?: string | null,
   ): Promise<TFile | null> {
-    logger.flow("NewEvent", "task-line:start", {
-      targetPath: targetPath || null,
-      start: start?.toISOString(),
-      end: end?.toISOString(),
-      allDay: !!allDay,
-      tags: tags.length,
-      overrideKeys: Object.keys(overrides || {}).sort(),
-    });
-    const checkboxState = this.resolveTaskCheckboxState(
-      overrides,
-      capturedCheckboxState,
-    );
-    if (!checkboxState) {
-      const desiredStatus = this.getDesiredTaskStatus(overrides);
-      logger.flowWarn("NewEvent", "task-line:blocked", {
-        reason: "unmapped-status",
-        status: desiredStatus,
-        targetPath: targetPath || null,
-      });
-      new Notice(
-        `Could not create the task because GCM has no checkbox mapping for status "${desiredStatus}".`,
-      );
-      return null;
-    }
-    const dailyFile = targetPath
-      ? await this.ensureTaskTargetFile(targetPath)
-      : await this.ensureDailyNoteFile(start);
-    const refreshedCheckboxState = this.resolveTaskCheckboxState(
-      overrides,
-      checkboxState,
-    );
-    if (!refreshedCheckboxState) {
-      const desiredStatus = this.getDesiredTaskStatus(overrides);
-      logger.flowWarn("NewEvent", "task-line:blocked", {
-        reason: "mapping-changed-after-target-resolution",
-        status: desiredStatus,
-        targetPath: targetPath || null,
-      });
-      new Notice(
-        `Could not create the task because the GCM checkbox mapping for status "${desiredStatus}" changed.`,
-      );
-      return null;
-    }
-    const taskLine = this.buildTaskLine(
-      title,
-      start,
-      end,
-      tags,
-      overrides,
-      allDay,
-      refreshedCheckboxState,
-    );
-    const scheduledKey =
-      this.getNoteFieldName(this.config.startProperty) || "scheduled";
-    const isDailyNoteTarget = await this.isDailyNoteTaskTarget(
-      dailyFile,
-      start,
-    );
-    const externalId = this.getTaskExternalId(overrides);
-    let duplicate = false;
-    let mappingChanged = false;
-    await this.config.app.vault.process(dailyFile, (content) => {
-      if (!this.resolveTaskCheckboxState(overrides, refreshedCheckboxState)) {
-        mappingChanged = true;
-        return content;
-      }
-      if (externalId && this.hasTaskWithExternalId(content, externalId)) {
-        duplicate = true;
-        return content;
-      }
-      return isDailyNoteTarget
-        ? insertLineInMarkdownSection(
-            content,
-            taskLine,
-            "Scheduled",
-            2,
-            scheduledKey,
-          )
-        : insertLineAfterFrontmatter(content, taskLine);
-    });
-    if (mappingChanged) {
-      const desiredStatus = this.getDesiredTaskStatus(overrides);
-      logger.flowWarn("NewEvent", "task-line:blocked", {
-        reason: "mapping-changed-during-write",
-        status: desiredStatus,
-        path: dailyFile.path,
-      });
-      new Notice(
-        `Could not create the task because the GCM checkbox mapping for status "${desiredStatus}" changed.`,
-      );
-      return null;
-    }
-    if (duplicate) {
-      logger.flow("NewEvent", "task-line:skip-duplicate", {
-        path: dailyFile.path,
-        targetPath: targetPath || "",
-        title,
-        identity: "externalId",
-      });
-      return null;
-    }
-    logger.flow("NewEvent", "task-line:done", {
-      path: dailyFile.path,
+    logger.flowWarn("NewEvent", "task-line:blocked", {
+      reason: "whole-note-only",
       targetPath: targetPath || "",
-      title,
-      taskLineLength: taskLine.length,
-      insertionSection: isDailyNoteTarget ? "Scheduled" : null,
-      insertionOrder: isDailyNoteTarget ? "future-first" : "append",
     });
-    return dailyFile;
+    new Notice("Calendar creates whole notes only. Create this task as a note in its Base instead.");
+    return null;
   }
 
-  private async isDailyNoteTaskTarget(
-    file: TFile,
-    scheduledDate: Date,
-  ): Promise<boolean> {
-    const canonicalPath = await getCalendarDailyNotePath(
-      this.config.app,
-      scheduledDate,
-      {
-        fallbackDateFormat: this.config.dailyNoteDateFormat,
-      },
-    );
-    if (file.path === canonicalPath) return true;
-
-    const cache = this.config.app.metadataCache.getFileCache?.(file);
-    const frontmatter = cache?.frontmatter || {};
-    const kindKey = Object.keys(frontmatter).find(
-      (key) => key.trim().toLowerCase() === "kind",
-    );
-    const noteKindKey = Object.keys(frontmatter).find(
-      (key) => key.trim().toLowerCase() === "notekind",
-    );
-    const kind = kindKey ? String(frontmatter[kindKey] ?? "").trim().toLowerCase() : "";
-    const noteKind = noteKindKey ? String(frontmatter[noteKindKey] ?? "").trim().toLowerCase() : "";
-    if (kind === "dailynote" || (kind === "note" && noteKind === "daily"))
-      return true;
-
-    const frontmatterTags = Object.entries(frontmatter)
-      .filter(
-        ([key]) =>
-          key.trim().toLowerCase() === "tag" ||
-          key.trim().toLowerCase() === "tags",
-      )
-      .flatMap(([, value]) =>
-        Array.isArray(value) ? value : String(value ?? "").split(","),
-      );
-    if (
-      frontmatterTags.some(
-        (tag) =>
-          String(tag).replace(/^#/u, "").trim().toLowerCase() === "dailynote",
-      )
-    )
-      return true;
-    return (
-      cache?.tags?.some(
-        (tag) =>
-          tag.tag.replace(/^#/u, "").trim().toLowerCase() === "dailynote",
-      ) ?? false
-    );
-  }
-
-  private getTaskExternalId(overrides: Record<string, any>): string {
-    const key = Object.keys(overrides || {}).find(
-      (candidate) => candidate.trim().toLowerCase() === "externalid",
-    );
-    return key ? String(overrides[key] ?? "").trim() : "";
-  }
-
-  private hasTaskWithExternalId(content: string, externalId: string): boolean {
-    return String(content || "")
-      .split(/\r?\n/)
-      .some((line) => this.taskLineHasExternalId(line, externalId));
-  }
-
-  private taskLineHasExternalId(line: string, externalId: string): boolean {
-    if (!/^\s*[-*]\s+\[[^\]]*\]\s+/.test(line)) return false;
-    const inlineProperty = /\[([^\[\]:]+)::\s*([^\]]*)\]/g;
-    let match: RegExpExecArray | null;
-    while ((match = inlineProperty.exec(line)) !== null) {
-      const key = match[1].trim().toLowerCase();
-      const value = match[2].trim();
-      if (key === "externalid" && value === externalId) return true;
-      if (key !== "tpsinlineprops" && key !== "tps-inline-props") continue;
-      try {
-        const decoded = JSON.parse(decodeURIComponent(value));
-        if (!decoded || typeof decoded !== "object" || Array.isArray(decoded))
-          continue;
-        const identityKey = Object.keys(decoded).find(
-          (candidate) => candidate.trim().toLowerCase() === "externalid",
-        );
-        if (
-          identityKey &&
-          String(decoded[identityKey] ?? "").trim() === externalId
-        )
-          return true;
-      } catch {
-        // Malformed hidden task metadata must not block creation.
-      }
-    }
-    return false;
-  }
-
-  private async ensureTaskTargetFile(rawPath: string): Promise<TFile> {
-    const path = normalizeCalendarTaskTargetPath(rawPath);
-    if (!path) throw new Error("Task target path is empty");
-    const existing = this.config.app.vault.getAbstractFileByPath(path);
-    logger.flow("NewEvent", "task-target:resolved", {
-      requested: rawPath,
-      normalized: path,
-      exists: existing instanceof TFile,
-    });
-    if (existing instanceof TFile) return existing;
-    const folder = path.includes("/")
-      ? path.slice(0, path.lastIndexOf("/"))
-      : "";
-    if (folder) await this.ensureFolder(folder);
-    const basename = path.split("/").pop()?.replace(/\.md$/i, "") || "Tasks";
-    const file = await this.config.app.vault.create(
-      path,
-      `---\ntitle: ${basename}\n---\n\n`,
-    );
-    logger.flow("NewEvent", "task-target:created", { path: file.path, folder });
-    return file;
-  }
-
-  private buildDedicatedTaskNoteContent(
-    title: string,
-    start: Date,
-    end: Date,
-    tags: string[],
-    overrides: Record<string, any>,
-    checkboxState: string,
-    frontmatter?: Record<string, any>,
-    allDay?: boolean,
-  ): string {
-    const fm =
-      frontmatter ||
-      this.buildFrontmatter(
-        title,
-        start,
-        end,
-        tags,
-        this.resolveTaskNoteFrontmatterOverrides(overrides),
-        true,
-        allDay,
-      );
-    return `${this.buildFrontmatterOnlyContent(fm)}\n${this.buildTaskLine(title, start, end, tags, overrides, allDay, checkboxState)}\n`;
-  }
-
-  private buildTaskLine(
-    title: string,
-    start: Date,
-    end: Date,
-    tags: string[],
-    overrides: Record<string, any>,
-    allDay?: boolean,
-    capturedCheckboxState?: string | null,
-  ): string {
-    const scheduledKey =
-      this.getNoteFieldName(this.config.startProperty) || "scheduled";
-    const durationKey =
-      this.getNoteFieldName(this.config.endProperty) || "timeEstimate";
-    const allDayKey =
-      this.getNoteFieldName(this.config.allDayProperty) || "allDay";
-    const isAllDay = this.resolveAllDay(start, end, allDay);
-    const visibleTitle =
-      String(title || this.config.defaultTitle || "Untitled")
-        .replace(/\s+/g, " ")
-        .trim() || "Untitled";
-    const checkboxState = this.resolveTaskCheckboxState(
-      overrides,
-      capturedCheckboxState,
-    );
-    if (!checkboxState) {
-      throw new Error(
-        `No GCM checkbox mapping exists for task status "${this.getDesiredTaskStatus(overrides)}".`,
-      );
-    }
-    const parts = [`- ${checkboxState} ${visibleTitle}`];
-    const hiddenProps: Record<string, any> = {};
-    parts.push(
-      `[${scheduledKey}:: ${this.formatCalendarValue(start, isAllDay)}]`,
-    );
-    if (
-      !isAllDay &&
-      this.config.useEndDuration !== false &&
-      end &&
-      end.getTime() > start.getTime()
-    ) {
-      parts.push(
-        `[${durationKey}:: ${Math.round((end.getTime() - start.getTime()) / 60000)}]`,
-      );
-    }
-    if (isAllDay) {
-      parts.push(`[${allDayKey}:: true]`);
-    }
-    for (const tag of mergeTagInputs(tags, overrides?.tags))
-      parts.push(`#${normalizeTagValue(tag)}`);
-    const derivedStatusKeys = this.getTaskWorkflowCarrierIdentities();
-    for (const [key, value] of Object.entries(overrides || {})) {
-      if (
-        value == null ||
-        key === "tags" ||
-        key === "status" ||
-        key === scheduledKey ||
-        key === durationKey ||
-        key === allDayKey
-      )
-        continue;
-      if (derivedStatusKeys.has(this.normalizePropertyIdentity(key))) continue;
-      if (this.shouldWriteVisibleInlineProperty(key)) {
-        parts.push(`[${key}:: ${String(value)}]`);
-      } else {
-        hiddenProps[key] = value;
-      }
-    }
-    const visibleLine = parts.join(" ");
-    if (Object.keys(hiddenProps).length === 0) return visibleLine;
-    return `${visibleLine} [tpsInlineProps:: ${this.encodeHiddenInlineMetadata(hiddenProps)}]`;
-  }
-
-  private getDesiredTaskStatus(overrides: Record<string, any>): string {
-    return String(overrides?.status || "todo").trim() || "todo";
-  }
-
-  private normalizePropertyIdentity(value: unknown): string {
-    return String(value || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[\s_.-]+/gu, "");
-  }
-
-  private getTaskWorkflowStatusPropertyKey(): string | null {
-    const statusApi = getGcmApi(this.config.app)?.services?.status;
-    const workflowKey = String(
-      statusApi?.getStatusPropertyKey?.() || "",
-    ).trim();
-    const relationalKey = String(
-      statusApi?.getRelationalStatusPropertyKey?.() || "",
-    ).trim();
-    if (!workflowKey) return null;
-    if (
-      relationalKey &&
-      this.normalizePropertyIdentity(workflowKey) ===
-        this.normalizePropertyIdentity(relationalKey)
-    )
-      return null;
-    return workflowKey;
-  }
-
-  private resolveTaskNoteFrontmatterOverrides(
-    overrides: Record<string, any>,
-  ): Record<string, any> {
-    const resolved = { ...(overrides || {}) };
-    const status = this.getDesiredTaskStatus(overrides);
-    const relationalKey = this.getTaskRelationalStatusPropertyKey();
-    const relationalIdentity = this.normalizePropertyIdentity(relationalKey);
-    const carrierIdentities = this.getTaskWorkflowCarrierIdentities();
-    for (const key of Object.keys(resolved)) {
-      const identity = this.normalizePropertyIdentity(key);
-      if (!carrierIdentities.has(identity)) continue;
-      if (
-        identity === relationalIdentity &&
-        identity !== this.normalizePropertyIdentity("status")
-      )
-        continue;
-      delete resolved[key];
-    }
-    const workflowKey = this.getTaskWorkflowStatusPropertyKey();
-    if (workflowKey && status) resolved[workflowKey] = status;
-    return resolved;
-  }
-
-  private resolveTaskNoteFrontmatterDefaults(
-    defaults: Record<string, any>,
-    taskOverrides: Record<string, any>,
-  ): Record<string, any> {
-    const resolved = { ...(defaults || {}) };
-    const desiredStatus = this.getDesiredTaskStatus(taskOverrides);
-    const relationalIdentity = this.normalizePropertyIdentity(
-      this.getTaskRelationalStatusPropertyKey(),
-    );
-    const carrierIdentities = this.getTaskWorkflowCarrierIdentities();
-    for (const key of Object.keys(resolved)) {
-      const identity = this.normalizePropertyIdentity(key);
-      if (!carrierIdentities.has(identity)) continue;
-      if (
-        identity === relationalIdentity &&
-        String(resolved[key] ?? "")
-          .trim()
-          .toLowerCase() !== desiredStatus.toLowerCase()
-      )
-        continue;
-      delete resolved[key];
-    }
-    return resolved;
-  }
-
-  private getTaskWorkflowCarrierIdentities(): Set<string> {
-    return new Set(
-      [
-        this.getTaskWorkflowStatusPropertyKey(),
-        "status",
-        "taskStatus",
-        "task.status",
-        "task.checkboxStatus",
-        "checkboxStatus",
-      ]
-        .map((key) => this.normalizePropertyIdentity(key))
-        .filter(Boolean),
-    );
-  }
-
-  private getTaskRelationalStatusPropertyKey(): string | null {
-    const statusApi = getGcmApi(this.config.app)?.services?.status;
-    const relationalKey = String(
-      statusApi?.getRelationalStatusPropertyKey?.() || "",
-    ).trim();
-    return relationalKey || null;
-  }
-
-  private resolveTaskCheckboxState(
-    overrides: Record<string, any>,
-    capturedCheckboxState?: string | null,
-  ): string | null {
-    const authoritativeState = getGcmTaskCheckboxStateForStatus(
-      this.config.app,
-      this.getDesiredTaskStatus(overrides),
-    );
-    if (!authoritativeState) return null;
-    return capturedCheckboxState == null ||
-      capturedCheckboxState === authoritativeState
-      ? authoritativeState
-      : null;
-  }
-
-  private encodeHiddenInlineMetadata(hiddenProps: Record<string, any>): string {
-    return encodeURIComponent(JSON.stringify(hiddenProps));
-  }
-
-  private shouldWriteVisibleInlineProperty(key: string): boolean {
-    const normalized = String(key || "")
-      .trim()
-      .toLowerCase();
-    if (!normalized) return false;
-    if (normalized === "tags") return false;
-    if (normalized === "associatednotepath") return false;
-    if (
-      [
-        "scheduled",
-        "timeestimate",
-        "status",
-        "priority",
-        "due",
-        "start",
-        "end",
-      ].includes(normalized)
-    )
-      return true;
-    return isGcmInlinePropertyAllowed(this.config.app, normalized);
-  }
-
-  private async ensureDailyNoteFile(date: Date): Promise<TFile> {
-    return ensureCalendarDailyNote(this.config.app, date, {
-      fallbackDateFormat: this.config.dailyNoteDateFormat,
-    });
-  }
-
-  private async ensureFolder(folder: string): Promise<void> {
-    const parts = normalizePath(folder).split("/").filter(Boolean);
-    let current = "";
-    for (const part of parts) {
-      current = current ? `${current}/${part}` : part;
-      if (!this.config.app.vault.getAbstractFileByPath(current)) {
-        await this.config.app.vault.createFolder(current);
-      }
-    }
-  }
-
-  private getNoteFieldName(propId?: BasesPropertyId | null): string | null {
-    if (!propId) return null;
-    const parsed = parsePropertyId(propId);
-    return parsed.name || (parsed as any).property || null;
-  }
   private extractTags(title: string): { cleanTitle: string; tags: string[] } {
     const tagRegex = /#([a-zA-Z0-9_/-]+)/g;
     const tags: string[] = [];
@@ -1191,16 +571,7 @@ export class NewEventService {
 
   private getPromptDestinationDisplay(
     typeFolderOverride: string | null | undefined,
-    context: NewEventPromptContext,
   ): string {
-    if (context.createMode === "task") {
-      if (context.taskTargetPath) {
-        return `${context.taskTargetPath} (${context.hasTaskTargetPathOverride ? "from filter" : "from settings"})`;
-      }
-      if (context.taskDestination === "daily-note")
-        return "Scheduled day's daily note";
-      return "Dedicated event note";
-    }
     if (this.pendingTypeFolderPath) return this.pendingTypeFolderPath;
     if (typeFolderOverride) return `${typeFolderOverride} (from filter)`;
     return "Vault root";
@@ -1208,12 +579,6 @@ export class NewEventService {
 
   private async promptForTitle(
     typeFolderOverride?: string | null,
-    context: NewEventPromptContext = {
-      createMode: "note",
-      taskDestination: "daily-note",
-      taskTargetPath: null,
-      hasTaskTargetPathOverride: false,
-    },
   ): Promise<string | undefined> {
     const service = this;
     return new Promise((resolve) => {
@@ -1284,47 +649,34 @@ export class NewEventService {
           setTimeout(maintain, 0);
           focusLoop = window.setInterval(maintain, 250);
           service.modalInput = input;
-          const isTaskMode = context.createMode === "task";
           const typeRow = form.createDiv({ cls: "tps-calendar-template-row" });
           typeRow.style.display = "flex";
           typeRow.style.alignItems = "center";
           typeRow.style.gap = "8px";
           typeRow.style.marginBottom = "10px";
-          typeRow.createSpan({ text: isTaskMode ? "Task target:" : "Type:" });
+          typeRow.createSpan({ text: "Type:" });
           const getTypeDisplay = () => {
-            return service.getPromptDestinationDisplay(
-              typeFolderOverride,
-              context,
-            );
+            return service.getPromptDestinationDisplay(typeFolderOverride);
           };
           typeValue = typeRow.createSpan({ text: getTypeDisplay() });
-          if (
-            (isTaskMode &&
-              (context.taskTargetPath ||
-                context.taskDestination === "daily-note")) ||
-            (!isTaskMode &&
-              !service.pendingTypeFolderPath &&
-              typeFolderOverride)
-          ) {
+          if (!service.pendingTypeFolderPath && typeFolderOverride) {
             typeValue.style.color = "var(--text-muted)";
           }
-          if (!isTaskMode) {
-            const clearTypeBtn = typeRow.createEl("button", {
-              text: "Clear",
-              type: "button",
-            });
-            clearTypeBtn.addEventListener("click", (evt) => {
-              evt.preventDefault();
-              evt.stopPropagation();
-              service.pendingTypeFolderPath = null;
-              if (typeValue) {
-                typeValue.textContent = getTypeDisplay();
-                typeValue.style.color = typeFolderOverride
-                  ? "var(--text-muted)"
-                  : "";
-              }
-            });
-          }
+          const clearTypeBtn = typeRow.createEl("button", {
+            text: "Clear",
+            type: "button",
+          });
+          clearTypeBtn.addEventListener("click", (evt) => {
+            evt.preventDefault();
+            evt.stopPropagation();
+            service.pendingTypeFolderPath = null;
+            if (typeValue) {
+              typeValue.textContent = getTypeDisplay();
+              typeValue.style.color = typeFolderOverride
+                ? "var(--text-muted)"
+                : "";
+            }
+          });
           const buttons = form.createDiv({ cls: "modal-button-container" });
           const createBtn = buttons.createEl("button", {
             text: "Create",
@@ -1352,34 +704,32 @@ export class NewEventService {
           });
           syncCreateState();
 
-          if (!isTaskMode) {
-            const typeBtn = buttons.createEl("button", {
-              text: "Type...",
-              type: "button",
-            });
-            typeBtn.addEventListener("click", async (evt) => {
-              evt.preventDefault();
-              evt.stopPropagation();
-              if (focusLoop !== null) {
-                window.clearInterval(focusLoop);
-                focusLoop = null;
+          const typeBtn = buttons.createEl("button", {
+            text: "Type...",
+            type: "button",
+          });
+          typeBtn.addEventListener("click", async (evt) => {
+            evt.preventDefault();
+            evt.stopPropagation();
+            if (focusLoop !== null) {
+              window.clearInterval(focusLoop);
+              focusLoop = null;
+            }
+            typePickInProgress = true;
+            const selected = await service.promptForTypeFolderSelection();
+            if (selected) {
+              service.pendingTypeFolderPath = selected.path;
+              if (typeValue) {
+                typeValue.textContent = selected.path;
+                typeValue.style.color = "";
               }
-              typePickInProgress = true;
-              const selected = await service.promptForTypeFolderSelection();
-              if (selected) {
-                service.pendingTypeFolderPath = selected.path;
-                if (typeValue) {
-                  typeValue.textContent = selected.path;
-                  typeValue.style.color = "";
-                }
-              }
-              typePickInProgress = false;
-              setTimeout(maintain, 0);
-              if (focusLoop === null) {
-                focusLoop = window.setInterval(maintain, 250);
-              }
-            });
-          }
+            }
+            typePickInProgress = false;
+            setTimeout(maintain, 0);
+            if (focusLoop === null) {
+              focusLoop = window.setInterval(maintain, 250);
+            }
+          });
 
           // Add "Link Existing Note" button
           const linkExistingBtn = buttons.createEl("button", {
