@@ -1062,8 +1062,14 @@ export class CalendarView extends BasesView {
   private nativeCalendarFileHasIdentityEvidence(file: TFile): boolean {
     const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
     if (!frontmatter || typeof frontmatter !== "object") return false;
+    let configuredIdentityKey = "tpsId";
+    try {
+      const key = getGcmNativeRecordsApi(this.app)?.getStorageProfile?.()?.identityPropertyKey;
+      if (typeof key === "string" && key.trim()) configuredIdentityKey = key.trim();
+    } catch { /* Retain the historical identity guard when GCM is unavailable. */ }
+    const identityKeys = new Set([configuredIdentityKey.toLowerCase(), "tpsid"]);
     return Object.entries(frontmatter).some(([key, value]) => (
-      key.trim().toLowerCase() === "tpsid"
+      identityKeys.has(key.trim().toLowerCase())
       && typeof value === "string"
       && value.trim().length > 0
     ));
@@ -6768,7 +6774,7 @@ export class CalendarView extends BasesView {
       duration: Math.max(0, (extEvent.endDate.getTime() - extEvent.startDate.getTime()) / 60000),
       timeEstimate: Math.max(0, (extEvent.endDate.getTime() - extEvent.startDate.getTime()) / 60000),
       allDay: extEvent.isAllDay,
-      status: extEvent.isCancelled ? (this.plugin.settings.canceledStatusValue || "wont-do") : "",
+      status: extEvent.isCancelled ? (this.plugin.settings.canceledStatusValue || "") : "",
       path: file.path,
       location: extEvent.location || "",
       organizer: extEvent.organizer || "",
@@ -6821,7 +6827,7 @@ export class CalendarView extends BasesView {
         if (name === "itemkind" || name === "itemtype") return "external-event";
         if (name === "explicitkind" || name === "entitykind") return null;
         if (name === "kinds") return ["external-event"];
-        if (name === "status") return extEvent.isCancelled ? (this.plugin.settings.canceledStatusValue || "wont-do") : "";
+        if (name === "status") return extEvent.isCancelled ? (this.plugin.settings.canceledStatusValue || "") : "";
         if (name === "description") return extEvent.description;
         if (name === "location") return extEvent.location;
         if (name === "organizer") return extEvent.organizer;
@@ -6868,7 +6874,7 @@ export class CalendarView extends BasesView {
     const statusValue = this.statusField && isCalendarFormulaProperty(this.statusField)
       ? this.formulaAwareValueToString(entry, this.statusField, this.tryGetEntryValue(entry, this.statusField)) || undefined
       : extEvent.isCancelled
-        ? (this.plugin.settings.canceledStatusValue || "wont-do")
+        ? (this.plugin.settings.canceledStatusValue || undefined)
         : undefined;
     const priorityValue = this.priorityField && isCalendarFormulaProperty(this.priorityField)
       ? this.formulaAwareValueToString(entry, this.priorityField, this.tryGetEntryValue(entry, this.priorityField)) || undefined
@@ -7803,9 +7809,21 @@ export class CalendarView extends BasesView {
       ? (valueToString(this.tryGetEntryValue(entry, this.titleProp)) as string | undefined)
       : undefined;
 
+    const eventTitle = this.getFrontmatterValueCaseInsensitive(frontmatter, "eventTitle");
+    const nativeRecords = eventTitle ? getGcmNativeRecordsApi(this.app) : null;
+    let isCalendarEvent = false;
+    if (nativeRecords && frontmatter) {
+      try {
+        isCalendarEvent = nativeRecords.inspect(frontmatter)?.kind === "calendar-event";
+      } catch { /* Unverified records use the ordinary title. */ }
+    } else if (!nativeRecords) {
+      // Preserve the older standalone display fallback without interpreting a Kind list.
+      isCalendarEvent = this.getFrontmatterValueCaseInsensitive(frontmatter, "kind") === "calendar-event";
+    }
+
     const resolved = resolveCalendarDisplayTitle({
-      kind: this.getFrontmatterValueCaseInsensitive(frontmatter, "kind"),
-      eventTitle: this.getFrontmatterValueCaseInsensitive(frontmatter, "eventTitle"),
+      isCalendarEvent,
+      eventTitle,
       configuredTitle,
       frontmatterTitle,
       fileTitle: entryFile?.basename,

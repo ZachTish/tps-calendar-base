@@ -413,7 +413,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     const frontmatterKeysSection = createSettingsGroup(
       advancedPage,
       "Frontmatter field names",
-      "Calendar display key names. Shared identity remains managed by TPS Global Context Menu as tpsId and externalId.",
+      "Calendar display key names. TPS Global Context Menu owns the shared record identity keys.",
     );
 
     const viewBehaviorSection = createSettingsGroup(
@@ -666,6 +666,19 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           .setValue(this.plugin.settings.inProgressStatusValue || "working")
           .onChange(async (value) => {
             this.plugin.settings.inProgressStatusValue = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(handlingSection)
+      .setName("Status: Canceled")
+      .setDesc("Status label for canceled external events. Leave blank to show no status label; match Controller's canceled status value when both are enabled.")
+      .addText((text) =>
+        text
+          .setPlaceholder("cancelled")
+          .setValue(this.plugin.settings.canceledStatusValue || "")
+          .onChange(async (value) => {
+            this.plugin.settings.canceledStatusValue = value.trim();
             await this.plugin.saveSettings();
           }),
       );
@@ -1226,7 +1239,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     defaults.createEl("li", { text: "Use note.scheduled, note.due, or the configured date field for visible calendar events." });
     defaults.createEl("li", { text: "Positive folder or file.path filters can choose where new event notes are created." });
     defaults.createEl("li", { text: "Positive note property equality filters can become frontmatter defaults on created event notes." });
-    defaults.createEl("li", { text: "A kind == task rule creates a whole note with kind: task; Calendar does not create checkbox lines." });
+    defaults.createEl("li", { text: "Positive Kind filters can supply whole-note creation defaults; TPS Global Context Menu owns record classification." });
     defaults.createEl("li", { text: "Use tags or note.tags for new note frontmatter tags. task.tags filters only select existing lines." });
     defaults.createEl("li", { text: "Negative filters and ambiguous OR branches constrain matching but are not guessed as creation defaults." });
 

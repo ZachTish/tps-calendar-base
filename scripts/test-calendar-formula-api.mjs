@@ -1310,6 +1310,25 @@ test("external records use formula dates and configured display fields", async (
   assert.equal(calendarEntry.externalEvent.isAllDay, true);
 });
 
+test("canceled external events use only the configured status label", () => {
+  const view = createBareView();
+  const event = {
+    id: "canceled-1", uid: "canceled-uid", title: "Canceled meeting", description: "",
+    startDate: new Date("2026-08-06T10:00:00Z"), endDate: new Date("2026-08-06T11:00:00Z"),
+    isAllDay: false, isCancelled: true, sourceUrl: "https://example.test/calendar.ics",
+  };
+
+  view.plugin.settings.canceledStatusValue = "cancelled";
+  const labeledEntry = view.createExternalEntry(event);
+  assert.equal(labeledEntry.getValue("note.status"), "cancelled");
+  assert.equal(view.createExternalCalendarEntry(event, false, labeledEntry).status, "cancelled");
+
+  view.plugin.settings.canceledStatusValue = "";
+  const unlabeledEntry = view.createExternalEntry(event);
+  assert.equal(unlabeledEntry.getValue("note.status"), "");
+  assert.equal(view.createExternalCalendarEntry(event, false, unlabeledEntry).status, undefined);
+});
+
 test("legacy native occurrence cards may still read eventTitle without flattening the old title link", () => {
   const view = createBareView();
   const file = createFile("2026-08-25 - Daily Standup.md");
@@ -1343,6 +1362,43 @@ test("legacy native occurrence cards may still read eventTitle without flattenin
     "Formula override",
     "an explicit custom/formula title still wins",
   );
+});
+
+test("migrated Kind-list calendar occurrences keep their legacy eventTitle display", () => {
+  const file = createFile("Calendar Events/2026-08-25 - Daily Standup.md");
+  const eventId = `calendar:v1:${"A".repeat(16)}:${"b".repeat(27)}`;
+  const title = "[[Calendar Events/2026-08-25/Calendar event--def71b28|Daily Standup for GCP App Support]]";
+  const frontmatter = {
+    recordId: eventId,
+    kind: ["transaction/event"],
+    eventTitle: "Daily Standup for GCP App Support",
+    title,
+  };
+  const nativeRecords = {
+    version: 6,
+    isEnabled: () => true,
+    inspect: (value) => value.recordId === eventId
+      ? { id: eventId, kind: "calendar-event", frontmatter: value }
+      : null,
+    getStorageProfile: () => ({ identityPropertyKey: "recordId" }),
+    resolve: async () => null,
+    create: async () => null,
+    update: async () => null,
+  };
+  const view = createBareView({ nativeRecords, frontmatterByPath: { [file.path]: frontmatter } });
+  const entry = { file, getValue: (property) => property === "note.title" ? title : null };
+  view.titleProp = "note.title";
+
+  assert.equal(view.resolveEntryDisplayTitle(entry, file, frontmatter, title), frontmatter.eventTitle);
+  const customKindProperty = { ...frontmatter, recordClass: frontmatter.kind };
+  delete customKindProperty.kind;
+  assert.equal(view.resolveEntryDisplayTitle(entry, file, customKindProperty, title), frontmatter.eventTitle,
+    "GCM's inspected kind remains authoritative when its physical Kind key changes");
+  assert.equal(frontmatter.title, title, "the associated-note link is not rewritten");
+  assert.equal(view.nativeCalendarFileHasIdentityEvidence(file), true, "the configured identity key protects native-note selection");
+  assert.equal(view.nativeCalendarFileHasIdentityEvidence(createFile("Inbox/ordinary.md")), false);
+  assert.equal(view.resolveEntryDisplayTitle(entry, file, { ...frontmatter, recordId: "ordinary" }, title), title,
+    "an unverified record cannot claim the eventTitle fallback");
 });
 
 test("verified native calendar records retain canonical 15, 60, and 180 minute intervals in mixed Bases", () => {

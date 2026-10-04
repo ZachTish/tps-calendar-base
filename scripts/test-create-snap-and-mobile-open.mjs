@@ -669,7 +669,7 @@ test("Calendar modal and drop options always create whole notes with Base frontm
 test("settings explain whole-note Base defaults and omit task destination controls", () => {
   assert.match(settingsTabSource, /"Base rules"/);
   assert.match(settingsTabSource, /Positive note property equality filters can become frontmatter defaults/);
-  assert.match(settingsTabSource, /kind == task rule creates a whole note/);
+  assert.match(settingsTabSource, /Positive Kind filters can supply whole-note creation defaults/);
   assert.doesNotMatch(settingsTabSource, /\.setName\("Initial calendar create"\)/);
   assert.doesNotMatch(settingsTabSource, /\.setName\("Task item destination"\)/);
   assert.doesNotMatch(settingsTabSource, /\.setName\("Dedicated task note path"\)/);

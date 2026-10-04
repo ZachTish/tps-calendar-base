@@ -97,6 +97,7 @@ export interface GcmNativeRecordsApi {
   capabilities?: { calendarTemplateRecords?: boolean; freshIdentityCreates?: boolean };
   isEnabled: () => boolean;
   inspect: (frontmatter: unknown) => GcmNativeRecordInspection | null;
+  getStorageProfile?: (kind?: string) => { identityPropertyKey?: string } | null;
   resolve: (
     reference: GcmNativeRecordReference,
   ) => Promise<GcmNativeRecordHandle | null>;

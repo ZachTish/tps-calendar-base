@@ -5,7 +5,7 @@ export type CalendarDisplayTitleSource =
   | "file";
 
 export interface CalendarDisplayTitleInput {
-  kind?: unknown;
+  isCalendarEvent?: boolean;
   eventTitle?: unknown;
   configuredTitle?: unknown;
   frontmatterTitle?: unknown;
@@ -37,10 +37,9 @@ function usesCanonicalTitleProperty(property: unknown): boolean {
 export function resolveCalendarDisplayTitle(
   input: CalendarDisplayTitleInput,
 ): CalendarDisplayTitleResolution {
-  const kind = normalizeText(input.kind).toLowerCase();
   const eventTitle = normalizeText(input.eventTitle);
   if (
-    kind === "calendar-event"
+    input.isCalendarEvent === true
     && eventTitle
     && usesCanonicalTitleProperty(input.titleProperty)
   ) {

@@ -2,7 +2,11 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
-Current version: **1.1.1** · Obsidian 1.10.0+ · Desktop and mobile. See the [1.1.1 release notes](release-notes/1.1.1.md) for test-vault validation and artifact hashes.
+## 1.1.2 — Configured calendar identity and cancellation display
+
+Legacy calendar occurrences with `eventTitle` keep that read-only display title after their Kind becomes a list, using GCM's inspected record kind rather than the physical Kind property. The linked `title` property is unchanged. Without GCM, the historical scalar `kind: calendar-event` display fallback remains. Native-note selection also checks GCM's configured identity property (and the historical `tpsId`) before treating a note as ordinary. **Advanced → Note linking and event status** exposes the canceled external-event status label beside the in-progress label. A blank canceled label emits no status for canceled external events instead of silently using `wont-do`; Controller's corresponding label is configured in Controller settings. Focused regressions cover display, identity, status, and the setting in `scripts/test-calendar-formula-api.mjs` and `scripts/test-external-calendar-cancellation.mjs`. See the [1.1.2 release notes](release-notes/1.1.2.md) for validation and artifacts. This release has not been installed in v0.2.
+
+Current version: **1.1.2** · Obsidian 1.10.0+ · Desktop and mobile.
 
 ## 1.1.1 — Use configured fields for existing-note ranges
 
