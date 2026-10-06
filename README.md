@@ -2,11 +2,17 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
+## 1.1.3 — One owner for paired edit refreshes
+
+GCM user edits emit FilesUpdated followed by an explicit-action or Calendar-refresh signal. Calendar's immediate forced refresh now consumes the already-pending refresh timer rather than processing that same settled query again. It clears the timer before the immediate pass, not afterward: genuine later MetadataCache and Core Bases updates still schedule their own work. Automation-only FilesUpdated bursts retain their forced scheduled refresh, and existing visibility, navigation-epoch and single-flight guards are unchanged. No new cache, state, listener, timer, setting, note mutation or migration is added.
+
+Twelve actual-method regressions cover paired channels, automation bursts, focused-editor forced processing, later metadata/late query arrival, overlapping work, independent later edits, stale navigation and hidden/detached views. Four assertions failed before the fix. With a synthetic 1,000-row query, one settled paired action now performs one data pass and 1,000 metadata checks instead of two passes and 2,000 checks. These are work counts with host/DOM helpers mocked, not mobile latency claims. All 353 declared checks pass, with zero skips; TypeScript and the separate final build pass and deploy to the test vault. A named reload verifies 1.1.3. In the installed one-row Core Bases view, settled paired signals decrease from two full passes/Base reads/title inspections/render requests to one, with no source change. Actual edits from 30→60 and 60→90 minutes retain two passes because the later Core Bases result still needs processing. Body/Base bytes, eight consumers' settings/data/artifacts and the original leaf were preserved; the two UUID fixtures were restored exactly and archived. Hidden/unfocused timing and different initial GCM index warmth do not establish overall or physical-mobile speed. See [1.1.3 release notes](release-notes/1.1.3.md) for evidence limits and final artifacts. Production remains unchanged.
+
 ## 1.1.2 — Configured calendar identity and cancellation display
 
 Legacy calendar occurrences with `eventTitle` keep that read-only display title after their Kind becomes a list, using GCM's inspected record kind rather than the physical Kind property. The linked `title` property is unchanged. Without GCM, the historical scalar `kind: calendar-event` display fallback remains. Native-note selection also checks GCM's configured identity property (and the historical `tpsId`) before treating a note as ordinary. **Advanced → Note linking and event status** exposes the canceled external-event status label beside the in-progress label. A blank canceled label emits no status for canceled external events instead of silently using `wont-do`; Controller's corresponding label is configured in Controller settings. Focused regressions cover display, identity, status, and the setting in `scripts/test-calendar-formula-api.mjs` and `scripts/test-external-calendar-cancellation.mjs`. See the [1.1.2 release notes](release-notes/1.1.2.md) for validation and artifacts. This release has not been installed in v0.2.
 
-Current version: **1.1.2** · Obsidian 1.10.0+ · Desktop and mobile.
+Current version: **1.1.3** · Obsidian 1.10.0+ · Desktop and mobile.
 
 ## 1.1.1 — Use configured fields for existing-note ranges
 

@@ -11152,6 +11152,12 @@ export class CalendarView extends BasesView {
   private async refreshAfterExplicitGcmAction(paths: string[] | undefined): Promise<void> {
     if (!this.shouldProcessUpdates()) return;
 
+    // The immediate action consumes any refresh already scheduled for this
+    // change. Later metadata or Bases notifications retain their own timer.
+    if (this.refreshTimeout !== null) {
+      window.clearTimeout(this.refreshTimeout);
+      this.refreshTimeout = null;
+    }
     await this.updateCalendar(true);
   }
   public refreshFromPluginSettings(): void {
