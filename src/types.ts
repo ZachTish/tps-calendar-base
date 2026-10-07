@@ -12,7 +12,6 @@ export type CalendarViewMode =
     | "7d"
     | "week"
     | "month"
-    | "continuous"
     | "filter-based";
 export type WeekStartDay =
     | "sunday"

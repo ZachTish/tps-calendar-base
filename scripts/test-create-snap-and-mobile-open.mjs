@@ -10,7 +10,6 @@ const calendarViewSource = readFileSync(new URL("../src/calendar-view.tsx", impo
 const externalEventModalSource = readFileSync(new URL("../src/modals/external-event-modal.ts", import.meta.url), "utf8");
 const eventRendererSource = readFileSync(new URL("../src/components/EventRenderer.tsx", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../src/settings-migration.ts", import.meta.url), "utf8");
-const continuousSource = readFileSync(new URL("../src/components/ContinuousScrollView.tsx", import.meta.url), "utf8");
 const calendarEventsHookSource = readFileSync(new URL("../src/hooks/useCalendarEvents.ts", import.meta.url), "utf8");
 const zoomHookSource = readFileSync(new URL("../src/hooks/useCalendarZoom.ts", import.meta.url), "utf8");
 const settingsTabSource = readFileSync(new URL("../src/settings-tab.ts", import.meta.url), "utf8");
@@ -1039,12 +1038,10 @@ test("exact filter ranges do not shift into their midpoint in constrained embeds
   );
 });
 
-test("calendar keeps event drag snap separate and continuous view uses configured durations", () => {
+test("calendar keeps event drag snap separate and uses configured durations", () => {
   assert.match(reactViewSource, /snapDuration=\{formatFullCalendarDuration\(snapDurationMinutes, 5\)\}/);
   assert.match(reactViewSource, /slotDuration=\{formatFullCalendarDuration\(slotDurationMinutes, 30\)\}/);
-  assert.match(continuousSource, /slotDuration=\{formatFullCalendarDuration\(slotDurationMinutes, 30\)\}/);
-  assert.match(continuousSource, /snapDuration=\{formatFullCalendarDuration\(snapDurationMinutes, 5\)\}/);
-  assert.doesNotMatch(continuousSource, /slotDuration="00:30:00"/);
+  assert.doesNotMatch(reactViewSource, /slotDuration="00:30:00"/);
 });
 
 test("mobile event dragging is owned exclusively by FullCalendar", async () => {
@@ -1083,8 +1080,6 @@ test("mobile event dragging is owned exclusively by FullCalendar", async () => {
   assert.match(reactViewSource, /eventLongPressDelay=\{isMobile \? 600 : 300\}/);
   assert.match(reactViewSource, /eventDragStart=\{handleDragStart\}/);
   assert.match(reactViewSource, /eventDragStop=\{handleDragStop\}/);
-  assert.match(continuousSource, /eventLongPressDelay=\{isMobile \? 600 : 300\}/);
-  assert.match(continuousSource, /eventDidMount=\{handleEventMount\}/);
   assert.match(reactViewSource, /onTouchCancel=\{handleWrapperTouchEnd\}/);
   assert.match(
     reactViewSource,

@@ -429,7 +429,6 @@ test("plugin wiring opens an exact Base fragment and uses only transient protoco
   const mainSource = await readFile(new URL("../src/main.ts", import.meta.url), "utf8");
   const viewSource = await readFile(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
   const reactSource = await readFile(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
-  const continuousSource = await readFile(new URL("../src/components/ContinuousScrollView.tsx", import.meta.url), "utf8");
 
   assert.match(mainSource, /registerObsidianProtocolHandler\(CALENDAR_OPEN_PROTOCOL_ACTION/);
   assert.match(mainSource, /openCalendarBaseAt: \(request: CalendarBaseOpenRequest\)/);
@@ -483,9 +482,4 @@ test("plugin wiring opens an exact Base fragment and uses only transient protoco
   assert.match(reactSource, /onRenderedDateCommit\?\.\(new Date\(requestedDate\)\)/);
   assert.match(reactSource, /onDateChange\(currentApiDate, "render"\)/);
   assert.match(reactSource, /onDateChange\(boundedAnchor, "user", performance\.now\(\)\)/);
-  assert.match(reactSource, /onDateChange=\{\(date, interactionStartedAt\) => onDateChange\?\.\([\s\S]*date,[\s\S]*"user",[\s\S]*interactionStartedAt,/);
-  assert.match(continuousSource, /scrollIntoView\(\{ behavior: 'auto', block: 'center'/);
-  assert.match(continuousSource, /renderedCommitRef\.current\?\.\(new Date\(currentDate\)\)/);
-  assert.match(continuousSource, /centerGenerationRef/);
-  assert.doesNotMatch(continuousSource, /containsTarget/);
 });

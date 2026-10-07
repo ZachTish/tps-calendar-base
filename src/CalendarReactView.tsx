@@ -40,7 +40,6 @@ import { normalizeValue, tryGetValue, useCalendarEvents } from "./hooks/useCalen
 // Extracted components
 import { useEventRenderer } from "./components/EventRenderer";
 import { CalendarNavigation } from "./components/CalendarNavigation";
-import { ContinuousScrollView } from "./components/ContinuousScrollView";
 import { renderCurrentTimeLabel } from "./components/CurrentTimeLabel";
 import "./components/current-time-label.css";
 import { revealCompletedCheckboxesForFile, shouldForceBaseLinkPreview } from "./tps-gcm-api";
@@ -67,7 +66,6 @@ import { isCalendarProtocolRenderedRangeCommit } from "./utils/calendar-open-pro
 
 const DEFAULT_SLOT_MIN_TIME = "00:00:00";
 const DEFAULT_SLOT_MAX_TIME = "24:00:00";
-const DEFAULT_SCROLL_TIME = "08:00:00";
 const PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 const HEADER_HEIGHT_VAR = "var(--tps-bases-header-height, 84px)";
 const TIMEGRID_EVENT_MIN_HEIGHT_PX = 18;
@@ -112,8 +110,8 @@ const CALENDAR_EVENT_DENSITY_CSS = `
   padding-right: 3px !important;
 }
 `;
-type ViewMode = "day" | "2d" | "3d" | "4d" | "5d" | "6d" | "7d" | "week" | "month" | "continuous" | "filter-based";
-type ScrollSnapshotKind = "timegrid" | "continuous" | "surface";
+type ViewMode = "day" | "2d" | "3d" | "4d" | "5d" | "6d" | "7d" | "week" | "month" | "filter-based";
+type ScrollSnapshotKind = "timegrid" | "surface";
 const HOURS_TOGGLE_EDGE_THRESHOLD_PX = 24;
 const IDLE_RETURN_TO_NOW_MS = 30_000;
 const MOBILE_UI_KEYBOARD_HIDDEN_CLASS = 'tps-tps-mobile-ui-keyboard-hidden';
@@ -874,7 +872,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     && derivedFilterRangeDays >= 1
     && derivedFilterRangeDays <= 7;
   const targetDayCount = useMemo(() => {
-    if (resolvedFilterViewMode === "month" || resolvedFilterViewMode === "continuous" || preserveEmbeddedDayCount) {
+    if (resolvedFilterViewMode === "month" || preserveEmbeddedDayCount) {
       return configuredDayCount;
     }
     return getAdaptiveTimeGridDayCount(
@@ -888,7 +886,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   const rangeAnchor = resolveCalendarRangeAnchor(filterRangeAuto, hasExplicitFilterRange);
   const viewName =
     resolvedFilterViewMode === "month" ? "dayGridMonth" :
-      resolvedFilterViewMode === "continuous" ? "timeGridDay" :
       resolvedFilterViewMode === "week" && targetDayCount === 7 ? "timeGridWeek" :
         resolvedFilterViewMode === "day" ? "timeGridRange-1" :
           `timeGridRange-${targetDayCount}`;
@@ -944,8 +941,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
   }
 
   const estimatedVisibleDateRange = useMemo((): { start: Date; end: Date } | null => {
-    if (resolvedFilterViewMode === "continuous") return null;
-
     const start = new Date(safeInitialDate);
     start.setHours(0, 0, 0, 0);
 
@@ -1024,16 +1019,12 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
       return overflow[0] || scrollers[0] || null;
     }
-    if (kind === "continuous") {
-      return root.querySelector<HTMLElement>(".bases-calendar-continuous-scroll-container");
-    }
     return root.querySelector<HTMLElement>(".bases-calendar-scroll-surface");
   }, []);
 
   const scrollToTimelineEdge = useCallback((edge: "top" | "bottom") => {
     const apply = () => {
-      const primaryKind: ScrollSnapshotKind = resolvedFilterViewMode === "continuous" ? "continuous" : "timegrid";
-      const target = getScrollTargetByKind(primaryKind) || getScrollTargetByKind("surface");
+      const target = getScrollTargetByKind("timegrid") || getScrollTargetByKind("surface");
       if (!target) return;
 
       if (edge === "top") {
@@ -1048,7 +1039,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
         requestAnimationFrame(apply);
       }, delayMs);
     });
-  }, [getScrollTargetByKind, resolvedFilterViewMode]);
+  }, [getScrollTargetByKind]);
 
   // --- Hidden time indicator ---
   const hiddenTimeIndicatorEdges = useMemo(() => {
@@ -1386,7 +1377,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!isEmbedMode || resolvedFilterViewMode === "continuous" || !container) return;
+    if (!isEmbedMode || !container) return;
     return installCalendarIdleReturn(container, {
       isEligible: () => {
         const api = calendarRef.current?.getApi();
@@ -1584,8 +1575,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       if (target.scrollHeight <= target.clientHeight + 1) return;
 
       const isTimegridScroller = target.classList.contains("fc-scroller") && !!target.closest(".fc-timegrid");
-      const isContinuousScroller = target.classList.contains("bases-calendar-continuous-scroll-container");
-      if (!isTimegridScroller && !isContinuousScroller) return;
+      if (!isTimegridScroller) return;
 
       const nextTop = target.scrollTop;
       if (lastObservedScrollTargetRef.current !== target) {
@@ -2847,20 +2837,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     [],
   );
 
-  const handleResizeStart = useCallback(
-    (info: any) => {
-      setIsInternalDragging(true);
-    },
-    [],
-  );
-
-  const handleResizeStop = useCallback(
-    (info: any) => {
-      setIsInternalDragging(false);
-    },
-    [],
-  );
-
   const handleSelect = useCallback(
     async (selection: DateSelectArg) => {
       if (!onCreateSelection) return;
@@ -3289,16 +3265,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   const handlePrevClick = useCallback(() => {
     if (navigationLocked || !canNavigatePrev) return;
-    if (resolvedFilterViewMode === 'continuous') {
-      if (document.querySelector('.bases-calendar-continuous-scroll-container')) {
-        const el = document.querySelector('.bases-calendar-continuous-scroll-container') as HTMLElement;
-        if (el) {
-          const currentScroll = el.scrollTop;
-          el.scrollTo({ top: currentScroll - 800, behavior: 'smooth' });
-        }
-      }
-      return;
-    }
     const api = calendarRef.current?.getApi();
     if (!api) return;
     if (resolvedFilterViewMode === "month") {
@@ -3326,14 +3292,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
   const handleNextClick = useCallback(() => {
     if (navigationLocked || !canNavigateNext) return;
-    if (resolvedFilterViewMode === 'continuous') {
-      const el = document.querySelector('.bases-calendar-continuous-scroll-container') as HTMLElement;
-      if (el) {
-        const currentScroll = el.scrollTop;
-        el.scrollTo({ top: currentScroll + 800, behavior: 'smooth' });
-      }
-      return;
-    }
     const api = calendarRef.current?.getApi();
     if (!api) return;
     if (resolvedFilterViewMode === "month") {
@@ -3838,155 +3796,110 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             WebkitOverflowScrolling: "touch"
           }}
         >
-          {resolvedFilterViewMode !== 'continuous' && (
-            <FullCalendar
-              height={fullCalendarHeight}
-              contentHeight={fullCalendarContentHeight}
-              expandRows={resolvedFilterViewMode === "month" && !isEmbedMode && !isMobile}
-              plugins={activePlugins}
-              key={fullCalendarInstanceKey}
-              ref={calendarRef}
-              initialView={viewName}
-              initialDate={fullCalendarMountDate}
-              views={views}
-              headerToolbar={false}
-              selectable={allowSelect}
-              selectMirror={allowSelect}
-              selectOverlap={allowSelect}
-              selectAllow={allowSelect ? handleSelectAllow : undefined}
-              slotEventOverlap={!isEmbedMode}
-              select={allowSelect ? handleSelect : undefined}
-              selectLongPressDelay={isMobile ? 600 : 300}
-              longPressDelay={isMobile ? 600 : 300}
-              eventLongPressDelay={isMobile ? 600 : 300}
-              eventDragMinDistance={isMobile ? 10 : 5}
-              unselectAuto={true}
-              unselectCancel=".fc-event"
-              unselect={allowSelect ? handleUnselect : undefined}
-              editable={allowEdit}
-              eventStartEditable={allowEdit}
-              eventDurationEditable={allowEdit && !!onEventResize}
-              // FullCalendar keeps the authoritative start coordinate and
-              // extends only the visual bottom of a shorter event. Stored
-              // start/end values and drag/resize payloads remain unchanged.
-              eventMinHeight={TIMEGRID_EVENT_MIN_HEIGHT_PX}
-              events={eventsWithExternalDropPreview}
-              eventContent={(info) => { return renderEventContent(info); }}
-              eventClick={handleEventClick}
-              eventMouseEnter={handleEventMouseEnter}
-              eventMouseLeave={handleEventMouseLeave}
-              eventDrop={handleDrop}
-              droppable={allowEdit}
-              dropAccept=".bases-calendar-event"
-              eventLeave={rememberCalendarTransfer}
-              eventReceive={(info) => receiveCalendarTransfer(info, handleDrop)}
-              eventResize={handleResize}
-              eventDidMount={handleEventMount}
-              dayHeaderDidMount={handleDayMount}
-              dayCellDidMount={handleDayMount}
-              eventWillUnmount={handleEventWillUnmount}
-              eventDragStart={handleDragStart}
-              eventDragStop={handleDragStop}
-              eventResizeStart={handleDragStart}
-              // @ts-ignore
-              eventResizeStop={handleDragStop}
+          <FullCalendar
+            height={fullCalendarHeight}
+            contentHeight={fullCalendarContentHeight}
+            expandRows={resolvedFilterViewMode === "month" && !isEmbedMode && !isMobile}
+            plugins={activePlugins}
+            key={fullCalendarInstanceKey}
+            ref={calendarRef}
+            initialView={viewName}
+            initialDate={fullCalendarMountDate}
+            views={views}
+            headerToolbar={false}
+            selectable={allowSelect}
+            selectMirror={allowSelect}
+            selectOverlap={allowSelect}
+            selectAllow={allowSelect ? handleSelectAllow : undefined}
+            slotEventOverlap={!isEmbedMode}
+            select={allowSelect ? handleSelect : undefined}
+            selectLongPressDelay={isMobile ? 600 : 300}
+            longPressDelay={isMobile ? 600 : 300}
+            eventLongPressDelay={isMobile ? 600 : 300}
+            eventDragMinDistance={isMobile ? 10 : 5}
+            unselectAuto={true}
+            unselectCancel=".fc-event"
+            unselect={allowSelect ? handleUnselect : undefined}
+            editable={allowEdit}
+            eventStartEditable={allowEdit}
+            eventDurationEditable={allowEdit && !!onEventResize}
+            // FullCalendar keeps the authoritative start coordinate and
+            // extends only the visual bottom of a shorter event. Stored
+            // start/end values and drag/resize payloads remain unchanged.
+            eventMinHeight={TIMEGRID_EVENT_MIN_HEIGHT_PX}
+            events={eventsWithExternalDropPreview}
+            eventContent={(info) => { return renderEventContent(info); }}
+            eventClick={handleEventClick}
+            eventMouseEnter={handleEventMouseEnter}
+            eventMouseLeave={handleEventMouseLeave}
+            eventDrop={handleDrop}
+            droppable={allowEdit}
+            dropAccept=".bases-calendar-event"
+            eventLeave={rememberCalendarTransfer}
+            eventReceive={(info) => receiveCalendarTransfer(info, handleDrop)}
+            eventResize={handleResize}
+            eventDidMount={handleEventMount}
+            dayHeaderDidMount={handleDayMount}
+            dayCellDidMount={handleDayMount}
+            eventWillUnmount={handleEventWillUnmount}
+            eventDragStart={handleDragStart}
+            eventDragStop={handleDragStop}
+            eventResizeStart={handleDragStart}
+            // @ts-ignore
+            eventResizeStop={handleDragStop}
 
-              nowIndicator={showNowIndicator}
-              nowIndicatorContent={(arg) => renderCurrentTimeLabel(arg, timeFormatSetting === "12h")}
-              dayHeaderFormat={
-                resolvedFilterViewMode === "month"
-                  ? { weekday: dayHeaderFormatSetting }
-                  : dayHeaderShowDate
-                    ? { weekday: dayHeaderFormatSetting, month: "short", day: "numeric" }
-                    : { weekday: dayHeaderFormatSetting }
-              }
-              firstDay={safeWeekStartDay}
-              slotMinTime={embeddedSlotMinTimeValue}
-              slotMaxTime={slotMaxTimeValue}
-              scrollTime={fullCalendarScrollTimeValue}
-              scrollTimeReset={false}
-              slotDuration={formatFullCalendarDuration(slotDurationMinutes, 30)}
-              slotLaneDidMount={handleSlotMount}
-              slotLabelDidMount={handleSlotMount}
-              snapDuration={formatFullCalendarDuration(snapDurationMinutes, 5)}
-              slotLabelInterval="01:00"
+            nowIndicator={showNowIndicator}
+            nowIndicatorContent={(arg) => renderCurrentTimeLabel(arg, timeFormatSetting === "12h")}
+            dayHeaderFormat={
+              resolvedFilterViewMode === "month"
+                ? { weekday: dayHeaderFormatSetting }
+                : dayHeaderShowDate
+                  ? { weekday: dayHeaderFormatSetting, month: "short", day: "numeric" }
+                  : { weekday: dayHeaderFormatSetting }
+            }
+            firstDay={safeWeekStartDay}
+            slotMinTime={embeddedSlotMinTimeValue}
+            slotMaxTime={slotMaxTimeValue}
+            scrollTime={fullCalendarScrollTimeValue}
+            scrollTimeReset={false}
+            slotDuration={formatFullCalendarDuration(slotDurationMinutes, 30)}
+            slotLaneDidMount={handleSlotMount}
+            slotLabelDidMount={handleSlotMount}
+            snapDuration={formatFullCalendarDuration(snapDurationMinutes, 5)}
+            slotLabelInterval="01:00"
 
-              slotLabelFormat={{
-                hour: "numeric",
-                minute: "2-digit",
-                hour12: timeFormatSetting === "12h",
-                meridiem: timeFormatSetting === "12h" ? 'short' : false as any,
-              }}
-              allDaySlot={resolvedShowFullDay}
-              allDayText="all-day"
-              displayEventTime={false}
-              displayEventEnd={false}
-              navLinks={true}
-              navLinkDayClick={(date, jsEvent) => {
-                jsEvent?.preventDefault?.();
-                jsEvent?.stopPropagation?.();
-                jsEvent?.stopImmediatePropagation?.();
-                if (onDateClick) onDateClick(date, jsEvent?.target as HTMLElement | undefined, jsEvent as MouseEvent);
-              }}
-              datesSet={handleDatesSet}
-              validRange={validRange}
-              showNonCurrentDates={true}
-              dayMaxEvents={fullCalendarAllDayMaxRows}
-              dayMaxEventRows={fullCalendarAllDayMaxRows}
-              // @ts-ignore
-              moreLinkClick={handleMoreLinkClick}
-              moreLinkContent={renderMoreLinkContent}
-              fixedWeekCount={false}
-              stickyHeaderDates={isEmbedMode}
-              handleWindowResize={true}
-              windowResizeDelay={100}
-            />
-          )}
+            slotLabelFormat={{
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: timeFormatSetting === "12h",
+              meridiem: timeFormatSetting === "12h" ? 'short' : false as any,
+            }}
+            allDaySlot={resolvedShowFullDay}
+            allDayText="all-day"
+            displayEventTime={false}
+            displayEventEnd={false}
+            navLinks={true}
+            navLinkDayClick={(date, jsEvent) => {
+              jsEvent?.preventDefault?.();
+              jsEvent?.stopPropagation?.();
+              jsEvent?.stopImmediatePropagation?.();
+              if (onDateClick) onDateClick(date, jsEvent?.target as HTMLElement | undefined, jsEvent as MouseEvent);
+            }}
+            datesSet={handleDatesSet}
+            validRange={validRange}
+            showNonCurrentDates={true}
+            dayMaxEvents={fullCalendarAllDayMaxRows}
+            dayMaxEventRows={fullCalendarAllDayMaxRows}
+            // @ts-ignore
+            moreLinkClick={handleMoreLinkClick}
+            moreLinkContent={renderMoreLinkContent}
+            fixedWeekCount={false}
+            stickyHeaderDates={isEmbedMode}
+            handleWindowResize={true}
+            windowResizeDelay={100}
+          />
 
-          {resolvedFilterViewMode === 'continuous' && (
-            <ContinuousScrollView
-              timeFormatSetting={timeFormatSetting}
-              showNowIndicator={showNowIndicator}
-              isEmbedded={isEmbedMode}
-              currentDate={currentDate}
-              onDateChange={(date, interactionStartedAt) => onDateChange?.(
-                date,
-                "user",
-                interactionStartedAt,
-              )}
-              onRenderedDateCommit={onRenderedDateCommit}
-              events={eventsWithExternalDropPreview}
-              allDayMaxRows={allDayMaxRows}
-              slotMinTimeValue={slotMinTimeValue}
-              slotMaxTimeValue={slotMaxTimeValue}
-              defaultScrollTime={DEFAULT_SCROLL_TIME}
-              resolvedShowFullDay={resolvedShowFullDay}
-              safeWeekStartDay={safeWeekStartDay}
-              allowEdit={allowEdit}
-              allowSelect={allowSelect}
-              onEventResize={onEventResize}
-              handleEventClick={handleEventClick}
-              renderEventContent={renderEventContent}
-              handleDrop={handleDrop}
-              handleResize={handleResize}
-              handleEventMount={handleEventMount}
-              handleEventWillUnmount={handleEventWillUnmount}
-              handleDragStart={handleDragStart}
-              handleDragStop={handleDragStop}
-              handleResizeStart={handleResizeStart}
-              handleResizeStop={handleResizeStop}
-              handleSelect={allowSelect ? handleSelect : undefined}
-              handleSelectAllow={allowSelect ? handleSelectAllow : undefined}
-              handleUnselect={allowSelect ? handleUnselect : undefined}
-              onDateClick={onDateClick}
-              slotDurationMinutes={slotDurationMinutes}
-              snapDurationMinutes={snapDurationMinutes}
-              eventMinHeight={TIMEGRID_EVENT_MIN_HEIGHT_PX}
-              handleMoreLinkClick={handleMoreLinkClick}
-              renderMoreLinkContent={renderMoreLinkContent}
-              allDayExpanded={allDayExpanded}
-            />
-          )}
+
         </div>
       </div>
     </div>

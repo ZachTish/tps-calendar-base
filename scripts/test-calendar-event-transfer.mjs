@@ -18,8 +18,6 @@ test('moving between embeds restores both calendars before the normal confirmati
 test('unowned transfers do not request a write',()=>{
  let restored=0; receiveCalendarTransfer({draggedEl:{},event:{start:new Date(),extendedProps:{}},revert:()=>restored++},()=>assert.fail('unexpected write'));assert.equal(restored,1);
 });
-test('both regular and continuous calendars wire receive and source rollback',()=>{
- for(const path of ['src/CalendarReactView.tsx','src/components/ContinuousScrollView.tsx']){
- const source=readFileSync(path,'utf8');assert.match(source,/droppable=\{allowEdit\}/);assert.match(source,/eventLeave=\{rememberCalendarTransfer\}/);assert.match(source,/receiveCalendarTransfer\(info, handleDrop\)/);
- }
+test('calendar wires receive and source rollback',()=>{
+ const source=readFileSync('src/CalendarReactView.tsx','utf8');assert.match(source,/droppable=\{allowEdit\}/);assert.match(source,/eventLeave=\{rememberCalendarTransfer\}/);assert.match(source,/receiveCalendarTransfer\(info, handleDrop\)/);
 });

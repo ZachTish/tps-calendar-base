@@ -3774,18 +3774,6 @@ export class CalendarView extends BasesView {
       return { start, end };
     }
 
-    if (resolvedMode === "continuous") {
-      // ContinuousScrollView starts with five days and grows to a rolling
-      // fourteen-day window. Cover the union of a fully expanded window in
-      // either direction around its anchor so cached edge days never render
-      // without their external events.
-      const start = new Date(safeAnchor);
-      start.setDate(start.getDate() - 11);
-      const end = new Date(safeAnchor);
-      end.setDate(end.getDate() + 12);
-      return { start, end };
-    }
-
     const configuredDayCount = resolvedMode === "week" || resolvedMode === "7d"
       ? 7
       : /^([1-6])d$/.test(resolvedMode)
@@ -9088,6 +9076,8 @@ export class CalendarView extends BasesView {
     fallback: CalendarViewMode | undefined,
   ): CalendarViewMode | undefined {
     const raw = String(value ?? "").trim().toLowerCase();
+    // Read legacy views as Week; no persisted Base or settings rewrite.
+    if (raw === "continuous") return "week";
     const validModes: CalendarViewMode[] = [
       "day",
       "2d",
@@ -9098,7 +9088,6 @@ export class CalendarView extends BasesView {
       "7d",
       "week",
       "month",
-      "continuous",
       "filter-based",
     ];
     if (validModes.includes(raw as CalendarViewMode)) {
@@ -11296,7 +11285,6 @@ export class CalendarView extends BasesView {
               "7d": "7 Day",
               week: "Week",
               month: "Month",
-              continuous: "Continuous",
               "filter-based": "Filter-based (Auto)",
             },
           },

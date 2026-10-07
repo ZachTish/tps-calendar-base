@@ -136,7 +136,6 @@ test("explicit intervals keep exact data while every time grid gets a readable h
   assert.equal(events[0].end.getTime() - events[0].start.getTime(), 5 * 60 * 1000);
 
   const reactSource = readFileSync(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
-  const continuousSource = readFileSync(new URL("../src/components/ContinuousScrollView.tsx", import.meta.url), "utf8");
   const calendarCss = readFileSync(new URL("../src/calendar.css", import.meta.url), "utf8");
   const embedCss = readFileSync(new URL("../src/embed-calendar.css", import.meta.url), "utf8");
   assert.match(reactSource, /"--tps-calendar-fallback-event-height": `\$\{minEventHeight\}px`/u);
@@ -147,12 +146,6 @@ test("explicit intervals keep exact data while every time grid gets a readable h
   assert.match(
     reactSource,
     /const computedSlotHeight = isEmbedMode\s*\? Math\.max\(baseSlotHeight, TIMEGRID_EVENT_MIN_HEIGHT_PX\)\s*: baseSlotHeight;/u,
-  );
-  assert.match(continuousSource, /eventMinHeight\?: number/u);
-  assert.match(continuousSource, /<FullCalendar[\s\S]*?eventMinHeight=\{eventMinHeight\}/u);
-  assert.match(
-    reactSource,
-    /<ContinuousScrollView[\s\S]*?eventMinHeight=\{TIMEGRID_EVENT_MIN_HEIGHT_PX\}/u,
   );
   assert.doesNotMatch(reactSource, /eventMinHeight=\{isEmbedMode \?/u);
   assert.match(

@@ -95,7 +95,6 @@ export function getCalendarViewOptions(plugin?: CalendarPluginBridge): ViewOptio
             "7d": "7 Day",
             week: "Week",
             month: "Month",
-            continuous: "Continuous",
             "filter-based": "Filter-based (Auto)",
           },
         },

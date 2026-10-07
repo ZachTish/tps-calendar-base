@@ -283,15 +283,13 @@ test('scroll keys count as activity but typing, headers, and outside targets do 
   assert.deepEqual(instance.calls, [160_194]);
 });
 
-test('continuous timeline surfaces use the same idle behavior', () => {
-  for (const selector of ['.bases-calendar-continuous-scroll-container', '.bases-calendar-scroll-surface']) {
-    const instance = calendar();
-    finishInitialSnap(instance);
-    const surface = new Element(instance.doc, instance.container, [selector]);
-    instance.container.emit('scroll', surface);
-    instance.clock.tick(20_000);
-    assert.deepEqual(instance.calls, [20_200]);
-  }
+test('calendar scroll surfaces use the same idle behavior', () => {
+  const instance = calendar();
+  finishInitialSnap(instance);
+  const surface = new Element(instance.doc, instance.container, ['.bases-calendar-scroll-surface']);
+  instance.container.emit('scroll', surface);
+  instance.clock.tick(20_000);
+  assert.deepEqual(instance.calls, [20_200]);
 });
 
 test('cleanup removes all listeners and pending work without affecting another instance', () => {
@@ -369,7 +367,7 @@ test('the time-grid integration permits today only and reads live view bounds', 
   instance.container.emit('scroll', instance.scroller);
   instance.clock.tick(20_000);
   assert.deepEqual(instance.calls, [80_200]);
-  assert.match(source, /if \(!isEmbedMode \|\| resolvedFilterViewMode === "continuous" \|\| !container\) return;/);
+  assert.match(source, /if \(!isEmbedMode \|\| !container\) return;/);
   assert.match(effect, /returnToNow: scrollToNow/);
   assert.match(effect, /isProgrammaticScroll: \(\) => isProgrammaticScrollRef\.current/);
 });

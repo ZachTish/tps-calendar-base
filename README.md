@@ -2,6 +2,14 @@
 
 Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
 
+## 2.0.0 — Remove Continuous calendar mode
+
+Continuous mode and its dedicated scrolling renderer are retired. Day, two-to-seven-day, Week, Month and Filter-based modes use the existing single FullCalendar renderer. Global settings and Base view menus no longer offer Continuous. An untouched Base saved with `tps_viewMode`, `viewMode` or `viewmode: continuous` displays Week; its file is not migrated or rewritten on open. An old global Continuous preference loads as Week through the existing settings normalization. There is no new setting, listener, timer, cache, repair or scan. For an untouched legacy value, Core Bases shows a blank View mode field even though Week renders; explicitly choosing a supported mode updates that Base through the ordinary user-owned control.
+
+Continuous previously mounted five separate calendars initially and could retain fourteen while scrolling, each receiving the full event collection. Removing it also removes its scroll/window handlers, timers, date-window expansion, duplicate event callbacks and document-wide navigation queries. The regular renderer retains date navigation, event interactions, embedding, responsive day counts and configured timeline pairs. This reduces the cost of former Continuous views; it does not claim to resolve unrelated note-navigation or startup lag.
+
+Major version: removes a supported view mode/API value. Minimum Obsidian remains 1.10.0. Seven retirement checks execute the actual configuration boundaries, cover every saved alias and remaining mode, and assert 1,000 repeated resolutions perform zero note reads, inventories or writes. Shared creation, transfer, range and navigation tests retain their supported-mode coverage. All 353 declared checks pass with zero failures or skips, and the separate TypeScript/production build deploys to the test vault. A named reload verifies 2.0.0. First and repeated native openings of an unchanged legacy Base show one calendar instead of five, retaining both events with zero note-write attempts. Week Next/Previous navigation, Month, Live Preview/Reading embeds and both settings menus were checked. All six fixture files and eight consumers’ settings/data stayed byte-identical; temporary diagnostics were removed, fixtures archived directly and the original leaf restored. These warm-host desktop checks do not establish cold-launch, physical-iPhone or production latency. Full counts, limitations and final artifact hashes are recorded in [2.0.0 release notes](release-notes/2.0.0.md). Production installation remains the user's BRAT pull and acceptance.
+
 ## 1.1.3 — One owner for paired edit refreshes
 
 GCM user edits emit FilesUpdated followed by an explicit-action or Calendar-refresh signal. Calendar's immediate forced refresh now consumes the already-pending refresh timer rather than processing that same settled query again. It clears the timer before the immediate pass, not afterward: genuine later MetadataCache and Core Bases updates still schedule their own work. Automation-only FilesUpdated bursts retain their forced scheduled refresh, and existing visibility, navigation-epoch and single-flight guards are unchanged. No new cache, state, listener, timer, setting, note mutation or migration is added.
@@ -12,7 +20,7 @@ Twelve actual-method regressions cover paired channels, automation bursts, focus
 
 Legacy calendar occurrences with `eventTitle` keep that read-only display title after their Kind becomes a list, using GCM's inspected record kind rather than the physical Kind property. The linked `title` property is unchanged. Without GCM, the historical scalar `kind: calendar-event` display fallback remains. Native-note selection also checks GCM's configured identity property (and the historical `tpsId`) before treating a note as ordinary. **Advanced → Note linking and event status** exposes the canceled external-event status label beside the in-progress label. A blank canceled label emits no status for canceled external events instead of silently using `wont-do`; Controller's corresponding label is configured in Controller settings. Focused regressions cover display, identity, status, and the setting in `scripts/test-calendar-formula-api.mjs` and `scripts/test-external-calendar-cancellation.mjs`. See the [1.1.2 release notes](release-notes/1.1.2.md) for validation and artifacts. This release has not been installed in v0.2.
 
-Current version: **1.1.3** · Obsidian 1.10.0+ · Desktop and mobile.
+Current version: **2.0.0** · Obsidian 1.10.0+ · Desktop and mobile.
 
 ## 1.1.1 — Use configured fields for existing-note ranges
 

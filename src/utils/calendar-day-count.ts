@@ -51,7 +51,7 @@ export function getCalendarStartForAnchor(
 ): Date {
   const start = new Date(anchor);
   if (Number.isNaN(start.getTime())) return start;
-  if (viewMode === "month" || viewMode === "continuous") {
+  if (viewMode === "month") {
     return start;
   }
 
@@ -103,7 +103,7 @@ export function getCalendarAnchorForStart(
 ): Date {
   const anchor = new Date(startDate);
   if (Number.isNaN(anchor.getTime())) return anchor;
-  if (viewMode === "month" || viewMode === "continuous") {
+  if (viewMode === "month") {
     return anchor;
   }
 

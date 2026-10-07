@@ -744,32 +744,6 @@ test("one-day navigation reuses the wide external-calendar prefetch window", () 
   );
 });
 
-test("continuous view freshness covers a fully expanded rolling window", () => {
-  const view = createBareView();
-  const now = Date.now();
-  Object.assign(view, {
-    viewMode: "continuous",
-    filterRangeAuto: false,
-    hasExplicitFilterRange: false,
-    weekStartDay: 1,
-    visibleExternalCalendarUrls: ["https://calendar.example/feed.ics"],
-    lastExternalFetch: now - 1000,
-    lastExternalFetchRangeStart: new Date(2026, 0, 1).getTime(),
-    lastExternalFetchRangeEnd: new Date(2026, 2, 2).getTime(),
-    lastExternalFetchSourceSignature: "https://calendar.example/feed.ics",
-  });
-
-  const edgeRange = view.resolveExternalCalendarVisibleRange(
-    new Date(2026, 2, 1),
-  );
-  assert.equal(edgeRange.start.getTime(), new Date(2026, 1, 18).getTime());
-  assert.equal(edgeRange.end.getTime(), new Date(2026, 2, 13).getTime());
-  assert.equal(
-    view.shouldRefreshExternalEvents(edgeRange.start, edgeRange.end, now),
-    true,
-  );
-});
-
 test("same-epoch source changes supersede an in-flight external request", async () => {
   const view = createBareView();
   const pending = new Map();

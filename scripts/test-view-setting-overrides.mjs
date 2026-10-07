@@ -82,12 +82,10 @@ test("display clock aligns to minutes, catches up after sleep, and cleans up ind
   assert.equal(listeners.size, 0);
 });
 
-test("standard and continuous renderers both wire the clock to FullCalendar's indicator", () => {
-  for (const relative of ["../src/CalendarReactView.tsx", "../src/components/ContinuousScrollView.tsx"]) {
-    const source = readFileSync(new URL(relative, import.meta.url), "utf8");
-    assert.match(source, /nowIndicator=\{showNowIndicator\}/);
-    assert.match(source, /nowIndicatorContent=\{\(arg\) => renderCurrentTimeLabel\(arg, timeFormatSetting === "12h"\)\}/);
-  }
+test("calendar wires the clock to FullCalendar's indicator", () => {
+  const source = readFileSync(new URL("../src/CalendarReactView.tsx", import.meta.url), "utf8");
+  assert.match(source, /nowIndicator=\{showNowIndicator\}/);
+  assert.match(source, /nowIndicatorContent=\{\(arg\) => renderCurrentTimeLabel\(arg, timeFormatSetting === "12h"\)\}/);
 });
 
 async function importViewConfigUtility() {

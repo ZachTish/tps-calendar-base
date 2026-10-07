@@ -435,7 +435,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           .addOption("7d", "7 Days")
           .addOption("week", "Week")
           .addOption("month", "Month")
-          .addOption("continuous", "Continuous")
           .addOption("filter-based", "Filter-based (Auto)")
           .setValue(this.plugin.settings.viewMode || "week")
           .onChange(async (value) => {

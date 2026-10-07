@@ -44,7 +44,7 @@ export function installCalendarIdleReturn(
     if (!target || !container.contains(target) || typeof target.closest !== "function") return false;
     if (target.closest('input, textarea, [contenteditable="true"]')) return false;
     return !!target.closest(
-      '.fc-timegrid, .bases-calendar-continuous-scroll-container, .bases-calendar-scroll-surface',
+      '.fc-timegrid, .bases-calendar-scroll-surface',
     );
   };
   const activity = (event: Event) => {
