@@ -18,7 +18,7 @@ async function importNewEventService() {
         export { NewEventService } from "./src/services/new-event-service.ts";
         export { ensureCalendarDailyNoteTitleFallback } from "./src/utils/daily-note-creation.ts";
         export { installGcmApiRegistry } from "./src/tps-gcm-api.ts";
-        export { TFile } from "obsidian";
+        export { TFile, Modal } from "obsidian";
       `,
       resolveDir: fileURLToPath(new URL("..", import.meta.url)),
       loader: "ts",
@@ -46,13 +46,34 @@ async function importNewEventService() {
                   this.parent = { path: folder || "/" };
                 }
               }
+              class TestElement {
+                constructor(options = {}) {
+                  this.text = options.text || "";
+                  this.children = [];
+                  this.style = {};
+                  this.listeners = new Map();
+                }
+                empty() { this.children = []; }
+                addClass() {}
+                createEl(_tag, options) {
+                  const element = new TestElement(options);
+                  this.children.push(element);
+                  return element;
+                }
+                createDiv(options) { return this.createEl("div", options); }
+                addEventListener(name, callback) { this.listeners.set(name, callback); }
+                click() { this.listeners.get("click")?.(); }
+                all() { return [this, ...this.children.flatMap(child => child.all())]; }
+              }
               export class Modal {
+                static opened = [];
                 constructor(app) {
                   this.app = app;
-                  this.contentEl = { empty() {}, createEl() { return {}; }, createDiv() { return {}; } };
+                  this.contentEl = new TestElement();
+                  this.modalEl = new TestElement();
                   this.scope = { register() {} };
                 }
-                open() {}
+                open() { Modal.opened.push(this); this.onOpen?.(); }
                 close() { this.onClose?.(); }
               }
               export class FuzzySuggestModal extends Modal {
@@ -462,6 +483,114 @@ function normalizePathForFake(value) {
     .replace(/^\/+/, "")
     .replace(/\/$/, "");
 }
+
+async function flushMicrotasks() {
+  for (let index = 0; index < 20; index += 1) await Promise.resolve();
+}
+
+test("dismissing the actual past-event modal cancels without writes and allows the next creation", async () => {
+  const { NewEventService, TFile, Modal } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile);
+  const counts = { create: 0, read: 0, cachedRead: 0, modify: 0, process: 0 };
+  for (const name of Object.keys(counts)) {
+    const original = fake.app.vault[name];
+    fake.app.vault[name] = (...args) => { counts[name] += 1; return original(...args); };
+  }
+  const service = new NewEventService({
+    app: fake.app, folderPath: "Inbox", createMode: "note",
+    startProperty: "note.scheduled", endProperty: "note.timeEstimate", useEndDuration: true,
+  });
+  let state = "pending";
+  let canceledResult;
+  const creation = service.createEvent(
+    new Date("2020-01-02T09:00:00"), new Date("2020-01-02T09:30:00"), undefined,
+    { titleOverride: "Dismissed past event" },
+  ).then(result => { state = "fulfilled"; canceledResult = result; return result; });
+  await flushMicrotasks();
+  const modal = Modal.opened.at(-1);
+  assert.ok(modal.contentEl.all().some(element => element.text === "Event in Past"));
+  assert.equal(state, "pending", "creation must await the actual status prompt");
+  assert.deepEqual(counts, { create: 0, read: 0, cachedRead: 0, modify: 0, process: 0 });
+
+  // X, Escape and outside dismissal all reach the host Modal.close lifecycle.
+  modal.close();
+  await flushMicrotasks();
+  const next = await service.createEvent(
+    new Date("2099-01-02T09:00:00"), new Date("2099-01-02T09:30:00"), undefined,
+    { titleOverride: "Next event" },
+  );
+  assert.deepEqual({ state, canceledResult, nextPath: next?.path, counts }, {
+    state: "fulfilled", canceledResult: null, nextPath: "Inbox/Next event 2099-01-02.md",
+    counts: { create: 1, read: 0, cachedRead: 0, modify: 0, process: 0 },
+  });
+  await creation;
+  assert.equal(fake.has("Inbox/Dismissed past event 2020-01-02.md"), false);
+  assert.equal(modal.contentEl.children.length, 0, "the existing close handler clears its content");
+});
+
+for (const [buttonText, expectedStatus] of [["Yes, Complete", "complete"], ["No, Active", null], ["Cancel", "cancel"]]) {
+  test(`the actual past-event choice ${buttonText} keeps its result when close runs`, async () => {
+    const { NewEventService, TFile, Modal } = await importNewEventService();
+    const fake = createFakeCalendarApp(TFile);
+    const service = new NewEventService({
+      app: fake.app, folderPath: "Inbox", createMode: "note",
+      startProperty: "note.scheduled", endProperty: "note.timeEstimate", useEndDuration: true,
+    });
+    const creation = service.createEvent(
+      new Date("2020-01-02T09:00:00"), new Date("2020-01-02T09:30:00"), undefined,
+      { titleOverride: "Past event" },
+    );
+    await flushMicrotasks();
+    const modal = Modal.opened.at(-1);
+    const button = modal.contentEl.all().find(element => element.text === buttonText);
+    assert.ok(button);
+    button.click();
+    const result = await creation;
+    if (expectedStatus === "cancel") {
+      assert.equal(result, null);
+      assert.equal(fake.stats.createCount, 0);
+    } else {
+      assert.equal(result?.path, "Inbox/Past event 2020-01-02.md");
+      const frontmatter = loadYaml(fake.read(result.path).match(/^---\n([\s\S]*?)\n---\n/)[1]);
+      assert.equal(frontmatter.status ?? null, expectedStatus);
+      assert.equal(fake.stats.createCount, 1);
+    }
+  });
+}
+
+test("a burst of dismissed past-event prompts leaves no writer work or locked creation", async () => {
+  const { NewEventService, TFile, Modal } = await importNewEventService();
+  const fake = createFakeCalendarApp(TFile);
+  const service = new NewEventService({ app: fake.app, folderPath: "Inbox", createMode: "note" });
+  const openedBefore = Modal.opened.length;
+  const counts = { create: 0, read: 0, cachedRead: 0, modify: 0, process: 0, getMarkdownFiles: 0 };
+  for (const name of Object.keys(counts)) {
+    const original = fake.app.vault[name];
+    fake.app.vault[name] = (...args) => { counts[name] += 1; return original(...args); };
+  }
+  for (let index = 0; index < 25; index += 1) {
+    let settled = false;
+    const creation = service.createEvent(
+      new Date("2020-01-02T09:00:00"), new Date("2020-01-02T09:30:00"), undefined,
+      { titleOverride: `Canceled ${index}` },
+    ).then(result => { settled = true; return result; });
+    await flushMicrotasks();
+    const modal = Modal.opened.at(-1);
+    assert.ok(modal.contentEl.all().some(element => element.text === "Event in Past"));
+    modal.close();
+    await flushMicrotasks();
+    assert.equal(settled, true, `dismissal ${index} must settle its actual creation`);
+    assert.equal(await creation, null);
+  }
+  assert.equal(Modal.opened.length - openedBefore, 25);
+  assert.deepEqual(counts, { create: 0, read: 0, cachedRead: 0, modify: 0, process: 0, getMarkdownFiles: 0 });
+  const next = await service.createEvent(
+    new Date("2099-01-02T09:00:00"), new Date("2099-01-02T09:30:00"), undefined,
+    { titleOverride: "After dismissals" },
+  );
+  assert.equal(next?.path, "Inbox/After dismissals 2099-01-02.md");
+  assert.equal(fake.stats.createCount, 1);
+});
 
 test("NewEventService note mode creates a dated frontmatter note with Base defaults", async () => {
   const { NewEventService, TFile } = await importNewEventService();

@@ -1523,10 +1523,6 @@ export class NewEventService {
             resolve("cancel");
             this.close();
           });
-
-          this.onClose = () => {
-            // Implicit cancel if not resolved
-          };
         }
 
         onClose() {

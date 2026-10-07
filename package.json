@@ -1,6 +1,6 @@
 {
     "name": "tps-calendar-base",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "description": "TPS Calendar Base - Adds calendar view to Obsidian Bases.",
     "main": "main.js",
     "type": "module",
