@@ -6501,6 +6501,7 @@ export class CalendarView extends BasesView {
   private async promptConvertToMeetingNote(event: ExternalCalendarEvent): Promise<boolean> {
     const confirmed = await new Promise<boolean>((resolve) => {
       const modal = new Modal(this.app);
+      modal.onClose = () => resolve(false);
       modal.modalEl.addClass("tps-keyboard-aware-modal");
       modal.contentEl.createEl('h3', { text: 'Convert to Meeting Note?' });
       modal.contentEl.createEl('p', {
@@ -6515,14 +6516,14 @@ export class CalendarView extends BasesView {
 
       const convertBtn = buttonContainer.createEl('button', { text: 'Convert to Note', cls: 'mod-cta' });
       convertBtn.addEventListener('click', () => {
-        modal.close();
         resolve(true);
+        modal.close();
       });
 
       const cancelBtn = buttonContainer.createEl('button', { text: 'Cancel' });
       cancelBtn.addEventListener('click', () => {
-        modal.close();
         resolve(false);
+        modal.close();
       });
 
       modal.open();
