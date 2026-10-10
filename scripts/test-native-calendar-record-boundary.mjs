@@ -194,7 +194,7 @@ test("native Calendar create payloads contain only canonical public fields", () 
   });
   assert.deepEqual(Object.keys(properties).sort(), ["end", "scheduled", "title"]);
   for (const forbidden of [
-    "tpsId",
+    "id",
     "tpsSchemaVersion",
     "kind",
     "createdDate",
@@ -263,8 +263,8 @@ test("native drag and resize patches replace the interval and clear stale derive
   );
 });
 
-test("every native Calendar mutation route stays behind API v6 and shared public payload builders", () => {
-  assert.match(apiSource, /GCM_NATIVE_RECORDS_API_VERSION = 6/u);
+test("every native Calendar mutation route stays behind API v7 and shared public payload builders", () => {
+  assert.match(apiSource, /GCM_NATIVE_RECORDS_API_VERSION = 7/u);
   assert.match(apiSource, /nativeRecords\?\.version !== GCM_NATIVE_RECORDS_API_VERSION/u);
   assert.match(apiSource, /typeof nativeRecords\.resolve !== ["']function["']/u);
   assert.match(apiSource, /typeof nativeRecords\.create !== ["']function["']/u);
@@ -317,7 +317,7 @@ test("every native Calendar mutation route stays behind API v6 and shared public
 
   assert.match(viewSource, /for \(const marker of this\.getAuxiliaryDateMarkers\(entryFrontmatter\)\)/u);
   assert.doesNotMatch(viewSource, /!nativeRecordMode[\s\S]{0,180}this\.getAuxiliaryDateMarkers\(entryFrontmatter\)/u);
-  assert.doesNotMatch(utilitySource, /eventTitle|associatedNotePath|calendar(?:Id|Uid|SourceId|OccurrenceId)|tpsId/u);
+  assert.doesNotMatch(utilitySource, /eventTitle|associatedNotePath|calendar(?:Id|Uid|SourceId|OccurrenceId)/u);
 });
 
 

@@ -1,6 +1,33 @@
 # TPS Calendar Base
 
-Calendar and timeline views for Obsidian Bases, using TPS Global Context Menu for shared entity and task behavior.
+## 3.0.0 — Shared record identity named id
+
+Calendar consumes GCM's canonical `id` envelope/reference and uses `id` when
+creating a standalone linked event note. Existing GCM physical identity keys,
+including an explicitly configured `tpsId`, remain owned by its published
+`nativeRecords.getStorageProfile()` contract. Note-selection protection and
+identity creation respect that key and preserve its value/casing. Capability
+discovery still uses the existing public workspace handshake; Calendar adds no
+plugin-registry lookup, background migration, note scan, writer or persisted
+setting. External/provider IDs and calendar date, title, body and linking behavior
+are preserved. The dormant inline-line locator helper also names its identity `id`.
+
+Native Calendar mutations require nativeRecords API **7** (GCM 9.0.0); API 6 and
+other incomplete/disabled generations fail closed before a write. Standalone
+notes created under the former `tpsId` default require an explicit key conversion
+before using the new default. That storage boundary makes this a major release.
+Configured physical key changes remain an explicit GCM migration. Minimum
+Obsidian stays **1.10.0**. Settings destinations, disclosures and mobile controls
+are unchanged.
+
+Focused tests cover fresh/uppercase canonical identity, arbitrary configured
+physical keys, unchanged values, rejection of owner failures and API 6, and native
+selection without note mutation. Final versioned validation passes all 378
+checks with zero failures/skips. The separate final ordinary stable build deployed only to the Test vault and
+was reloaded by manifest ID. Actual installed creation/update integration checks
+passed with preserved IDs and bodies; their precise synthetic boundaries and
+SHA-256 hashes are recorded in [3.0.0 release notes](release-notes/3.0.0.md).
+Production installation remains the user's BRAT pull.
 
 ## 2.0.2 — Cancel a dismissed external-event conversion prompt
 

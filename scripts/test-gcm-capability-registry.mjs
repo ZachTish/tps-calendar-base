@@ -320,7 +320,7 @@ test("calendar consumes additive template mutation and instance-preparation capa
   owner.unload();
 });
 
-test("native Calendar mutations require the complete enabled GCM nativeRecords v6 boundary", async () => {
+test("native Calendar mutations require the complete enabled GCM nativeRecords v7 boundary", async () => {
   const {
     GCM_NATIVE_RECORDS_API_VERSION,
     getGcmNativeRecordsApi,
@@ -332,14 +332,14 @@ test("native Calendar mutations require the complete enabled GCM nativeRecords v
   installGcmApiRegistry(owner, app);
 
   const compatible = {
-    version: 6,
+    version: 7,
     isEnabled: () => true,
     inspect: () => null,
     resolve: async () => null,
     create: async () => null,
     update: async () => null,
   };
-  assert.equal(GCM_NATIVE_RECORDS_API_VERSION, 6);
+  assert.equal(GCM_NATIVE_RECORDS_API_VERSION, 7);
   workspace.trigger(
     "tps:gcm-api-changed",
     availablePayload({ nativeRecords: compatible }),
@@ -348,6 +348,7 @@ test("native Calendar mutations require the complete enabled GCM nativeRecords v
 
   for (const incompatible of [
     { ...compatible, version: 5 },
+    { ...compatible, version: 6 },
     { ...compatible, isEnabled: () => false },
     {
       ...compatible,
@@ -619,4 +620,46 @@ test('calendar integration field writes honor the shared configured-name API', a
  workspace.trigger('tps:gcm-api-changed',availablePayload({identity:{getNoteField: (value)=>value.mirror,setNoteField:(value,field,next)=>{if(next==null)delete value.mirror;else value.mirror=next;}}}));
  assert.equal(getIntegrationNoteField(app,fm,'externalId'),'old');setIntegrationNoteField(app,fm,'externalId','new');assert.deepEqual(fm,{mirror:'new',title:'Keep'});
  setIntegrationNoteField(app,fm,'externalId',null);assert.deepEqual(fm,{title:'Keep'}); owner.unload();
+});
+
+
+test('identity creation uses canonical id and preserves the announced physical identity property', async () => {
+  const { ensureInternalIdInFrontmatter, getInternalIdPropertyKey, installGcmApiRegistry } = await loadRegistry();
+  const workspace = createWorkspace();
+  const app = { workspace };
+  const owner = createOwner(workspace);
+  installGcmApiRegistry(owner, app);
+  const existing = { ID: 'unchanged', externalId: 'calendar:keep' };
+  assert.equal(ensureInternalIdInFrontmatter(app, existing), 'unchanged');
+  assert.deepEqual(existing, { ID: 'unchanged', externalId: 'calendar:keep' });
+  const created = { title: 'Fresh' };
+  const value = ensureInternalIdInFrontmatter(app, created);
+  assert.equal(created.id, value);
+  assert.equal(Object.hasOwn(created, 'tpsId'), false);
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({ nativeRecords: {
+    getStorageProfile: () => ({ identityPropertyKey: 'recordIdentity' }),
+  } }));
+  assert.equal(getInternalIdPropertyKey(app), 'recordIdentity');
+  const custom = { RecordIdentity: 'custom-id', externalId: 'calendar:keep' };
+  assert.equal(ensureInternalIdInFrontmatter(app, custom), 'custom-id');
+  assert.deepEqual(custom, { RecordIdentity: 'custom-id', externalId: 'calendar:keep' });
+  const customCreated = {};
+  const customValue = ensureInternalIdInFrontmatter(app, customCreated);
+  assert.deepEqual(customCreated, { recordIdentity: customValue });
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({ nativeRecords: {
+    getStorageProfile: () => ({ identityPropertyKey: 'tpsId' }),
+  } }));
+  const configuredLegacy = { tpsId: 'unchanged-legacy-value' };
+  assert.equal(ensureInternalIdInFrontmatter(app, configuredLegacy), 'unchanged-legacy-value');
+  assert.deepEqual(configuredLegacy, { tpsId: 'unchanged-legacy-value' });
+
+  workspace.trigger('tps:gcm-api-changed', availablePayload({ identity: {
+    ensureInternalIdInFrontmatter: () => { throw new Error('owner rejected'); },
+  } }));
+  const rejected = { title: 'Keep' };
+  assert.throws(() => ensureInternalIdInFrontmatter(app, rejected), /owner rejected/u);
+  assert.deepEqual(rejected, { title: 'Keep' });
+  owner.unload();
 });

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import ts from 'typescript';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('external event note creation writes tpsId and externalId, not legacy triplet', () => {
+test('external event note creation writes id and externalId, not legacy triplet', () => {
   const modal = read('src/modals/external-event-modal.ts');
   assert.match(modal, /ensureInternalIdInFrontmatter\(app, frontmatter\)/);
   assert.match(modal, /setIntegrationNoteField\(app, frontmatter, 'externalId', buildCalendarExternalId\(app, event\)\)/);
@@ -87,4 +88,22 @@ test('filtered inline task counterparts still suppress external events', () => {
   const findSource = view.slice(findStart, findEnd);
   assert.match(findSource, /const externalId = this\.normalizeIdentityValue\(task\.inlineProperties\.get\("externalid"\)\);/);
   assert.match(findSource, /this\.buildExternalIdForEvent\(event\) === externalId/);
+});
+
+
+test('the dormant line locator identifies moved rows by id and rejects ambiguous identity/title matches', () => {
+  const compiled = ts.transpileModule(read('src/utils/inline-task-line-update.ts'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  });
+  const module = { exports: {} };
+  new Function('module', 'exports', compiled.outputText)(module, module.exports);
+  const { patchInlineTaskLineContent } = module.exports;
+  const source = '- [ ] Same [id:: other]\r\n- [ ] Same [id:: stable]\n';
+  const locator = { preferredLineIndex: 0, rawLine: 'stale line', title: 'Same', id: 'stable' };
+  const inspect = line => ({ title: 'Same', id: line.match(/\[id:: ([^\]]+)\]/u)?.[1] });
+  const result = patchInlineTaskLineContent(source, locator, inspect, line => line.replace('[ ]', '[x]'));
+  assert.equal(result.matchedBy, 'id');
+  assert.equal(result.lineIndex, 1);
+  assert.equal(result.content, '- [ ] Same [id:: other]\r\n- [x] Same [id:: stable]\n');
+  assert.equal(patchInlineTaskLineContent(source.replace('other', 'stable'), locator, inspect, () => 'wrong'), null);
 });

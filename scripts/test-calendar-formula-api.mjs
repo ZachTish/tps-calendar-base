@@ -1375,7 +1375,7 @@ test("migrated Kind-list calendar occurrences keep their legacy eventTitle displ
     title,
   };
   const nativeRecords = {
-    version: 6,
+    version: 7,
     isEnabled: () => true,
     inspect: (value) => value.recordId === eventId
       ? { id: eventId, kind: "calendar-event", frontmatter: value }
@@ -1403,7 +1403,7 @@ test("migrated Kind-list calendar occurrences keep their legacy eventTitle displ
 
 test("verified native calendar records retain canonical 15, 60, and 180 minute intervals in mixed Bases", () => {
   const nativeRecords = {
-    version: 6,
+    version: 7,
     isEnabled: () => true,
     inspect(frontmatter) {
       if (!frontmatter?.verifiedRecordKind) return null;
@@ -1533,7 +1533,7 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
     {
       label: "disabled native-record service",
       api: {
-        version: 6,
+        version: 7,
         isEnabled: () => false,
         inspect: () => ({
           kind: "calendar-event",
@@ -1545,9 +1545,9 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
       },
     },
     {
-      label: "version 6 API missing inspect",
+      label: "version 7 API missing inspect",
       api: {
-        version: 6,
+        version: 7,
         isEnabled: () => true,
         resolve: async () => null,
         create: async () => null,
@@ -1557,7 +1557,7 @@ test("verified native calendar records retain canonical 15, 60, and 180 minute i
     {
       label: "throwing inspection provider",
       api: {
-        version: 6,
+        version: 7,
         isEnabled: () => true,
         inspect: () => {
           throw new Error("inspection unavailable");
@@ -1601,10 +1601,10 @@ test("Controller calendar templates retain their 11am instant and authoritative 
   try {
     const id = `calendar:v1:${"A".repeat(16)}:${"b".repeat(27)}`;
     const nativeRecords = {
-      version: 6,
+      version: 7,
       capabilities: { calendarTemplateRecords: true },
       isEnabled: () => true,
-      inspect: (frontmatter) => frontmatter?.tpsId === id
+      inspect: (frontmatter) => frontmatter?.id === id
         ? { id, kind: "calendar-event", frontmatter }
         : null,
       resolve: async () => null,
@@ -1621,7 +1621,7 @@ test("Controller calendar templates retain their 11am instant and authoritative 
     for (const classification of [{}, { kind: "event" }, { Kind: "Client meeting" }]) {
       const frontmatter = {
         ...classification,
-        tpsId: id,
+        id: id,
         title: "1:1",
         scheduled: "2026-09-03T16:00:00.000Z",
         end: "2026-09-03T16:30:00.000Z",
@@ -1654,11 +1654,11 @@ test("native Controller calendar reschedule and association use structural ident
   const id = `calendar:v1:${"A".repeat(16)}:${"b".repeat(27)}`;
   for (const classification of [{}, { kind: "event" }, { Kind: ["client", "meeting"] }]) {
     const file = createFile("Calendar Events/1-1.md");
-    const frontmatter = { ...classification, tpsId: id, title: "1:1", status: "complete" };
+    const frontmatter = { ...classification, id: id, title: "1:1", status: "complete" };
     const handle = { id, kind: "calendar-event", frontmatter, file, path: file.path };
     const updates = [];
     const nativeRecords = {
-      version: 6,
+      version: 7,
       capabilities: { calendarTemplateRecords: true },
       isEnabled: () => true,
       inspect: () => ({ id, kind: "calendar-event", frontmatter }),
@@ -1697,9 +1697,9 @@ test("native optional-kind mutations fail closed for unavailable capability and 
   for (const scenario of [{ kind: "calendar-event", capabilities: {} }, { kind: "task", capabilities: { calendarTemplateRecords: true } }, { kind: "food-entry", capabilities: { calendarTemplateRecords: true } }]) {
     let updateCalls = 0;
     const file = createFile("Calendar Events/Rejected.md");
-    const frontmatter = { tpsId: id, kind: "event" };
+    const frontmatter = { id: id, kind: "event" };
     const nativeRecords = {
-      version: 6,
+      version: 7,
       capabilities: scenario.capabilities,
       isEnabled: () => true,
       inspect: () => ({ id, kind: scenario.kind, frontmatter }),
@@ -1847,4 +1847,14 @@ test("missing, mismatched, error, and unsupported formula states fail closed wit
       "a configured failed formula excludes the synthetic Calendar row instead of substituting a field fallback",
     );
   }
+});
+
+
+test('native note selection recognizes canonical id without scanning or rewriting note content', () => {
+  const file = createFile('Inbox/Canonical.md');
+  const frontmatter = { ID: 'stable-calendar-id', title: 'Keep', externalId: 'calendar:source' };
+  const view = createBareView({ frontmatterByPath: { [file.path]: frontmatter } });
+  assert.equal(view.nativeCalendarFileHasIdentityEvidence(file), true);
+  assert.equal(view.nativeCalendarFileHasIdentityEvidence(createFile('Inbox/ordinary.md')), false);
+  assert.deepEqual(frontmatter, { ID: 'stable-calendar-id', title: 'Keep', externalId: 'calendar:source' });
 });

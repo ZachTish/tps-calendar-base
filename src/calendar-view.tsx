@@ -39,6 +39,7 @@ import {
   getExternalId,
   getGcmApi,
   getGcmNativeRecordsApi,
+  getInternalIdPropertyKey,
   isGcmNativeCalendarRecord,
   isGcmTemplateFile,
   listGcmTemplateFiles,
@@ -1042,7 +1043,7 @@ export class CalendarView extends BasesView {
   private requireNativeCalendarRecordsApi(): GcmNativeRecordsApi {
     const nativeRecords = getGcmNativeRecordsApi(this.app);
     if (!nativeRecords) {
-      throw new Error("Native Calendar requires enabled GCM native-record API v6.");
+      throw new Error("Native Calendar requires enabled GCM native-record API v7.");
     }
     return nativeRecords;
   }
@@ -1062,12 +1063,12 @@ export class CalendarView extends BasesView {
   private nativeCalendarFileHasIdentityEvidence(file: TFile): boolean {
     const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
     if (!frontmatter || typeof frontmatter !== "object") return false;
-    let configuredIdentityKey = "tpsId";
+    let configuredIdentityKey = "id";
     try {
-      const key = getGcmNativeRecordsApi(this.app)?.getStorageProfile?.()?.identityPropertyKey;
+      const key = getInternalIdPropertyKey(this.app);
       if (typeof key === "string" && key.trim()) configuredIdentityKey = key.trim();
-    } catch { /* Retain the historical identity guard when GCM is unavailable. */ }
-    const identityKeys = new Set([configuredIdentityKey.toLowerCase(), "tpsid"]);
+    } catch { /* Keep the canonical identity guard when GCM is unavailable. */ }
+    const identityKeys = new Set([configuredIdentityKey.toLowerCase(), "id"]);
     return Object.entries(frontmatter).some(([key, value]) => (
       identityKeys.has(key.trim().toLowerCase())
       && typeof value === "string"

@@ -37,7 +37,7 @@ export interface GcmTaskCheckboxMapping {
   label?: string;
 }
 
-export const GCM_NATIVE_RECORDS_API_VERSION = 6;
+export const GCM_NATIVE_RECORDS_API_VERSION = 7;
 
 export type GcmNativeRecordKind =
   | "task"
@@ -61,7 +61,7 @@ export interface GcmNativeRecordMutationCause {
 }
 
 export interface GcmNativeRecordEnvelope extends Record<string, unknown> {
-  tpsId: string;
+  id: string;
   tpsSchemaVersion: number;
   // Calendar-template records keep this user-authored classification optional.
   // The verified inspection/handle kind, not this property, is structural.
@@ -90,7 +90,7 @@ export interface GcmNativeRecordHandle {
 export type GcmNativeRecordReference =
   | string
   | TFile
-  | { path?: string; id?: string; tpsId?: string };
+  | { path?: string; id?: string };
 
 export interface GcmNativeRecordsApi {
   version: typeof GCM_NATIVE_RECORDS_API_VERSION;
@@ -867,6 +867,12 @@ export function buildCalendarExternalId(
   return normalizeIdentityValue(event.url);
 }
 
+/** Physical note storage follows GCM's configured profile; the public envelope uses id. */
+export function getInternalIdPropertyKey(app: App | null | undefined): string {
+  const key = app ? getGcmApi(app)?.nativeRecords?.getStorageProfile?.()?.identityPropertyKey : undefined;
+  return typeof key === "string" && key.trim() ? key.trim() : "id";
+}
+
 export function ensureInternalIdInFrontmatter(
   app: App,
   frontmatter: Record<string, unknown>,
@@ -875,15 +881,16 @@ export function ensureInternalIdInFrontmatter(
   if (typeof api?.identity?.ensureInternalIdInFrontmatter === "function") {
     return api.identity.ensureInternalIdInFrontmatter(frontmatter);
   }
+  const identityKey = getInternalIdPropertyKey(app);
   const existingKey =
-    findKeyCaseInsensitive(frontmatter, "tpsId") ||
+    findKeyCaseInsensitive(frontmatter, identityKey) ||
     findKeyCaseInsensitive(frontmatter, "subitemId");
   const existing = existingKey
     ? String(frontmatter[existingKey] ?? "").trim()
     : "";
   if (existing) return existing;
   const generated = createFallbackInternalId();
-  frontmatter.tpsId = generated;
+  frontmatter[identityKey] = generated;
   return generated;
 }
 

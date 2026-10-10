@@ -1,16 +1,16 @@
-export type InlineTaskLineMatch = "exact" | "tpsId" | "subitemId" | "title";
+export type InlineTaskLineMatch = "exact" | "id" | "subitemId" | "title";
 
 export type InlineTaskLineLocator = {
   preferredLineIndex: number;
   rawLine: string;
   title: string;
-  tpsId?: string;
+  id?: string;
   subitemId?: string;
 };
 
 export type InlineTaskLineCandidate = {
   title: string;
-  tpsId?: string;
+  id?: string;
   subitemId?: string;
 };
 
@@ -57,7 +57,7 @@ function resolveInlineTaskLine(
   }
 
   const inspected = lines.map((line, lineIndex) => inspectLine(line, lineIndex));
-  for (const key of ["tpsId", "subitemId"] as const) {
+  for (const key of ["id", "subitemId"] as const) {
     const expected = normalizeIdentity(locator[key]);
     if (!expected) continue;
     const matches = collectMatchingIndexes(inspected, (candidate) => (
