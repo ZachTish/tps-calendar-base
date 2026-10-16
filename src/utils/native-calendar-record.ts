@@ -11,11 +11,6 @@ export interface NativeCalendarScheduleUpdate extends Record<string, unknown> {
   allDay: true | null;
 }
 
-export interface NativeCalendarCreateProperties extends NativeCalendarIntervalFields {
-  title: string;
-  associatedNote?: string;
-}
-
 function assertValidDate(value: Date, label: string): void {
   if (!(value instanceof Date) || !Number.isFinite(value.getTime())) {
     throw new Error(`Native Calendar ${label} must be a valid date.`);
@@ -61,23 +56,6 @@ export function buildNativeCalendarScheduleUpdate(
     // derived values so another consumer cannot prefer a stale duration.
     durationMinutes: null,
     allDay: allDay ? true : null,
-  };
-}
-
-export function buildNativeCalendarCreateProperties(args: {
-  title: string;
-  start: Date;
-  end: Date;
-  allDay: boolean;
-  associatedNote?: string | null;
-}): NativeCalendarCreateProperties {
-  const title = String(args.title || "").replace(/\s+/gu, " ").trim();
-  if (!title) throw new Error("Native Calendar records require a title.");
-  const associatedNote = String(args.associatedNote || "").trim();
-  return {
-    title,
-    ...buildNativeCalendarIntervalFields(args.start, args.end, args.allDay),
-    ...(associatedNote ? { associatedNote } : {}),
   };
 }
 

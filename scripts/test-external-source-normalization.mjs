@@ -979,7 +979,7 @@ function createLocalMatchView(frontmatter, events) {
   return view;
 }
 
-async function createPendingIntervalView(t, { native = true, duration = false } = {}) {
+async function createPendingIntervalView(t, { native = true, duration = false, recordKind = "calendar-event" } = {}) {
   const frontmatter = {
     title: "Pending interval",
     scheduled: startDate.toISOString(),
@@ -1011,6 +1011,7 @@ async function createPendingIntervalView(t, { native = true, duration = false } 
   // Only the provider write, host UI and unrelated styling/filter services are mocked.
   delete view.resolveEntryStartDate;
   delete view.hasNoteLevelStartDate;
+  view.resolveNativeCalendarRecord = async () => recordKind ? { kind: recordKind } : null;
   view.updateNativeCalendarRecordSchedule = async (args) => { writes.push(args); };
   view.processGcmFrontmatter = async (file, mutate) => {
     assert.equal(file, entry.file);
@@ -1655,3 +1656,15 @@ test("filter-driven manual views anchor to changed filter bounds without changin
   view.computeFilterDateRange([]);
   assert.equal(view.currentDate.getTime(), new Date(2099,0,16).getTime(), "same-filter refresh preserves manual navigation");
 });
+
+for (const recordKind of [null, "task"]) {
+ test(`ordinary Base notes use configured schedule fields even in native import mode (${recordKind})`, async t => {
+  const f=await createPendingIntervalView(t,{native:true,duration:true,recordKind});
+  const requestedEnd=new Date(startDate.getTime()+90*60000);
+  await f.resize(startDate,requestedEnd);
+  assert.equal(f.writes.length,1);
+  assert.equal(f.writes[0],f.entry.file);
+  assert.equal(f.persisted.timeEstimate,90);
+  assert.equal(f.persisted.end,endDate.toISOString(),"unselected field stays unchanged");
+ });
+}

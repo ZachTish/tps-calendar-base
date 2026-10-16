@@ -159,7 +159,6 @@ import { resolveCalendarDisplayTitle } from "./utils/calendar-display-title";
 import { PRESERVE_EMBEDDED_DAY_COUNT_CONFIG_KEY } from "./view-options";
 import {
   buildNativeCalendarAssociatedNote,
-  buildNativeCalendarCreateProperties,
   buildNativeCalendarScheduleUpdate,
 } from "./utils/native-calendar-record";
 
@@ -742,27 +741,7 @@ export class CalendarView extends BasesView {
     baseFileName?: string,
     frontmatterProcessor?: (frontmatter: Record<string, unknown>) => void,
   ): Promise<void> {
-    const nativeRecordMode = this.isNativeCalendarRecordMode();
     const nowRange = this.resolveCurrentTimeCreateRange();
-    if (nativeRecordMode) {
-      try {
-        const created = await this.createNativeCalendarRecord({
-          title: "Untitled",
-          start: nowRange.start,
-          end: nowRange.end,
-          allDay: false,
-          surface: "calendar-create",
-        });
-        await this.updateCalendar();
-        await this.handlePostCreateBehavior(created.file, {
-          invokingAnchor: this.toolbarCreateAnchor,
-        });
-      } catch (error) {
-        logger.error("[CalendarView] Native toolbar creation failed", error);
-        new Notice(error instanceof Error ? error.message : "Native Calendar creation failed.");
-      }
-      return;
-    }
     if (isCalendarFormulaProperty(this.startDateProp)) {
       logger.warn("[CalendarView] Refusing Base create through computed start formula", {
         startProperty: this.startDateProp,
@@ -790,7 +769,8 @@ export class CalendarView extends BasesView {
     const filteredFolder = normalizePath(String(createOptions.typeFolderOverride || ""))
       .replace(/^\/+|\/+$/g, "");
     if (filteredFolder) await this.ensureCalendarCreationFolder(filteredFolder);
-    const resolvedBaseFileName = baseFileName || (filteredFolder ? `${filteredFolder}/Untitled` : undefined);
+    // Core Bases resolves its own folder from the view; this argument is a name, not a path.
+    const resolvedBaseFileName = baseFileName;
     logger.flow("CalendarCreate", "note-base-route", {
       folder: filteredFolder,
       baseFileName: resolvedBaseFileName || "",
@@ -1135,46 +1115,30 @@ export class CalendarView extends BasesView {
     return new Date(start.getTime() + durationMinutes * 60_000);
   }
 
-  private async createNativeCalendarRecord(args: {
+  /** User creation follows this Base; Controller import storage never supplies defaults. */
+  private async createCalendarNote(args: {
     title: string;
     start: Date;
     end: Date;
     allDay: boolean;
     associatedNoteFile?: TFile | null;
-    surface: string;
-  }): Promise<GcmNativeRecordHandle> {
-    const nativeRecords = this.requireNativeCalendarRecordsApi();
+    templatePath?: string | null;
+  }): Promise<TFile | null> {
+    if (!this.startDateProp || isCalendarFormulaProperty(this.startDateProp)) {
+      throw new Error("This Calendar has no writable start date property.");
+    }
     const associatedNote = args.associatedNoteFile
       ? buildNativeCalendarAssociatedNote(args.associatedNoteFile.path)
       : null;
-    const properties = buildNativeCalendarCreateProperties({
-      title: args.title,
-      start: args.start,
-      end: args.end,
+    const filterSources = await this.readBaseFileFilterSources();
+    const options = this.buildCalendarNewEventOptions(filterSources, {
+      titleOverride: args.title,
       allDay: args.allDay,
-      associatedNote,
+      templateOverride: args.templatePath || undefined,
+      templateTypeOverride: args.templatePath ? "file" : undefined,
     });
-    const create = nativeRecords.capabilities?.freshIdentityCreates === true
-      && typeof nativeRecords.createFresh === "function"
-      ? nativeRecords.createFresh
-      : nativeRecords.create;
-    const created = await create.call(nativeRecords, "calendar-event", properties, {
-      cause: {
-        kind: "user",
-        sourcePluginId: "tps-calendar-base",
-        surface: args.surface,
-      },
-    });
-    if (!isGcmNativeCalendarRecord(created, nativeRecords) || !(created.file instanceof TFile)) {
-      throw new Error("GCM did not create a canonical Calendar record.");
-    }
-    logger.flow("NativeCalendar", "create:done", {
-      path: created.file.path,
-      surface: args.surface,
-      associatedNote: Boolean(associatedNote),
-      allDay: args.allDay,
-    });
-    return created;
+    return this.newEventService.createEvent(args.start, args.end,
+      associatedNote ? { associatedNote } : undefined, options);
   }
 
   private async updateNativeCalendarRecordSchedule(args: {
@@ -3826,16 +3790,16 @@ export class CalendarView extends BasesView {
           ) {
             throw new Error("Native Calendar can associate only an ordinary note, not another native record.");
           }
-          const created = await this.createNativeCalendarRecord({
+          const created = await this.createCalendarNote({
             title: target.title || target.file.basename,
             start: createRange.start,
             end: createRange.end,
             allDay: allDay === true,
             associatedNoteFile: target.file,
-            surface: "calendar-range-track-note",
           });
+          if (!created) return;
           await this.updateCalendar();
-          await this.handlePostCreateBehavior(created.file);
+          await this.handlePostCreateBehavior(created);
           new Notice(`Created calendar event for ${target.file.basename}.`);
           return;
         }
@@ -3857,27 +3821,13 @@ export class CalendarView extends BasesView {
       if (!titlePrompt) return;
       const title = titlePrompt.title;
 
-      if (nativeRecordMode) {
-        const created = await this.createNativeCalendarRecord({
-          title,
-          start: createRange.start,
-          end: createRange.end,
-          allDay: allDay === true,
-          surface: "calendar-range-create",
-        });
-        await this.updateCalendar();
-        await this.handlePostCreateBehavior(created.file);
-        return;
-      }
-
-      const filterSources = await this.readBaseFileFilterSources();
-      const createOptions = this.buildCalendarNewEventOptions(filterSources, {
-        allDay: !!allDay,
-        titleOverride: title,
-        templateOverride: titlePrompt.templatePath || undefined,
-        templateTypeOverride: titlePrompt.templatePath ? "file" : undefined,
+      const file = await this.createCalendarNote({
+        title,
+        start: createRange.start,
+        end: createRange.end,
+        allDay: allDay === true,
+        templatePath: titlePrompt.templatePath,
       });
-      const file = await this.newEventService.createEvent(createRange.start, createRange.end, undefined, createOptions);
       if (file) {
         await this.updateCalendar();
         await this.handlePostCreateBehavior(file);
@@ -4889,6 +4839,23 @@ export class CalendarView extends BasesView {
       return;
     }
 
+    // If the dropped file is a template, create a new event from it instead of modifying the template
+    if (this.isTemplateFile(file)) {
+      try {
+        const filterSources = await this.readBaseFileFilterSources();
+        const request = this.buildCalendarDropCreateRequest("template-file", file, start, allDay, filterSources);
+        const created = await this.newEventService.createEvent(request.start, request.end, undefined, request.options);
+        if (created) {
+          await this.updateCalendar();
+          await this.handlePostCreateBehavior(created);
+        }
+      } catch (error) {
+        logger.error('[CalendarView] Error creating event from template drop:', error);
+        new Notice(`Failed to create event: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+
     if (this.isNativeCalendarRecordMode()) {
       try {
         const end = this.resolveNativeCalendarWriteEnd(file, start, undefined, allDay);
@@ -4911,36 +4878,19 @@ export class CalendarView extends BasesView {
         ) {
           throw new Error("Only an ordinary note or a native calendar-event can be dropped on this Calendar.");
         }
-        const created = await this.createNativeCalendarRecord({
+        const created = await this.createCalendarNote({
           title: this.resolveDroppedFileEventTitle(file),
           start,
           end,
           allDay,
           associatedNoteFile: file,
-          surface: "calendar-note-drop",
         });
+        if (!created) return;
         await this.updateCalendar();
-        await this.handlePostCreateBehavior(created.file);
+        await this.handlePostCreateBehavior(created);
       } catch (error) {
         logger.error("[CalendarView] Native file drop failed", error);
         new Notice(error instanceof Error ? error.message : "Native Calendar drop failed.");
-      }
-      return;
-    }
-
-    // If the dropped file is a template, create a new event from it instead of modifying the template
-    if (this.isTemplateFile(file)) {
-      try {
-        const filterSources = await this.readBaseFileFilterSources();
-        const request = this.buildCalendarDropCreateRequest("template-file", file, start, allDay, filterSources);
-        const created = await this.newEventService.createEvent(request.start, request.end, undefined, request.options);
-        if (created) {
-          await this.updateCalendar();
-          await this.handlePostCreateBehavior(created);
-        }
-      } catch (error) {
-        logger.error('[CalendarView] Error creating event from template drop:', error);
-        new Notice(`Failed to create event: ${error instanceof Error ? error.message : String(error)}`);
       }
       return;
     }
@@ -6579,7 +6529,8 @@ export class CalendarView extends BasesView {
     nativeSurface = "calendar-event-update",
   ): Promise<void> {
     void scope;
-    const nativeRecordMode = this.isNativeCalendarRecordMode();
+    const nativeRecordMode = this.isNativeCalendarRecordMode()
+      && (await this.resolveNativeCalendarRecord(entry.file))?.kind === "calendar-event";
     if (!this.startDateProp && !nativeRecordMode) {
       logger.warn('[Calendar] No startDateProp configured');
       return;
@@ -10256,7 +10207,8 @@ export class CalendarView extends BasesView {
       : baseFilters != null
         ? [baseFilters]
         : [];
-    const filterSources = this.getCalendarFilterSources(extraSources);
+    const filterSources = [...extraSources, ...this.currentBaseFileFilterSources, ...this.getCalendarFilterSources()]
+      .filter((source, index, all) => source != null && all.indexOf(source) === index);
     let folderPath: string | null = null;
     const frontmatter: Record<string, any> = {};
 

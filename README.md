@@ -1,5 +1,13 @@
 # TPS Calendar Base
 
+## 3.0.1 — Base-owned Calendar note creation
+
+Dragging a new interval, toolbar New, template drops and associated-note creation now use the Base's creation defaults and the existing whole-note writer. Controller's import storage mode no longer sends user creation through GCM's calendar-event classification writer. A Base/template with no kind default adds no kind. No event classification is hardcoded or copied from the unrelated import mapping. Configured date/duration fields and the chosen template remain authoritative. Positive equality defaults use the active view first, then Base defaults, then remaining runtime sources; ordered OR/any selection and exclusion handling remain. Date comparisons, negations and substring expressions do not become assignments. The existing filter inference is deliberately limited; this is not a general filter solver.
+
+Existing imported Calendar records retain verified identity-aware schedule updates. Other whole notes use the view's configured fields even when import storage mode is native records. A template drop is recognized before native-record association, preserving the template workflow. Cancellation creates nothing and does not refresh/open a note. Toolbar creation passes only a filename to Core Bases, which owns its inferred folder; it no longer repeats that folder in the filename argument. The shared post-creation opening policy, status prompts, templates and explicit linking behavior remain.
+
+No setting, default mapping, migration, note repair, listener, timer, watcher, cache or background scan is added. Removed the forced native creator and its unused payload builder. Settings destinations/mobile layout are unchanged; minimum Obsidian remains **1.10.0**. This patch corrects ignored user configuration. Validation, installed test-vault boundaries and artifact hashes are recorded in [3.0.1 release notes](release-notes/3.0.1.md); physical iPhone acceptance and production installation remain separate.
+
 ## 3.0.0 — Shared record identity named id
 
 Calendar consumes GCM's canonical `id` envelope/reference and uses `id` when

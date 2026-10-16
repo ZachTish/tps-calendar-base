@@ -630,6 +630,7 @@ test("NewEventService note mode creates a dated frontmatter note with Base defau
   assert.doesNotMatch(content, /(?:^|\n)folderPath:/);
   assert.match(content, /status: planned/);
   assert.match(content, /priority: medium/);
+  assert.equal(Object.hasOwn(loadYaml(content.split("---")[1]), "kind"), false, "no unrelated classification is added");
 });
 
 test("ordinary note creation writes valid initial YAML once without maintenance reads or timers", async (t) => {

@@ -1455,14 +1455,14 @@ test("every create-new route uses one post-create dispatcher without a custom ed
   );
   assert.equal(
     (toolbarCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
-    2,
-    "native and Base whole-note toolbar routes both dispatch",
+    1,
+    "toolbar creation uses the Base whole-note dispatcher",
   );
   assert.equal(
     (toolbarCreate.match(/invokingAnchor: this\.toolbarCreateAnchor/g) || [])
       .length,
-    1,
-    "native toolbar creation uses the current invoking button directly",
+    0,
+    "toolbar routes share their captured invoking button",
   );
   assert.match(
     toolbarCreate,
@@ -1557,12 +1557,12 @@ test("every create-new route uses one post-create dispatcher without a custom ed
   );
   assert.equal(
     (rangeCreate.match(/this\.handlePostCreateBehavior\(/g) || []).length,
-    3,
-    "native track-note and native/legacy event creation dispatch, while legacy schedule-existing stays in place",
+    2,
+    "associated-note and Base event creation dispatch, while schedule-existing stays in place",
   );
   assert.match(
     rangeCreate,
-    /this\.newEventService\.createEvent\([\s\S]*?this\.handlePostCreateBehavior\(file\)/,
+    /this\.createCalendarNote\([\s\S]*?this\.handlePostCreateBehavior\(file\)/,
   );
 
   const externalCreate = between(
@@ -1593,7 +1593,7 @@ test("every create-new route uses one post-create dispatcher without a custom ed
   assert.equal(
     (calendarViewSource.match(/this\.handlePostCreateBehavior\(/g) || [])
       .length,
-    9,
+    7,
     "the complete whole-note create surface stays wired to one dispatcher",
   );
   assert.doesNotMatch(
