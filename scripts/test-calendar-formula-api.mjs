@@ -312,6 +312,7 @@ function createBareView({
     metadataCache: {
       getFileCache: (file) => ({
         frontmatter: frontmatterByPath[file.path] || {},
+        listItems: Array.from(String(file.contents || "").matchAll(/^\s*[-*]\s+\[([^\]\r\n])\]/gm), match => ({ task: match[1] })),
         tags: [{ tag: "#source" }],
         links: [{ link: "Related" }],
       }),
@@ -1234,7 +1235,7 @@ test("task end-datetime views use a row end and fall back to canonical timeEstim
 
 
 
-test("inline task collection isolates failed sources and reuses only matching path-plus-mtime cache entries", async () => {
+test("inline task collection isolates failed sources and uses the host read cache for current content", async () => {
   const good = createFile("Inbox/Good.md", "- [ ] Good [scheduled:: 2026-08-05]");
   const bad = createFile("Inbox/Bad.md", "- [ ] Bad [scheduled:: 2026-08-05]");
   const view = createBareView({ lineMetadata: makeLineMetadataApi(), markdownFiles: [good, bad] });
@@ -1268,7 +1269,7 @@ test("inline task collection isolates failed sources and reuses only matching pa
   } finally {
     console.error = originalConsoleError;
   }
-  assert.equal(reads.get(good.path), 1, "an unchanged successful source is served from the local revision cache");
+  assert.equal(reads.get(good.path), 2, "Obsidian owns source freshness rather than a second timestamp cache");
   assert.equal(reads.get(bad.path), 2, "a failed source is never cached and is retried on the next refresh");
 });
 
@@ -1857,4 +1858,65 @@ test('native note selection recognizes canonical id without scanning or rewritin
   assert.equal(view.nativeCalendarFileHasIdentityEvidence(file), true);
   assert.equal(view.nativeCalendarFileHasIdentityEvidence(createFile('Inbox/ordinary.md')), false);
   assert.deepEqual(frontmatter, { ID: 'stable-calendar-id', title: 'Keep', externalId: 'calendar:source' });
+});
+
+
+function inlineDiscoveryView(files) {
+  const view = createBareView({ lineMetadata: makeLineMetadataApi(), markdownFiles: files });
+  Object.assign(view, { startDateProp: "note.scheduled", endDateProp: null, titleProp: null, statusField: null, priorityField: null, allDayProperty: null, formulaEvaluationEnabled: false });
+  return view;
+}
+
+test("legacy discovery rejects cached task-free notes before body reads or line scans", async () => {
+  const irrelevant = Array.from({ length: 4000 }, (_, i) => createFile(`Finance/Record ${i}.md`, "---\namount: 15\n---\nOrdinary note with no task."));
+  const dated = createFile("Daily/2020-01-01.md", "- [ ] Future appointment [scheduled:: 2026-08-05]");
+  const undated = createFile("Inbox/Uncached.md", "- [ ] Uncached task [scheduled:: 2026-08-05]");
+  const view = inlineDiscoveryView([...irrelevant, dated, undated]);
+  await view.prepareFormulaRuntime();
+  const readPaths = [], scans = [];
+  const getCache = view.app.metadataCache.getFileCache;
+  view.app.metadataCache.getFileCache = file => file === undated ? null : getCache(file);
+  view.app.vault.cachedRead = async file => { readPaths.push(file.path); return file.contents; };
+  view.lineMetadataApi = { ...view.lineMetadataApi, scanDocument: (content) => { scans.push(content); return makeLineMetadataApi().scanDocument(content); } };
+  const entries = await view.collectInlineScheduledTaskEntries();
+  assert.deepEqual(entries.map(entry => entry.title), ["Future appointment", "Uncached task"]);
+  assert.equal(readPaths.length, 2);
+  assert.deepEqual(readPaths, [dated.path, undated.path]);
+  assert.equal(scans.length, 2);
+  readPaths.length = 0; scans.length = 0;
+  await view.collectInlineScheduledTaskEntries();
+  assert.deepEqual(readPaths, [dated.path, undated.path], "Obsidian owns cachedRead freshness; no duplicate body cache");
+  assert.equal(scans.length, 2);
+});
+
+test("legacy task discovery sees same-size same-timestamp edits and fresh metadata arrivals", async () => {
+  const file = createFile("Inbox/Task.md", "- [ ] First [scheduled:: 2026-08-05]");
+  const arriving = createFile("Inbox/Arrival.md", "No task yet");
+  const files = [file, arriving];
+  const view = inlineDiscoveryView(files);
+  await view.prepareFormulaRuntime();
+  const stat = { ...file.stat };
+  assert.deepEqual((await view.collectInlineScheduledTaskEntries()).map(row => row.title), ["First"]);
+  file.contents = file.contents.replace("First", "Other");
+  assert.deepEqual(file.stat, stat);
+  arriving.contents = "- [ ] Arrived [scheduled:: 2026-08-06]";
+  assert.deepEqual((await view.collectInlineScheduledTaskEntries()).map(row => row.title), ["Other", "Arrived"]);
+  file.path = "Inbox/Renamed.md"; files.splice(1, 1);
+  assert.deepEqual((await view.collectInlineScheduledTaskEntries()).map(row => row.entry.file.path), [file.path]);
+  file.contents = "All task text removed";
+  let reads = 0; view.app.vault.cachedRead = async () => { reads++; throw new Error("task-free body must not be read"); };
+  assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.equal(reads, 0);
+});
+
+test("unchanged task-free notification bursts do not read bodies, parse lines or attempt writes", async () => {
+  const files = Array.from({ length: 100 }, (_, i) => createFile(`Notes/Note ${i}.md`, "- Ordinary non-task list item"));
+  const view = inlineDiscoveryView(files); await view.prepareFormulaRuntime();
+  let reads = 0, scans = 0, writes = 0;
+  view.app.vault.cachedRead = async file => { reads++; return file.contents; };
+  for (const key of ["read", "modify", "process"]) view.app.vault[key] = () => { writes++; };
+  const scanDocument = view.lineMetadataApi.scanDocument;
+  view.lineMetadataApi = { ...view.lineMetadataApi, scanDocument: content => { scans++; return scanDocument(content); } };
+  for (let i = 0; i < 50; i++) assert.deepEqual(await view.collectInlineScheduledTaskEntries(), []);
+  assert.deepEqual({ reads, scans, writes }, { reads: 0, scans: 0, writes: 0 });
 });

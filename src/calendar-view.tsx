@@ -620,7 +620,6 @@ export class CalendarView extends BasesView {
   private formulaNow = new Date();
   private formulaEvaluationEnabled = false;
   private readonly reportedFormulaDiagnostics = new Set<string>();
-  private inlineTaskContentCache = new Map<string, { revision: string; content: string }>();
   private viewMode: CalendarViewMode = "week";
   private allDayLimit: number = 3; // New property with default 3
 
@@ -8192,7 +8191,13 @@ export class CalendarView extends BasesView {
     const scheduledKey = this.getNoteField(this.startDateProp) || this.plugin.settings.startProperty || "scheduled";
     const durationKey = this.getNoteField(this.endDateProp) || this.plugin.settings.endProperty || "timeEstimate";
     const entries: CalendarEntry[] = [];
-    const sources = await this.readInlineTaskSources(this.app.vault.getMarkdownFiles());
+    const files = this.app.vault.getMarkdownFiles();
+    const taskFiles = files.filter((file) => {
+      const cache = this.app.metadataCache.getFileCache(file);
+      // A missing cache is unknown, not proof that a newly synced note has no tasks.
+      return !cache || cache.listItems?.some((item) => item.task !== undefined);
+    });
+    const sources = await this.readInlineTaskSources(taskFiles);
     for (const source of sources) {
       if (!source) continue;
       const { file, content } = source;
@@ -8414,11 +8419,6 @@ export class CalendarView extends BasesView {
     files: readonly TFile[],
   ): Promise<Array<{ file: TFile; content: string } | null>> {
     const results: Array<{ file: TFile; content: string } | null> = new Array(files.length).fill(null);
-    const cache = this.inlineTaskContentCache ??= new Map<string, { revision: string; content: string }>();
-    const currentPaths = new Set(files.map((file) => file.path));
-    for (const path of cache.keys()) {
-      if (!currentPaths.has(path)) cache.delete(path);
-    }
     let cursor = 0;
     const workerCount = Math.min(files.length, 8);
     const workers = Array.from({ length: workerCount }, async () => {
@@ -8426,20 +8426,13 @@ export class CalendarView extends BasesView {
         const index = cursor;
         cursor += 1;
         const file = files[index];
-        const revision = `${Number(file.stat?.mtime || 0)}:${Number(file.stat?.size || 0)}`;
-        const cached = cache.get(file.path);
-        if (cached?.revision === revision) {
-          results[index] = { file, content: cached.content };
-          continue;
-        }
         try {
           const content = await this.app.vault.cachedRead(file);
-          cache.set(file.path, { revision, content });
           results[index] = { file, content };
         } catch (error) {
           // One inaccessible source must not erase every other Calendar row.
           // Do not substitute stale content: omit only this source and retry it
-          // on the next refresh because no cache revision was written.
+          // on the next ordinary refresh.
           logger.flowError("InlineTasks", "source-read:failed", error, { path: file.path });
         }
       }
