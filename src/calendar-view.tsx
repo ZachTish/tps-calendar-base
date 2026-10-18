@@ -309,11 +309,12 @@ export class CalendarView extends BasesView {
     const userFormat = this.getDailyNoteDateFormat();
 
     try {
-      const whole = parseDateFromFilename(basename, userFormat);
-      if (whole && whole.isValid && whole.isValid()) {
-        // @ts-ignore
-        const momentWhole = (window as any).moment(basename, [userFormat, (window as any).moment.ISO_8601, 'YYYY-MM-DD', 'YYYY_MM_DD', 'YYYYMMDD'], true);
-        if (momentWhole && momentWhole.isValid && momentWhole.isValid()) {
+      // Reject ordinary titles before the broader daily-filename parser. Both
+      // checks still apply to whole dates, preserving configured date formats.
+      const momentWhole = (window as any).moment(basename, [userFormat, (window as any).moment.ISO_8601, 'YYYY-MM-DD', 'YYYY_MM_DD', 'YYYYMMDD'], true);
+      if (momentWhole && momentWhole.isValid && momentWhole.isValid()) {
+        const whole = parseDateFromFilename(basename, userFormat);
+        if (whole && whole.isValid && whole.isValid()) {
           return { cleanTitle: '', dateSuffix: whole.format('YYYY-MM-DD') };
         }
       }

@@ -1,5 +1,11 @@
 # TPS Calendar Base
 
+## 3.0.3 — Reject ordinary titles before broad date parsing
+
+Calendar now checks whether a title is a complete date before sending it through the broader daily-filename parser. Previously every ordinary event title paid for the broader multi-format parse before the strict whole-date check; ordinary titles never needed that first parse. Both checks still apply to complete date titles, and trailing numeric/human dates and configured date formats retain their existing behavior. No new setting, cache, listener, timer, writer, or migration is added. This backward-compatible patch keeps minimum Obsidian **1.10.0**.
+
+All **381** declared checks, TypeScript and the separate final build pass. In the reloaded test vault, the same 3,676-row native Base and 339 visible events retain their contents across first/repeated openings. The populated data-pass Long Task falls from **715–766 ms to 194–202 ms**; observed event DOM arrival improves from **2.79–2.96 s to 2.35–2.56 s**. Query/read/render counts remain unchanged; this is a parsing-cost reduction, not removal of Core Bases work or the remaining opening delay. All 3,677 synthetic Markdown bodies and plugin settings are preserved, diagnostics removed and fixtures archived. Foreground desktop sampling details, first-use/repeated boundaries, regression coverage, reload and hashes are recorded in [release validation](release-notes/3.0.3.md). Physical iPhone timing and production installation remain separate acceptance steps.
+
 ## 3.0.2 — Skip task-free bodies during legacy refresh
 
 Legacy historical-task discovery now checks Obsidian’s existing cached checklist metadata before reading or scanning note bodies. Known task-free notes are rejected immediately. Notes without metadata remain eligible until Obsidian supplies it, so a newly synced source is not mistaken for an empty one. The remaining inventory is metadata-only; this does not remove Core Bases query work or promise zero file enumeration. A dated daily note can contain a task scheduled for another day, so filename dates do not exclude historical task sources. Existing Base/formula filters still decide which rows display. Native-record rendering already bypasses this discovery and is unchanged.
