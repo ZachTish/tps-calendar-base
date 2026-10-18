@@ -1095,9 +1095,9 @@ test("external drag-create preview shows the resolved time without changing norm
   assert.match(reactViewSource, /dropPreviewTimeLabel: formatSelectionPreview\(/);
   assert.match(reactViewSource, /externalDropPreview\.start,\s+externalDropPreview\.end,\s+externalDropPreview\.allDay,/);
   assert.match(reactViewSource, /\}, \[events, externalDropPreview, formatSelectionPreview\]\)/);
-  assert.match(eventRendererSource, /const isExternalDropPreview = !!props\.isExternalDropPreview/);
-  assert.match(eventRendererSource, /const dropPreviewTimeLabel = isExternalDropPreview/);
-  assert.match(eventRendererSource, /className="bases-calendar-external-drop-preview-time"/);
+  assert.match(eventRendererSource, /const preview = props\.isExternalDropPreview \? String\(props\.dropPreviewTimeLabel/);
+  assert.match(eventRendererSource, /label\.className = "bases-calendar-external-drop-preview-time"/);
+  assert.match(eventRendererSource, /label\.textContent = preview/);
   assert.doesNotMatch(eventRendererSource, /className="bases-calendar-event-time"/);
   assert.doesNotMatch(eventRendererSource, /formatTimedEventLabel/);
 });

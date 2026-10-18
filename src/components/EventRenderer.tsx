@@ -1,7 +1,6 @@
-import React, { useCallback } from "react";
-import { BasesEntry, BasesPropertyId, Value, setIcon } from "obsidian";
+import { useCallback } from "react";
+import { BasesEntry, BasesPropertyId, Value, parsePropertyId, setIcon } from "obsidian";
 import { EventContentArg } from "@fullcalendar/core";
-import { parsePropertyId } from "obsidian";
 import { tryGetValue } from "../hooks/useCalendarEvents";
 
 interface UseEventRendererOptions {
@@ -10,288 +9,116 @@ interface UseEventRendererOptions {
   basesEntryMap: Map<string, BasesEntry>;
 }
 
-/**
- * Provides the renderEventContent callback for FullCalendar.
+/** FullCalendar owns event DOM, so content is ready in its own layout pass.
+ * React portals otherwise mount the same cards in a later commit and ask
+ * FullCalendar to measure all of their geometry again.
  */
-export function useEventRenderer({
-  app,
-  sanitizedProperties,
-  basesEntryMap,
-}: UseEventRendererOptions) {
-  const hasNonEmptyValue = useCallback((value: Value): boolean => {
-    if (value === null || value === undefined) return false;
-    if (typeof (value as any).isTruthy === 'function') {
-      return (value as any).isTruthy();
+export function useEventRenderer({ app, sanitizedProperties, basesEntryMap }: UseEventRendererOptions) {
+  const renderEventContent = useCallback((eventInfo: EventContentArg): { domNodes: HTMLElement[] } => {
+    const props = eventInfo.event.extendedProps;
+    const title = eventInfo.event.title || props.calEntryTitle || "Untitled";
+    const entryPath = props.entryPath;
+    const entry = (props.entry as BasesEntry | undefined) || (entryPath ? basesEntryMap.get(entryPath) : undefined);
+    const inlineTask = ((props.calendarEntry as any)?.entry as any)?.inlineTask;
+    const iconName = typeof props.iconName === "string" ? props.iconName.trim() : "";
+    const iconColor = inlineTask ? "" : typeof props.iconColor === "string" ? props.iconColor.trim() : "";
+    const node = document.createElement("div");
+    if (entryPath != null) node.dataset.path = entryPath;
+
+    if (props.isArchivedExternalPlaceholder) {
+      const count = Number(props.archivedExternalCount || 0);
+      const tooltip = String(props.archivedExternalTooltip || title).trim();
+      node.className = "bases-calendar-archived-external-content tps-calendar-entry";
+      node.dataset.archivedExternal = "true";
+      node.title = count > 1 ? tooltip : `Restore archived event: ${title}`;
+      node.setAttribute("aria-label", node.title);
+      Object.assign(node.style, { display: "flex", alignItems: "center", justifyContent: "center", gap: "2px", width: "100%", height: "100%", minHeight: "18px", color: "var(--text-warning, var(--text-accent))", fontSize: "11px", lineHeight: "16px", whiteSpace: "nowrap" });
+      node.appendChild(createEventIcon("triangle-alert"));
+      if (count > 1) {
+        const badge = document.createElement("span");
+        badge.className = "bases-calendar-archived-external-count";
+        badge.textContent = String(count);
+        Object.assign(badge.style, { color: "currentColor", fontSize: "10px", fontWeight: "700", lineHeight: "14px", opacity: "0.9" });
+        node.appendChild(badge);
+      }
+      return { domNodes: [node] };
     }
-    const str = String(value);
-    return !!str && str.trim().length > 0;
-  }, []);
 
-  const renderEventContent = useCallback(
-    (eventInfo: EventContentArg) => {
-      const props = eventInfo.event.extendedProps;
-      const title = eventInfo.event.title || props.calEntryTitle || 'Untitled';
-      const entryPath = props.entryPath;
-      const entry = (props.entry as BasesEntry | undefined) || (entryPath ? basesEntryMap.get(entryPath) : undefined);
-      const isGhost = props.isGhost || false;
-      const isExternal = props.isExternal || false;
-      const isExternalDropPreview = !!props.isExternalDropPreview;
-      const dropPreviewTimeLabel = isExternalDropPreview
-        ? String(props.dropPreviewTimeLabel || "").trim()
-        : "";
-      const isArchivedExternalPlaceholder = props.isArchivedExternalPlaceholder || false;
-      const archivedExternalCount = Number(props.archivedExternalCount || 0);
-      const archivedExternalTooltip = String(props.archivedExternalTooltip || title).trim();
-      const inlineTask = ((props.calendarEntry as any)?.entry as any)?.inlineTask;
-      const iconName = typeof props.iconName === "string" ? props.iconName.trim() : "";
-      const iconColor = inlineTask ? "" : typeof props.iconColor === "string" ? props.iconColor.trim() : "";
-      if (isArchivedExternalPlaceholder) {
-        return (
-          <div
-            className="bases-calendar-archived-external-content tps-calendar-entry"
-            data-path={entryPath}
-            data-archived-external="true"
-            title={archivedExternalCount > 1 ? archivedExternalTooltip : `Restore archived event: ${title}`}
-            aria-label={archivedExternalCount > 1 ? archivedExternalTooltip : `Restore archived event: ${title}`}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "2px",
-              width: "100%",
-              height: "100%",
-              minHeight: "18px",
-              color: "var(--text-warning, var(--text-accent))",
-              fontSize: "11px",
-              lineHeight: "16px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            <EventIcon iconName="triangle-alert" />
-            {archivedExternalCount > 1 && (
-              <span
-                className="bases-calendar-archived-external-count"
-                style={{
-                  color: "currentColor",
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  lineHeight: "14px",
-                  opacity: 0.9,
-                }}
-              >
-                {archivedExternalCount}
-              </span>
-            )}
-          </div>
-        );
-      }
+    const allDay = eventInfo.event.allDay;
+    node.className = `bases-calendar-event-content${allDay ? " bases-calendar-event-content--allday" : ""} tps-calendar-entry`;
+    Object.assign(node.style, allDay
+      ? { overflow: "hidden", display: "flex", alignItems: "center", height: "18px", minHeight: "18px", maxHeight: "18px", width: "100%", padding: "0", margin: "0", lineHeight: "14px", fontSize: "0.65rem" }
+      : { overflow: "hidden", display: "flex", flexDirection: "column", height: "100%", alignItems: "stretch", justifyContent: "flex-start" });
+    const preview = props.isExternalDropPreview ? String(props.dropPreviewTimeLabel || "").trim() : "";
+    if (!allDay && preview) {
+      const label = document.createElement("div");
+      label.className = "bases-calendar-external-drop-preview-time";
+      label.textContent = preview;
+      Object.assign(label.style, { color: "currentColor", fontSize: "0.72em", fontWeight: "700", lineHeight: "1.05", opacity: "0.95", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginBottom: "1px" });
+      node.appendChild(label);
+    }
+    const heading = document.createElement("div");
+    Object.assign(heading.style, { display: "flex", alignItems: allDay ? "center" : "flex-start", gap: "2px", width: "100%", minHeight: "0" });
+    heading.appendChild(createEventIcon(props.isGhost ? "repeat-2" : iconName || (props.isExternal ? "calendar-days" : "calendar"), iconColor));
+    const titleEl = document.createElement("div");
+    titleEl.className = "bases-calendar-event-title";
+    titleEl.title = title;
+    titleEl.textContent = title;
+    Object.assign(titleEl.style, { fontWeight: "var(--tps-event-title-weight, 400)", fontSize: "var(--tps-event-title-font-size, var(--tps-event-font-size, var(--font-ui-small)))", lineHeight: "var(--tps-event-title-line-height, 1.2)", textShadow: "var(--tps-event-title-shadow, none)", flex: "1", minWidth: "0", whiteSpace: allDay ? "nowrap" : "normal", overflow: "hidden", overflowWrap: "break-word", textOverflow: allDay ? "ellipsis" : "clip" });
+    heading.appendChild(titleEl);
+    node.appendChild(heading);
 
-      const propertyChips: React.ReactElement[] = [];
-      if (entry && sanitizedProperties && sanitizedProperties.length > 0) {
-        for (const prop of sanitizedProperties) {
-          if (isTitleProperty(prop)) continue;
-          try {
-            const value = tryGetValue(entry, prop);
-            if (hasNonEmptyValue(value as Value)) {
-              propertyChips.push(
-                <PropertyValue
-                  key={prop}
-                  value={value as Value}
-                  app={app}
-                />
-              );
-            }
-          } catch (err) {
-            // skip
+    // All-day cards have never displayed property chips. Do not evaluate
+    // formulas or construct widgets that will immediately be discarded.
+    if (!allDay && sanitizedProperties?.length) {
+      const chips = document.createElement("div");
+      chips.className = "bases-calendar-event-properties";
+      Object.assign(chips.style, { flex: "1 1 0", minHeight: "0", overflow: "hidden" });
+      for (const prop of sanitizedProperties) {
+        if (isTitleProperty(prop)) continue;
+        try {
+          let value: unknown;
+          if (entry) value = tryGetValue(entry, prop);
+          else if (props.isExternal) {
+            const parsed = parsePropertyId(prop);
+            const name = String(parsed.name || (parsed as any).property || prop).toLowerCase();
+            const external = props.externalEvent;
+            value = name === "allday" ? String(!!external?.isAllDay) : ["location", "organizer", "url", "description"].includes(name) ? external?.[name] : null;
           }
-        }
-      } else if (eventInfo.event.extendedProps?.isExternal && sanitizedProperties?.length) {
-        const external = eventInfo.event.extendedProps?.externalEvent as any;
-        for (const prop of sanitizedProperties) {
-          const parsed = parsePropertyId(prop);
-          const name = String(parsed.name || (parsed as any).property || prop).toLowerCase();
-          const externalValue =
-            name === "location" ? external?.location :
-              name === "organizer" ? external?.organizer :
-                name === "url" ? external?.url :
-                  name === "description" ? external?.description :
-                    name === "allday" ? String(!!external?.isAllDay) :
-                      null;
-          if (externalValue) {
-            propertyChips.push(
-              <span key={prop} className="bases-calendar-event-property-value">{String(externalValue)}</span>
-            );
-          }
-        }
+          if (value == null || (typeof (value as any).isTruthy === "function" ? !(value as any).isTruthy() : !String(value).trim())) continue;
+          const chip = document.createElement("span");
+          chip.className = "bases-calendar-event-property-value";
+          Object.assign(chip.style, { display: "inline-flex", alignItems: "center" });
+          if (typeof (value as Value).renderTo === "function" && app?.renderContext) (value as Value).renderTo(chip, app.renderContext);
+          else chip.textContent = String(value);
+          chips.appendChild(chip);
+        } catch { /* A single unsupported value must not hide the event. */ }
       }
-
-      if (eventInfo.event.allDay) {
-        return (
-          <div
-            className="bases-calendar-event-content bases-calendar-event-content--allday tps-calendar-entry"
-            data-path={entryPath}
-            style={{
-              overflow: 'hidden',
-              display: 'flex',
-              alignItems: 'center',
-              height: '18px',
-              minHeight: '18px',
-              maxHeight: '18px',
-              width: '100%',
-              padding: 0,
-              margin: 0,
-              lineHeight: '14px',
-              fontSize: '0.65rem'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 2, width: '100%' }}>
-              <LeadingEventIcon
-                isGhost={isGhost}
-                isExternal={isExternal}
-                iconName={iconName}
-                iconColor={iconColor}
-              />
-              <div
-                className="bases-calendar-event-title"
-                style={{
-                  fontWeight: 'var(--tps-event-title-weight, 400)',
-                  fontSize: 'var(--tps-event-title-font-size, var(--tps-event-font-size, var(--font-ui-small)))',
-                  lineHeight: 'var(--tps-event-title-line-height, 1.2)',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  textShadow: 'var(--tps-event-title-shadow, none)',
-                  flex: 1,
-                  minWidth: 0,
-                }}
-                title={title}
-              >
-                {title}
-              </div>
-            </div>
-          </div>
-        );
-      }
-
-      return (
-        <div
-          className="bases-calendar-event-content tps-calendar-entry"
-          data-path={entryPath}
-          style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'stretch', justifyContent: 'flex-start' }}
-        >
-          {dropPreviewTimeLabel && (
-            <div
-              className="bases-calendar-external-drop-preview-time"
-              style={{
-                color: 'currentColor',
-                fontSize: '0.72em',
-                fontWeight: 700,
-                lineHeight: '1.05',
-                opacity: 0.95,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                marginBottom: 1,
-              }}
-            >
-              {dropPreviewTimeLabel}
-            </div>
-          )}
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 2, width: '100%', minHeight: 0 }}>
-            <LeadingEventIcon
-              isGhost={isGhost}
-              isExternal={isExternal}
-              iconName={iconName}
-              iconColor={iconColor}
-            />
-            <div
-              className="bases-calendar-event-title"
-              style={{
-                fontWeight: 'var(--tps-event-title-weight, 400)',
-                fontSize: 'var(--tps-event-title-font-size, var(--tps-event-font-size, var(--font-ui-small)))',
-                lineHeight: 'var(--tps-event-title-line-height, 1.2)',
-                textShadow: 'var(--tps-event-title-shadow, none)',
-                flex: 1,
-                minWidth: 0,
-                whiteSpace: 'normal',
-                overflow: 'hidden',
-                overflowWrap: 'break-word',
-              }}
-              title={title}
-            >
-              {title}
-            </div>
-          </div>
-          {propertyChips.length > 0 && (
-            <div className="bases-calendar-event-properties" style={{ flex: '1 1 0', minHeight: 0, overflow: 'hidden' }}>
-              {propertyChips}
-            </div>
-          )}
-        </div>
-      );
-    },
-    [app, sanitizedProperties, hasNonEmptyValue, basesEntryMap],
-  );
-
+      if (chips.childNodes.length) node.appendChild(chips);
+    }
+    return { domNodes: [node] };
+  }, [app, sanitizedProperties, basesEntryMap]);
   return { renderEventContent };
 }
 
 function isTitleProperty(prop: BasesPropertyId): boolean {
   try {
     const parsed = parsePropertyId(prop);
-    const name = String(parsed.name || (parsed as any).property || prop);
-    const normalized = name.replace(/^note\./i, "").toLowerCase().replace(/[\s_.-]+/g, "");
-    return normalized === "title";
+    return String(parsed.name || (parsed as any).property || prop).replace(/^note\./i, "").toLowerCase().replace(/[\s_.-]+/g, "") === "title";
   } catch {
-    const normalized = String(prop).replace(/^note\./i, "").toLowerCase().replace(/[\s_.-]+/g, "");
-    return normalized === "title";
+    return String(prop).replace(/^note\./i, "").toLowerCase().replace(/[\s_.-]+/g, "") === "title";
   }
 }
 
-const LeadingEventIcon: React.FC<{
-  isGhost: boolean;
-  isExternal: boolean;
-  iconName: string;
-  iconColor?: string;
-}> = ({ isGhost, isExternal, iconName, iconColor }) => {
-  const resolvedIconName = isGhost
-    ? "repeat-2"
-    : iconName || (isExternal ? "calendar-days" : "calendar");
-
-  return <EventIcon iconName={resolvedIconName} color={iconColor} />;
-};
-
-const EventIcon: React.FC<{ iconName: string; color?: string }> = ({ iconName, color }) => {
-  const iconRef = useCallback((node: HTMLSpanElement | null) => {
-    if (!node) return;
-    node.empty();
-    const normalizedIcon = String(iconName || "").replace(/^(lucide|icon):/i, "").trim() || "file-text";
-    try {
-      setIcon(node, normalizedIcon);
-      if (!node.querySelector("svg")) renderFallbackIcon(node, normalizedIcon);
-    } catch {
-      renderFallbackIcon(node, normalizedIcon);
-    }
-  }, [iconName]);
-
-  return (
-    <span
-      ref={iconRef}
-      className="bases-calendar-event-frontmatter-icon"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        width: "12px",
-        height: "12px",
-        flexShrink: 0,
-        marginRight: 0,
-        color: color || "currentColor",
-        opacity: 0.95,
-      }}
-    />
-  );
-};
+function createEventIcon(iconName: string, color?: string): HTMLElement {
+  const node = document.createElement("span");
+  node.className = "bases-calendar-event-frontmatter-icon";
+  Object.assign(node.style, { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "12px", height: "12px", flexShrink: "0", marginRight: "0", color: color || "currentColor", opacity: "0.95" });
+  const normalized = String(iconName || "").replace(/^(lucide|icon):/i, "").trim() || "file-text";
+  try { setIcon(node, normalized); if (!node.querySelector("svg")) renderFallbackIcon(node, normalized); }
+  catch { renderFallbackIcon(node, normalized); }
+  return node;
+}
 
 const FALLBACK_ICON_PATHS: Record<string, string[]> = {
   square: ["M5 5h14v14H5z"],
@@ -331,25 +158,3 @@ function getFallbackIconText(iconName: string): string {
   if (normalized.includes("file")) return "□";
   return "•";
 }
-
-const PropertyValue: React.FC<{ value: Value; app: any }> = ({ value, app }) => {
-  const elementRef = useCallback(
-    (node: HTMLElement | null) => {
-      if (!node) return;
-      node.textContent = ''; // Clear previous content
-
-      if (value === null || value === undefined) return;
-
-      // Handle objects with renderTo (e.g., complex Obsidian widgets)
-      if (typeof (value as any).renderTo === 'function' && app?.renderContext) {
-        (value as any).renderTo(node, app.renderContext);
-      } else {
-        // Fallback for primitives or objects without renderTo
-        node.textContent = String(value);
-      }
-    },
-    [app, value],
-  );
-
-  return <span ref={elementRef} className="bases-calendar-event-property-value" style={{ display: 'inline-flex', alignItems: 'center' }} />;
-};

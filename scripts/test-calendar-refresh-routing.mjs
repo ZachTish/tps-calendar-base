@@ -9,7 +9,7 @@ const ast = ts.createSourceFile('calendar-view.tsx', source, ts.ScriptTarget.Lat
 const viewClass = ast.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'CalendarView');
 const names = ['registerRefreshListeners', 'refreshAfterExplicitGcmAction', 'shouldProcessUpdates',
   'scheduleRefresh', 'updateCalendar', 'updateCalendarCore', 'isActiveCalendarUpdateNavigationCurrent',
-  'withStartupQuietDelay', 'getEffectiveFilterRangeEntries', 'onDataUpdated', 'handleTrackedFileChange'];
+  'withStartupQuietDelay', 'selectVisibleNativeEntries', 'getEffectiveFilterRangeEntries', 'onDataUpdated', 'handleTrackedFileChange'];
 const methods = names.map(name => {
   const node = viewClass.members.find(member => member.name?.getText(ast) === name);
   assert.ok(node, name);
@@ -55,7 +55,7 @@ function fixture({ visible = true, size = 1000 } = {}) {
     isEditorFocused: () => false, isActiveLeaf: () => true, calendarNavigationEpoch: 0,
     refreshTimeout: null, updateInFlight: false, queuedUpdateForce: null, queuedUpdateNavigationEpoch: null,
     activeCalendarUpdateNavigationEpoch: null, scrollEl: { scrollTop: 15 }, config: { name: 'Synthetic' },
-    startDateProp: 'note.scheduled', endDateProp: 'note.duration', contextDateEnabled: false,
+    currentDate: new Date(2026, 9, 18), startDateProp: 'note.scheduled', endDateProp: 'note.duration', contextDateEnabled: false,
     lastEditorChangeAt: 0, lastFrontmatterByPath: new Map(),
     hasEntryForFile: () => true,
     fastRefreshEntry(file) { fastRefreshPaths.push(file.path); return true; }, enqueueFastRefreshLog() {},
@@ -216,4 +216,14 @@ test('ordinary hidden and detached views do no channel-driven processing', async
     assert.deepEqual(f.calls, { passes: 0, metadata: 0, baseReads: 0, renders: 0 });
     assert.equal(f.timers.size, 0);
   }
+});
+
+
+test('published Core data uses the existing zero-delay coalescer without a second opening wait', async () => {
+  const f = fixture({ size: 1 });
+  for (let i = 0; i < 50; i++) f.view.onDataUpdated();
+  assert.equal(f.calls.passes, 0);
+  await f.advance(0);
+  assert.equal(f.calls.passes, 1);
+  assert.equal(f.calls.renders, 1);
 });

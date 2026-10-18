@@ -1,5 +1,15 @@
 # TPS Calendar Base
 
+## 3.0.4 — Prepare only visible event content
+
+When no legacy feed events need identity matching, native-record rendering checks configured date intervals and auxiliary dates before preparing titles, colors, icons and event models. All matching intervals still determine filter-driven ranges and navigation bounds; navigating or editing recomputes the visible candidates from current Bases data. Formula dates, spanning/all-day intervals, adjacent-day buffering, hidden-note rules and pending edits retain their existing owners. Filename dates never override configured dates. Core Bases still owns its query and total result count, including its initial vault enumeration; this change does not replace that query or add a cache. Legacy historical task/external-feed discovery and external-feed identity matching keep their existing complete local inventory. A moved-out linked note must still suppress its external counterpart.
+
+Calendar consumes only the public Bases query result, after filtering, sorting and limits. Removed the private in-progress result fallbacks and the missing-data polling loop; Core data notifications and the existing resize lifecycle own readiness. This prevents an unfinished scan or a retry callback from starting a duplicate presentation pass.
+
+Event cards now use FullCalendar 6's owned DOM-content boundary instead of a second React portal commit. Titles remain literal text, icons and Obsidian property widgets retain their native rendering, and all-day cards skip property widgets they never display. Removed the repeated startup sizing timers, duplicate delayed resize/header passes and the additional 120 ms wait after Core publishes data. Month view skips time-grid slot sizing, and the first container observer notification does not repeat FullCalendar’s mount measurement; the existing container observer coalesces genuine size changes into one animation frame. Stable event-content/entry references and unchanged date ranges avoid redundant recomputation. No new setting, writer, watcher, poller, cache or migration is added. This backward-compatible performance fix retains minimum Obsidian **1.10.0**.
+
+Validation and installed timing evidence are recorded in [3.0.4 release validation](release-notes/3.0.4.md). The half-second physical-iPhone target remains an acceptance requirement, not an inferred result from desktop helper timing.
+
 ## 3.0.3 — Reject ordinary titles before broad date parsing
 
 Calendar now checks whether a title is a complete date before sending it through the broader daily-filename parser. Previously every ordinary event title paid for the broader multi-format parse before the strict whole-date check; ordinary titles never needed that first parse. Both checks still apply to complete date titles, and trailing numeric/human dates and configured date formats retain their existing behavior. No new setting, cache, listener, timer, writer, or migration is added. This backward-compatible patch keeps minimum Obsidian **1.10.0**.

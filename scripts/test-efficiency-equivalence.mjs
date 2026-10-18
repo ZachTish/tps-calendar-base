@@ -331,7 +331,7 @@ test("calendar refresh performs no unused day-context vault scan", () => {
 
 test("local calendar entries reuse one metadata snapshot", () => {
   const calendarSource = readFileSync(new URL("../src/calendar-view.tsx", import.meta.url), "utf8");
-  const loopStart = calendarSource.indexOf("for (const entry of queryData.data)");
+  const loopStart = calendarSource.indexOf("for (const entry of displayEntries)");
   const loopEnd = calendarSource.indexOf("// 3. Add remaining external events", loopStart);
   const resolverStart = calendarSource.indexOf("private resolveEntryStartDate(");
   const resolverEnd = calendarSource.indexOf("\n  private hasNoteLevelStartDate(", resolverStart);

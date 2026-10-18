@@ -1267,6 +1267,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     : resolvedAllDayMaxRows;
 
   useEffect(() => {
+    if (resolvedFilterViewMode === "month") return;
     const api = calendarRef.current?.getApi();
     if (containerRef.current) {
       containerRef.current.style.setProperty('--calendar-slot-height', `${computedSlotHeight}px`);
@@ -1707,17 +1708,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     if (!containerRef.current || !calendarRef.current) return;
 
     const containerEl = containerRef.current;
-    const lastSizeRef = { width: 0, height: 0 };
-    let resizeTimeout: NodeJS.Timeout | null = null;
+    // FullCalendar has already measured its initial layout during mount.
+    const initialSize = containerEl.getBoundingClientRect();
+    const lastSizeRef = { width: initialSize.width, height: initialSize.height };
     let rafId: number | null = null;
-
-    const timeouts = [50, 200, 500].map(delay =>
-      setTimeout(() => {
-        if (calendarRef.current) {
-          calendarRef.current.getApi().updateSize();
-        }
-      }, delay)
-    );
 
     const handleResize = () => {
       if (!containerEl) return;
@@ -1733,46 +1727,13 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
       lastSizeRef.width = rect.width;
       lastSizeRef.height = rect.height;
 
-      if (resizeTimeout) {
-        clearTimeout(resizeTimeout);
-      }
-
-      const runUpdate = (delay: number) => {
-        resizeTimeout = setTimeout(() => {
-          if (calendarRef.current) {
-            const api = calendarRef.current.getApi();
-            if (isEmbedMode) {
-              if (rafId) cancelAnimationFrame(rafId);
-              rafId = requestAnimationFrame(() => {
-                api.updateSize();
-              });
-              return;
-            }
-            api.updateSize();
-          }
-        }, delay);
-      };
-
-      if (isEmbedMode) {
-        // In canvas embeds, FullCalendar sets inline pixel widths that go stale.
-        // Fire updateSize immediately via RAF, then again after a delay for layout settling.
-        if (rafId) cancelAnimationFrame(rafId);
-        rafId = requestAnimationFrame(() => {
-          if (calendarRef.current) {
-            calendarRef.current.getApi().updateSize();
-          }
-        });
-        runUpdate(200);
-        return;
-      }
-
-      requestAnimationFrame(() => {
-        if (calendarRef.current) {
-          calendarRef.current.getApi().updateSize();
-        }
+      // The existing observer owns actual size changes. Repeated startup
+      // timers and a second delayed measurement reread every event's geometry.
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        calendarRef.current?.getApi().updateSize();
       });
-
-      runUpdate(150);
     };
 
     const resizeObserver = new ResizeObserver(handleResize);
@@ -1806,10 +1767,6 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
 
     return () => {
       resizeObserver.disconnect();
-      timeouts.forEach(clearTimeout);
-      if (resizeTimeout) {
-        clearTimeout(resizeTimeout);
-      }
       if (rafId) {
         cancelAnimationFrame(rafId);
       }
@@ -3130,7 +3087,10 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
     end.setHours(0, 0, 0, 0);
     const isVisible = today >= start && today < end;
     setIsTodayVisible(isVisible);
-    setVisibleDateRange({ start: new Date(start), end: new Date(end) });
+    setVisibleDateRange(previous => previous
+      && previous.start.getTime() === start.getTime()
+      && previous.end.getTime() === end.getTime()
+      ? previous : { start, end });
     setHeaderTitle(arg.view?.title ?? "");
 
     if (isVisible && isFollowingNow) {
@@ -3828,7 +3788,7 @@ export const CalendarReactView: React.FC<CalendarReactViewProps> = ({
             // start/end values and drag/resize payloads remain unchanged.
             eventMinHeight={TIMEGRID_EVENT_MIN_HEIGHT_PX}
             events={eventsWithExternalDropPreview}
-            eventContent={(info) => { return renderEventContent(info); }}
+            eventContent={renderEventContent}
             eventClick={handleEventClick}
             eventMouseEnter={handleEventMouseEnter}
             eventMouseLeave={handleEventMouseLeave}

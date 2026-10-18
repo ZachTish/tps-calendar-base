@@ -96,7 +96,7 @@ import {
   getAutoRangeViewMode,
   getInclusiveCalendarDayCount,
 } from "./utils/filter-date-utils";
-import { getInclusiveCalendarDisplayBounds } from "./utils/calendar-display-interval";
+import { getInclusiveCalendarDisplayBounds, normalizeCalendarDisplayInterval, doesCalendarDisplayIntervalOverlapRange } from "./utils/calendar-display-interval";
 import { isCalendarEntryDisplayedAllDay } from "./utils/calendar-entry-all-day";
 import {
   clampCalendarNavigationDate,
@@ -529,6 +529,114 @@ export class CalendarView extends BasesView {
     return { endDate, hasExplicitEnd };
   }
 
+  private resolveEntryDisplayInterval(
+    entry: BasesEntry,
+    frontmatter: Record<string, any> | undefined,
+    startResolution: ResolvedEntryStartDate,
+    nativeRecordMode: boolean,
+  ): { startDate: Date; endDate: Date | undefined; forceAllDay: boolean; hasExplicitEnd: boolean } {
+    let startDate = startResolution.date;
+    const forceAllDayFromSource = startResolution.isDateOnly;
+    const formulaAllDayConfigured = isCalendarFormulaProperty(this.allDayProperty);
+    const allDayFieldName = this.getNoteField(this.allDayProperty);
+    const frontmatterAllDay = formulaAllDayConfigured
+      ? this.parseBooleanLike(this.tryGetEntryValue(entry, this.allDayProperty!), false)
+      : this.parseBooleanLike(this.getFrontmatterValueCaseInsensitive(frontmatter, allDayFieldName || ""), false);
+    const configuredDurationMinutes = this.getSourceDurationMinutes(startResolution.slot);
+    const displayInterval = this.resolveNoteDisplayInterval(
+      entry,
+      frontmatter,
+      startDate,
+      configuredDurationMinutes,
+      nativeRecordMode,
+    );
+    let endDate: Date | undefined = displayInterval.endDate;
+    let hasExplicitEnd = displayInterval.hasExplicitEnd;
+    const startsAtMidnight =
+      startDate.getHours() === 0 &&
+      startDate.getMinutes() === 0 &&
+      startDate.getSeconds() === 0 &&
+      startDate.getMilliseconds() === 0;
+    const forceAllDay = formulaAllDayConfigured
+      ? frontmatterAllDay
+      : frontmatterAllDay ||
+        forceAllDayFromSource ||
+        (!hasExplicitEnd && configuredDurationMinutes === null && startsAtMidnight);
+
+    if (forceAllDay && this.endDateProp) {
+      const allDayDurationMinutes = this.parseDurationMinutesFromValue(
+        this.getFrontmatterValueCaseInsensitive(
+          frontmatter,
+          this.getNoteField(this.endDateProp) || "",
+        ),
+      );
+      if (allDayDurationMinutes !== null && allDayDurationMinutes > 0) {
+        endDate = new Date(startDate.getTime() + allDayDurationMinutes * 60 * 1000);
+        hasExplicitEnd = true;
+      }
+    }
+
+    // PENDING UPDATE CHECK (User action overrides iCal sync temporarily)
+    const pending = this.pendingUpdates.get(entry.file.path);
+    if (pending) {
+      const dataStart = startDate?.getTime();
+      const endMatches = !pending.end || (endDate && Math.abs(endDate.getTime() - pending.end.getTime()) < 1000);
+      // A resize can keep the same start; acknowledge the complete pending interval.
+      if (dataStart && Math.abs(dataStart - pending.start.getTime()) < 1000 && endMatches) {
+        this.pendingUpdates.delete(entry.file.path);
+      } else if (Date.now() - pending.timestamp > 5000) {
+        // Expired
+        this.pendingUpdates.delete(entry.file.path);
+      } else {
+        // Override with pending
+        startDate = pending.start;
+        endDate = pending.end;
+      }
+    }
+
+    return { startDate, endDate, forceAllDay, hasExplicitEnd };
+  }
+
+  private selectVisibleNativeEntries(entries: BasesEntry[]): BasesEntry[] {
+    const datedEntries: CalendarEntry[] = [];
+    const archiveFolder = this.plugin.settings.archiveFolder
+      ? normalizePath(this.plugin.settings.archiveFolder.trim()) : "";
+    for (const entry of entries) {
+      const file = entry.file;
+      const cache = file ? this.app.metadataCache.getFileCache(file) : null;
+      if (!this.shouldRenderNoteEvent(file, cache)) continue;
+      const frontmatter = cache?.frontmatter as Record<string, any> | undefined;
+      for (const marker of file && archiveFolder && normalizePath(file.path).startsWith(`${archiveFolder}/`)
+        ? [] : this.getAuxiliaryDateMarkers(frontmatter)) {
+        const endDate = marker.endDate ?? (marker.isDateOnly
+          ? new Date(marker.date.getFullYear(), marker.date.getMonth(), marker.date.getDate() + 1)
+          : new Date(marker.date.getTime() + this.getMinimumEventDurationMinutes() * 60 * 1000));
+        datedEntries.push({ entry, title: "", startDate: marker.date, endDate,
+          forceAllDay: marker.isDateOnly, isAuxiliaryDate: true });
+      }
+      const start = this.resolveEntryStartDate(entry, frontmatter);
+      if (!start || (file && !this.hasNoteLevelStartDate(file, frontmatter, start))) continue;
+      const interval = this.resolveEntryDisplayInterval(entry, frontmatter, start, true);
+      datedEntries.push({ entry, title: "", ...interval });
+    }
+    // Navigation and filter-driven modes still use all matching date intervals.
+    // Only presentation (titles, styles, icons and event models) is range-limited.
+    this.computeFilterDateRange(datedEntries);
+    const range = this.resolveExternalCalendarVisibleRange(this.currentDate || this.computeInitialDate());
+    range.start.setDate(range.start.getDate() - 1);
+    range.end.setDate(range.end.getDate() + 1);
+    const visible = new Set<BasesEntry>();
+    for (const entry of datedEntries) {
+      const interval = normalizeCalendarDisplayInterval({
+        startDate: entry.startDate, endDate: entry.endDate,
+        isAllDay: isCalendarEntryDisplayedAllDay(entry, this.allDayProperty),
+        defaultEventDurationMinutes: this.defaultEventDuration,
+      });
+      if (interval && doesCalendarDisplayIntervalOverlapRange(interval, range)) visible.add(entry.entry);
+    }
+    return entries.filter(entry => visible.has(entry));
+  }
+
   private getGcmTimeTrackingService(): any | null {
     return this.getGcmApi()?.timeTracking ?? null;
   }
@@ -665,9 +773,6 @@ export class CalendarView extends BasesView {
   private datePickerInput: HTMLInputElement | null = null;
   private debouncedUpdateHeaderOffset: () => void;
   private controller: QueryController;
-  private pendingDataRetryId: number | null = null;
-  private pendingDataRetryCount = 0;
-  private readonly pendingDataMaxRetries = 12;
   private readonly constructedAt = Date.now();
   private readonly startupQuietWindowMs = 5500;
   private resizeRenderFrameId: number | null = null;
@@ -1238,9 +1343,6 @@ export class CalendarView extends BasesView {
       this.loadConfig();
       this.scheduleRefresh(120);
     }
-    if (!this.data || !this.config) {
-      this.scheduleDataRetry();
-    }
 
     // Start background sync timer if auto-create is enabled
     this.trace("onload:end", {
@@ -1305,10 +1407,6 @@ export class CalendarView extends BasesView {
       window.clearTimeout(this.datePreviewTimeout);
       this.datePreviewTimeout = null;
     }
-    if (this.pendingDataRetryId !== null) {
-      window.clearTimeout(this.pendingDataRetryId);
-      this.pendingDataRetryId = null;
-    }
     if (this.resizeRenderFrameId !== null) {
       window.cancelAnimationFrame(this.resizeRenderFrameId);
       this.resizeRenderFrameId = null;
@@ -1360,12 +1458,10 @@ export class CalendarView extends BasesView {
     this.containerEl.removeClass("is-loading");
     this.loadConfig();
     if (!this.shouldProcessUpdates()) {
-      this.scheduleDataRetry();
       return;
     }
-    this.scheduleRefresh(120);
+    this.scheduleRefresh(0);
     this.debouncedUpdateHeaderOffset();
-    setTimeout(() => this.debouncedUpdateHeaderOffset(), 0);
   }
 
 
@@ -1773,62 +1869,10 @@ export class CalendarView extends BasesView {
     });
   }
 
-  private getQueryData(): any {
-    const controller = this.controller as any;
-    return this.normalizeQueryData(
-      this.data ??
-      controller?.data ??
-      controller?.queryResult ??
-      controller?.result ??
-      controller?.results ??
-      controller?.items ??
-      controller?.rows ??
-      null,
-    );
-  }
-
-  private scheduleDataRetry(): void {
-    if (!this.shouldProcessUpdates()) return;
-    if (this.pendingDataRetryId !== null) return;
-    if (this.pendingDataRetryCount >= this.pendingDataMaxRetries) return;
-    const navigationEpoch = this.calendarNavigationEpoch;
-    this.pendingDataRetryId = window.setTimeout(() => {
-      this.pendingDataRetryId = null;
-      this.pendingDataRetryCount += 1;
-      this.updateCalendar(false, navigationEpoch);
-    }, this.withStartupQuietDelay(250, false));
-  }
-
-  private normalizeQueryData(raw: any): { data: any[] } | null {
-    if (!raw) return null;
-    if (Array.isArray(raw)) return { data: raw };
-    if (raw instanceof Map) return { data: Array.from(raw.values()) };
-    if (raw instanceof Set) return { data: Array.from(raw.values()) };
-    if (Array.isArray(raw.data)) return raw;
-    if (raw.data instanceof Map) return { ...raw, data: Array.from(raw.data.values()) };
-    if (raw.data instanceof Set) return { ...raw, data: Array.from(raw.data.values()) };
-    if (Array.isArray(raw.entries)) return { ...raw, data: raw.entries };
-    if (raw.entries instanceof Map) return { ...raw, data: Array.from(raw.entries.values()) };
-    if (raw.entries instanceof Set) return { ...raw, data: Array.from(raw.entries.values()) };
-    if (Array.isArray(raw.items)) return { ...raw, data: raw.items };
-    if (Array.isArray(raw.rows)) return { ...raw, data: raw.rows };
-    if (Array.isArray(raw.values)) return { ...raw, data: raw.values };
-
-    if (typeof raw.values === "function") {
-      try {
-        const values = Array.from(raw.values());
-        if (values.length > 0) return { data: values };
-      } catch {
-        // Fall through to nested query result shapes.
-      }
-    }
-
-    for (const key of ["queryResult", "result", "results"]) {
-      const normalized = this.normalizeQueryData(raw[key]);
-      if (normalized) return normalized;
-    }
-
-    return null;
+  private getQueryData(): { data: BasesEntry[] } | null {
+    // Bases publishes this result after filtering, sorting and limits are complete.
+    // The controller's private results Map is an unfinished scan, not view data.
+    return Array.isArray(this.data?.data) ? this.data : null;
   }
 
   public async updateCalendar(
@@ -1901,7 +1945,6 @@ export class CalendarView extends BasesView {
       this.trace("updateCalendar:skip:not-ready", {
         durationMs: Math.round(performance.now() - updateStartedAt),
       });
-      this.scheduleDataRetry();
       return;
     }
 
@@ -1924,10 +1967,7 @@ export class CalendarView extends BasesView {
       return;
     }
 
-    let queryData = this.getQueryData();
-    if (!queryData && this.pendingDataRetryCount >= this.pendingDataMaxRetries) {
-      queryData = { data: [] };
-    }
+    const queryData = this.getQueryData();
     if (!queryData || !this.startDateProp) {
       this.trace("updateCalendar:skip:no-query-or-start", {
         durationMs: Math.round(performance.now() - updateStartedAt),
@@ -1942,17 +1982,9 @@ export class CalendarView extends BasesView {
             ? "Configure a start date property to display entries"
             : "Loading calendar data...";
       }
-      if (!queryData) {
-        this.scheduleDataRetry();
-      }
       return;
     }
 
-    if (this.pendingDataRetryId !== null) {
-      window.clearTimeout(this.pendingDataRetryId);
-      this.pendingDataRetryId = null;
-    }
-    this.pendingDataRetryCount = 0;
     const nativeRecordMode = this.plugin.getCalendarStorageMode?.() === "native-records";
     this.updateExternalCalendarVisibility();
     const filterSourcesStartedAt = performance.now();
@@ -2039,7 +2071,6 @@ export class CalendarView extends BasesView {
     const statusFieldName = this.statusField
       ? this.getNoteField(this.statusField)
       : null;
-    const allDayFieldName = this.getNoteField(this.allDayProperty);
     const eventIdFieldName = this.plugin.settings.eventIdKey;
     const uidFieldName = this.plugin.settings.uidKey;
     const sourceUrlFieldName = "tpsCalendarSourceUrl";
@@ -2106,7 +2137,17 @@ export class CalendarView extends BasesView {
 
     // logger.log(`[CalendarView] Processing ${queryData.data.length} local entries against ${allExternalEvents.length} external events`);
 
-    for (const entry of queryData.data) {
+    // Feed matching needs all local identities, including notes moved out of
+    // this range. Keep that existing owner intact when external events exist.
+    const rangeLimitedPresentation = nativeRecordMode && allExternalEvents.length === 0;
+    const displayEntries = rangeLimitedPresentation
+      ? this.selectVisibleNativeEntries(queryData.data)
+      : queryData.data;
+    this.trace("updateCalendar:display-candidates", {
+      queryEntryCount: queryData.data.length,
+      displayEntryCount: displayEntries.length,
+    });
+    for (const entry of displayEntries) {
       const entryFile = entry.file;
       const entryCache = entryFile ? this.app.metadataCache.getFileCache(entryFile) : null;
       const entryFrontmatter = entryCache?.frontmatter as Record<string, any> | undefined;
@@ -2158,7 +2199,6 @@ export class CalendarView extends BasesView {
           continue;
         }
         let startDate = startResolution.date;
-        const forceAllDayFromSource = startResolution.isDateOnly;
         // Read status and priority directly from cache for freshness
         let statusValue: any = null;
         let priorityValue: any = null;
@@ -2186,15 +2226,6 @@ export class CalendarView extends BasesView {
         }
 
         const cache = entryCache;
-        const formulaAllDayConfigured = isCalendarFormulaProperty(this.allDayProperty);
-        const frontmatterAllDay = formulaAllDayConfigured
-          ? this.parseBooleanLike(this.tryGetEntryValue(entry, this.allDayProperty!), false)
-          : allDayFieldName
-            ? this.parseBooleanLike(
-              this.getFrontmatterValueCaseInsensitive(cache?.frontmatter as Record<string, any> | undefined, allDayFieldName),
-              false,
-            )
-            : false;
         const frontmatterTitle = entryFrontmatterTitle;
         const isArchived = entryFile && archiveFolder
           ? normalizePath(entryFile.path).startsWith(`${archiveFolder}/`)
@@ -2359,59 +2390,10 @@ export class CalendarView extends BasesView {
         ])) {
           continue;
         }
-        const configuredDurationMinutes = this.getSourceDurationMinutes(startResolution.slot);
-        const displayInterval = this.resolveNoteDisplayInterval(
-          entry,
-          cache?.frontmatter as Record<string, any> | undefined,
-          startDate,
-          configuredDurationMinutes,
-          nativeRecordMode,
+        const { startDate: displayStart, endDate, forceAllDay, hasExplicitEnd } = this.resolveEntryDisplayInterval(
+          entry, entryFrontmatter, startResolution, nativeRecordMode,
         );
-        let endDate: Date | undefined = displayInterval.endDate;
-        let hasExplicitEnd = displayInterval.hasExplicitEnd;
-        const startsAtMidnight =
-          startDate.getHours() === 0 &&
-          startDate.getMinutes() === 0 &&
-          startDate.getSeconds() === 0 &&
-          startDate.getMilliseconds() === 0;
-        const forceAllDay = formulaAllDayConfigured
-          ? frontmatterAllDay
-          : frontmatterAllDay ||
-            forceAllDayFromSource ||
-            (!hasExplicitEnd && configuredDurationMinutes === null && startsAtMidnight);
-
-        if (forceAllDay && this.endDateProp) {
-          const allDayDurationMinutes = this.parseDurationMinutesFromValue(
-            this.getFrontmatterValueCaseInsensitive(
-              cache?.frontmatter as Record<string, any> | undefined,
-              this.getNoteField(this.endDateProp) || "",
-            ),
-          );
-          if (allDayDurationMinutes !== null && allDayDurationMinutes > 0) {
-            endDate = new Date(startDate.getTime() + allDayDurationMinutes * 60 * 1000);
-            hasExplicitEnd = true;
-          }
-        }
-
-
-
-        // PENDING UPDATE CHECK (User action overrides iCal sync temporarily)
-        const pending = this.pendingUpdates.get(entryFile.path);
-        if (pending) {
-          const dataStart = startDate?.getTime();
-          const endMatches = !pending.end || (endDate && Math.abs(endDate.getTime() - pending.end.getTime()) < 1000);
-          // A resize can keep the same start; acknowledge the complete pending interval.
-          if (dataStart && Math.abs(dataStart - pending.start.getTime()) < 1000 && endMatches) {
-            this.pendingUpdates.delete(entryFile.path);
-          } else if (Date.now() - pending.timestamp > 5000) {
-            // Expired
-            this.pendingUpdates.delete(entryFile.path);
-          } else {
-            // Override with pending
-            startDate = pending.start;
-            endDate = pending.end;
-          }
-        }
+        startDate = displayStart;
 
         const title = entryDisplayTitle;
 
@@ -2645,7 +2627,7 @@ export class CalendarView extends BasesView {
     // Always compute filter bounds so explicit date filters can limit navigation.
     // Auto-derived mode changes are applied inside computeFilterDateRange only when
     // filterRangeAuto is enabled.
-    this.computeFilterDateRange(this.getEffectiveFilterRangeEntries(finalEntries));
+    if (!rangeLimitedPresentation) this.computeFilterDateRange(this.getEffectiveFilterRangeEntries(finalEntries));
 
     this.containerEl.removeClass("is-loading");
     if (!this.shouldProcessUpdates()) return;
@@ -5958,7 +5940,7 @@ export class CalendarView extends BasesView {
         <AppContext.Provider value={this.app}>
           <CalendarReactView
             key={`calendar-view-${this.config.name}`}
-            entries={[...this.entries]}
+            entries={this.entries}
             weekStartDay={this.weekStartDay}
             viewMode={this.viewMode}
             properties={propsToRender}
