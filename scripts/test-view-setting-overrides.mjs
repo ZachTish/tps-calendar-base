@@ -164,3 +164,34 @@ test("calendar renderer resolves the per-view now-indicator setting", () => {
   assert.match(source, /const dateKey = snapshotCalendarDateKey\(date\);/);
   assert.match(source, /targetConfig\.set\("tps_currentDate", dateKey\)/);
 });
+
+
+test("retired Calendar configuration is omitted at the existing save boundary while current state is preserved", async () => {
+  const result = await esbuild.build({
+    entryPoints: ["src/settings-persistence.ts"], bundle: true, format: "esm", platform: "node", write: false,
+    plugins: [{ name: "calendar-settings-host", setup(builder) {
+      builder.onResolve({filter: /^obsidian$/}, () => ({path: "obsidian", namespace: "settings-host"}));
+      builder.onLoad({filter: /.*/, namespace: "settings-host"}, () => ({contents: 'export class TFile {} export const normalizePath = value => value;', loader: "js"}));
+    }}],
+  });
+  const { CalendarSettingsPersistence } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`);
+  const retired = ["syncIntervalMinutes", "initialCreateMode", "taskCreateDestination", "taskCreateTargetPath", "syncOnEventDelete", "previousStatusKey"];
+  const moduleBuild = await esbuild.build({entryPoints:["src/settings-migration.ts"], bundle:true,format:"esm",platform:"node",write:false,
+    plugins:[{name:"calendar-migration-host",setup(builder){builder.onResolve({filter:/^obsidian$/},()=>({path:"obsidian",namespace:"migration-host"}));builder.onLoad({filter:/.*/,namespace:"migration-host"},()=>({contents:'export class TFile {} export const normalizePath = value => value;',loader:"js"}));}}]});
+  const {DEFAULT_SETTINGS, migrateSettings} = await import(`data:text/javascript;base64,${Buffer.from(moduleBuild.outputFiles[0].text).toString("base64")}`);
+  const old = Object.fromEntries(retired.map(key=>[key,"unused"]));
+  let disk = {...old, enableLogging:false, primaryControllerId:"existing-device", hiddenExternalEvents:["existing-hidden"], extensionState:{keep:true}};
+  const original=structuredClone(disk);let writes=0,reads=0;
+  const live=migrateSettings(disk);
+  for(const value of [DEFAULT_SETTINGS,live])for(const key of retired)assert.equal(Object.hasOwn(value,key),false,key);
+  const queue=new CalendarSettingsPersistence({loadLatest:async()=>{reads++;return structuredClone(disk);},saveMerged:async value=>{writes++;disk=structuredClone(value);},getLiveSettings:()=>live});
+  queue.setBaseline(live);
+  assert.equal(writes,0,"normalizing old configuration makes no startup save");assert.deepEqual(disk,original);
+  disk.extensionState.concurrent=true;disk.defaultScrollTime="10:00";
+  live.enableLogging=true;await queue.request(live);
+  assert.equal(writes,1);assert.equal(reads,1);
+  for(const key of retired)assert.equal(Object.hasOwn(disk,key),false,key);
+  assert.equal(disk.enableLogging,true);assert.equal(disk.defaultScrollTime,"10:00");
+  assert.equal(disk.primaryControllerId,"existing-device");assert.deepEqual(disk.hiddenExternalEvents,["existing-hidden"]);
+  assert.deepEqual(disk.extensionState,{keep:true,concurrent:true});
+});

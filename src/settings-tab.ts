@@ -875,7 +875,6 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
     const keys = [
       { name: "Title", key: "titleKey", default: "title" },
       { name: "Status", key: "statusKey", default: "status" },
-      { name: "Prev Status", key: "previousStatusKey", default: "tpsCalendarPrevStatus" },
       { name: "Event Color", key: "frontmatterColorField", default: "color" },
       { name: "Event Icon", key: "frontmatterIconField", default: "icon" },
     ];

@@ -83,13 +83,9 @@ export interface ExternalCalendarConfig {
 
 export interface CalendarPluginSettings {
     enableExternalCalendars: boolean;
-    syncIntervalMinutes: number;
     sidebarBasePath: string | null;
     defaultBaseOpenLocation: "main" | "right-sidebar";
     dailyDateLinkTarget: "daily-note" | "daily-canvas";
-    initialCreateMode: "note" | "task";
-    taskCreateDestination: "daily-note" | "event-note";
-    taskCreateTargetPath: string;
     postCreateBehavior: CalendarPostCreateBehavior;
 
     primaryControllerId: string | null; // Synced setting to identify the controller device
@@ -100,7 +96,6 @@ export interface CalendarPluginSettings {
     externalCalendars: ExternalCalendarConfig[];
     externalCalendarFilter: string;
     enableLogging: boolean;
-    syncOnEventDelete: string;
     archiveFolder: string;
     canceledStatusValue: string;
     inProgressStatusValue: string;
@@ -111,7 +106,6 @@ export interface CalendarPluginSettings {
     uidKey: string;
     titleKey: string;
     statusKey: string;
-    previousStatusKey: string;
     startProperty: string;
     endProperty: string;
     timelineDatePairs: TimelineDatePair[];

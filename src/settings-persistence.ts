@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, migrateSettings } from "./settings-migration";
+import { DEFAULT_SETTINGS, RETIRED_CALENDAR_SETTING_KEYS, migrateSettings } from "./settings-migration";
 import type { CalendarPluginSettings } from "./types";
 
 type SettingsKey = keyof CalendarPluginSettings;
@@ -112,6 +112,7 @@ export class CalendarSettingsPersistence {
                         mergedRaw[key] = cloneSerializable(requested.snapshot[key]);
                     }
 
+                    for (const key of RETIRED_CALENDAR_SETTING_KEYS) delete mergedRaw[key];
                     await this.options.saveMerged(mergedRaw);
 
                     const persisted = migrateSettings(mergedRaw);
