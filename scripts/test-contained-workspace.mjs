@@ -4,13 +4,13 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { DEVELOPMENT_ROOT, TEST_VAULT_ROOT } from "../../workspace-paths.mjs";
+import { DEVELOPMENT_ROOT, TEST_VAULT_ROOT, isPathInside } from "../../workspace-paths.mjs";
 
 const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
-test("Calendar maintenance tooling is anchored to the contained test workspace", () => {
+test("Calendar source is outside the test vault; maintenance retains its explicit test target", () => {
   assert.equal(dirname(pluginRoot), DEVELOPMENT_ROOT);
-  assert.equal(dirname(DEVELOPMENT_ROOT), TEST_VAULT_ROOT);
+  assert.equal(isPathInside(TEST_VAULT_ROOT, DEVELOPMENT_ROOT), false);
 });
 
 test("calendar-task migration rejects paths outside the test vault", () => {

@@ -117,7 +117,7 @@ async function importCalendarViewBundle() {
 const formulaUtility = await importBundled("../src/utils/calendar-formula-api.ts");
 const eventStatusUtility = await importBundled("../src/utils/calendar-entry-status.ts");
 const { CalendarView, installGcmApiRegistry } = await importCalendarViewBundle();
-const gcmFormulaUtility = await importBundled("../../TPS-Global-Context-Menu (Dev)/src/services/tps-base-formula-service.ts");
+const gcmFormulaUtility = await importBundled("../../tps-global-context-menu/src/services/tps-base-formula-service.ts");
 
 function makeFormulaApi(resultFor, version = 1) {
   const calls = { compile: [], contexts: [], expressions: [] };
