@@ -2,11 +2,6 @@ import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
 import { readFile, stat, writeFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { runtimeDeployPlugin } from "../deploy-runtime.mjs";
-
-const sourceFolder = basename(dirname(fileURLToPath(import.meta.url)));
 
 const banner =
 	`/*
@@ -69,7 +64,7 @@ const context = await esbuild.context({
 	treeShaking: true,
 	outfile: "main.js",
 	minify: prod,
-	plugins: [syncStylesheet, runtimeDeployPlugin(sourceFolder)],
+	plugins: [syncStylesheet],
 });
 
 if (prod) {
