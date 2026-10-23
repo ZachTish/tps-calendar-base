@@ -1,3 +1,5 @@
+import { nativeSettingsSearch, focusSettingsSearchResult, type SettingsSearchEntry } from "./native-settings-search";
+import { SETTINGS_SEARCH_ENTRIES, SETTINGS_SEARCH_ROUTES } from "./settings-search-catalog";
 import { Notice } from 'obsidian';
 import { Plugin, PluginSettingTab, Setting } from "obsidian";
 import ObsidianCalendarPlugin from "./main";
@@ -74,6 +76,36 @@ const createSettingsGroup = (
 };
 
 export class CalendarPluginSettingsTab extends PluginSettingTab {
+  private searchContentEl: HTMLElement | null = null;
+  private get settingsContentEl(): HTMLElement {
+    return this.searchContentEl?.isConnected ? this.searchContentEl : this.containerEl;
+  }
+
+  getSettingDefinitions() {
+    return nativeSettingsSearch(SETTINGS_SEARCH_ENTRIES, SETTINGS_SEARCH_ROUTES,
+      container => {
+        this.searchContentEl = container;
+        this.display();
+        return () => { this.hide(); if (this.searchContentEl === container) this.searchContentEl = null; };
+      }, entry => this.openSearchResult(entry));
+  }
+
+  private openSearchResult(entry: SettingsSearchEntry): void {
+    this.activeSettingsPage = entry.route as CalendarSettingsPage;
+    const manager = (this.app as Plugin["app"] & { setting?: { openTabById?: (id: string) => void } }).setting;
+    manager?.openTabById?.(this.plugin.manifest.id);
+    this.display();
+    if (!focusSettingsSearchResult(this.settingsContentEl, entry.name)) {
+      const message = this.settingsContentEl.createDiv({
+        text: `“${entry.name}” is in this area. Its control appears when the relevant feature or saved item is selected.`,
+        attr: { role: 'status', tabindex: '-1' },
+      });
+      this.settingsContentEl.prepend(message);
+      message.focus();
+      message.scrollIntoView({ block: 'start' });
+    }
+  }
+
   plugin: ObsidianCalendarPlugin;
   private settingsViewState = new Map<string, boolean>();
   private settingsScrollTop = 0;
@@ -88,7 +120,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
   }
 
   display(): void {
-    const { containerEl } = this;
+    const containerEl = this.settingsContentEl;
     this.captureSettingsViewState(containerEl);
     containerEl.empty();
 
@@ -898,7 +930,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
                         if (await api.changeKey('tps-calendar-base', k.key, value)) {
                             this.display();
                             this.containerEl.scrollTop = scrollTop;
-                            this.containerEl.querySelector<HTMLInputElement>(`[data-tps-mapping-key="${k.key}"]`)?.focus({preventScroll:true});
+                            this.settingsContentEl.querySelector<HTMLInputElement>(`[data-tps-mapping-key="${k.key}"]`)?.focus({preventScroll:true});
                         }
           } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
           finally { button.setDisabled(false); }
@@ -1022,7 +1054,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           this.selectedTimelinePairIndex = -1;
           this.timelinePairDraft = { startProperty: "" };
           this.display();
-          this.containerEl.querySelector<HTMLInputElement>(".tps-calendar-timeline-pair-editor input")?.focus();
+          this.settingsContentEl.querySelector<HTMLInputElement>(".tps-calendar-timeline-pair-editor input")?.focus();
         }));
 
     if (pairs.length) {
@@ -1041,7 +1073,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
             this.selectedTimelinePairIndex = Number(value);
             this.timelinePairDraft = { ...pairs[this.selectedTimelinePairIndex] };
             this.display();
-            this.containerEl.querySelector<HTMLInputElement>(".tps-calendar-timeline-pair-editor input")?.focus();
+            this.settingsContentEl.querySelector<HTMLInputElement>(".tps-calendar-timeline-pair-editor input")?.focus();
           });
         });
     }
@@ -1091,7 +1123,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           this.timelinePairDraft = null;
           await this.plugin.saveSettings();
           this.display();
-          this.containerEl.querySelector<HTMLSelectElement>(".tps-calendar-timeline-pair-selector select")?.focus();
+          this.settingsContentEl.querySelector<HTMLSelectElement>(".tps-calendar-timeline-pair-selector select")?.focus();
         }))
       .addButton((button) => button
         .setButtonText("Cancel")
@@ -1099,7 +1131,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
           this.selectedTimelinePairIndex = 0;
           this.timelinePairDraft = null;
           this.display();
-          this.containerEl.querySelector<HTMLButtonElement>(".tps-calendar-timeline-pair-add button")?.focus();
+          this.settingsContentEl.querySelector<HTMLButtonElement>(".tps-calendar-timeline-pair-add button")?.focus();
         }));
     if (selected >= 0) {
       new Setting(editor)
@@ -1112,7 +1144,7 @@ export class CalendarPluginSettingsTab extends PluginSettingTab {
             this.timelinePairDraft = null;
             await this.plugin.saveSettings();
             this.display();
-            this.containerEl.querySelector<HTMLSelectElement>(".tps-calendar-timeline-pair-selector select")?.focus();
+            this.settingsContentEl.querySelector<HTMLSelectElement>(".tps-calendar-timeline-pair-selector select")?.focus();
           }));
     }
   }
